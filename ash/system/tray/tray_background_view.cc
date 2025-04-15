@@ -10,7 +10,7 @@
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/tray_background_view_catalog.h"
-#include "ash/focus_cycler.h"
+#include "ash/focus/focus_cycler.h"
 #include "ash/login/ui/lock_screen.h"
 #include "ash/public/cpp/session/session_observer.h"
 #include "ash/public/cpp/shelf_config.h"
@@ -293,16 +293,17 @@ TrayBackgroundView::TrayBackgroundView(
   views::HighlightPathGenerator::Install(
       this, std::make_unique<HighlightPathGenerator>(this));
 
-  AddChildView(tray_container_.get());
+  AddChildViewRaw(tray_container_.get());
 
   // Use layer color to provide background color. Note that children views
   // need to have their own layers to be visible.
   SetPaintToLayer(ui::LAYER_SOLID_COLOR);
-  layer()->SetFillsBoundsOpaquely(false);
 
   // Start the tray items not visible, because visibility changes are animated.
   views::View::SetVisible(false);
   layer()->SetOpacity(0.0f);
+
+  UpdateAccessibleNavFocus(shelf);
 }
 
 void TrayBackgroundView::AddTrayBackgroundViewObserver(Observer* observer) {
@@ -589,23 +590,6 @@ void TrayBackgroundView::AboutToRequestFocusFromTabTraversal(bool reverse) {
   shelf_->shelf_focus_cycler()->FocusOut(reverse, SourceView::kStatusAreaView);
 }
 
-void TrayBackgroundView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  views::Button::GetAccessibleNodeData(node_data);
-  // Override the name set in `LabelButton::SetText`.
-  // TODO(crbug.com/325137417): Remove this once the accessible name is set in
-  // the cache as soon as the name is updated.
-  GetViewAccessibility().SetName(GetAccessibleNameForTray());
-
-  if (LockScreen::HasInstance()) {
-    GetViewAccessibility().SetNextFocus(LockScreen::Get()->widget());
-  }
-
-  Shelf* shelf = Shelf::ForWindow(GetWidget()->GetNativeWindow());
-  ShelfWidget* shelf_widget = shelf->shelf_widget();
-  GetViewAccessibility().SetPreviousFocus(shelf_widget->hotseat_widget());
-  GetViewAccessibility().SetNextFocus(shelf_widget->navigation_widget());
-}
-
 void TrayBackgroundView::ChildPreferredSizeChanged(views::View* child) {
   PreferredSizeChanged();
 }
@@ -629,6 +613,17 @@ void TrayBackgroundView::OnVirtualKeyboardVisibilityChanged() {
   if (GetVisible() != GetEffectiveVisibility()) {
     views::View::SetVisible(GetEffectiveVisibility());
   }
+}
+
+void TrayBackgroundView::UpdateAccessibleNavFocus(Shelf* shelf) {
+  if (!shelf || !shelf->shelf_widget()) {
+    return;
+  }
+
+  GetViewAccessibility().SetPreviousFocus(
+      shelf->shelf_widget()->hotseat_widget());
+  GetViewAccessibility().SetNextFocus(
+      shelf->shelf_widget()->navigation_widget());
 }
 
 TrayBubbleView* TrayBackgroundView::GetBubbleView() {
@@ -661,9 +656,12 @@ void TrayBackgroundView::UpdateAfterStatusAreaCollapseChange() {
 void TrayBackgroundView::UpdateBackground() {
   layer()->SetRoundedCornerRadius(GetRoundedCorners());
   layer()->SetIsFastRoundedCorner(true);
-  layer()->SetBackgroundBlur(
-      ShelfConfig::Get()->GetShelfControlButtonBlurRadius());
-  layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+  if (chromeos::features::IsSystemBlurEnabled()) {
+    layer()->SetBackgroundBlur(
+        ShelfConfig::Get()->GetShelfControlButtonBlurRadius());
+    layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+  }
+
   layer()->SetClipRect(GetBackgroundBounds());
 
   const views::Widget* widget = GetWidget();
@@ -791,11 +789,13 @@ void TrayBackgroundView::SetIsActive(bool is_active) {
   UpdateTrayItemColor(is_active);
 }
 
-void TrayBackgroundView::CloseBubble() {
+void TrayBackgroundView::CloseBubble(CloseReason close_reason) {
   CloseBubbleInternal();
 
-  // If ChromeVox is enabled, focus on the this tray when the bubble is closed.
-  if (Shell::Get()->accessibility_controller() &&
+  // If ChromeVox is enabled and the bubble is not closed via window activation
+  // change, focus on the this tray when the bubble is closed.
+  if (close_reason != CloseReason::kWindowActivation &&
+      Shell::Get()->accessibility_controller() &&
       Shell::Get()->accessibility_controller()->spoken_feedback().enabled()) {
     shelf_->shelf_focus_cycler()->FocusStatusArea(false);
     RequestFocus();
@@ -1048,12 +1048,14 @@ void TrayBackgroundView::UpdateBackgroundColor(bool active) {
 
   // The shelf is not transparent when 1)the shelf is in app mode OR 2) the
   // shelf is in the regular logged in page (not session blocked).
-  bool is_shelf_opaque =
+  const bool is_shelf_opaque =
       (!Shell::Get()->IsInTabletMode() || ShelfConfig::Get()->is_in_app()) &&
       !Shell::Get()->session_controller()->IsUserSessionBlocked();
-  ui::ColorId non_active_color_id =
-      is_shelf_opaque ? cros_tokens::kCrosSysSystemOnBase
-                      : cros_tokens::kCrosSysSystemBaseElevated;
+
+  const ui::ColorId non_active_color_id =
+      (is_shelf_opaque || !chromeos::features::IsSystemBlurEnabled())
+          ? cros_tokens::kCrosSysSystemOnBase
+          : cros_tokens::kCrosSysSystemBaseElevated;
   layer()->SetColor(widget->GetColorProvider()->GetColor(
       active ? cros_tokens::kCrosSysSystemPrimaryContainer
              : non_active_color_id));

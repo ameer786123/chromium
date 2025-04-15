@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -14,6 +15,7 @@
 #include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
 #include "components/subresource_filter/content/shared/browser/child_frame_navigation_test_utils.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
+#include "components/variations/variations_switches.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/test/navigation_simulator.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -46,8 +48,29 @@ const char kFilterDelayAliasChecked[] =
     "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.NameAlias."
     "Checked";
 
+// Incognito versions of above histogram names
+const char kFilterDelayDisallowedIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.Disallowed."
+    "Incognito";
+const char kFilterDelayWouldDisallowIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay."
+    "WouldDisallow.Incognito";
+const char kFilterDelayAllowedIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.Allowed."
+    "Incognito";
+const char kFilterDelayAliasDisallowedIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.NameAlias."
+    "Disallowed.Incognito";
+const char kFilterDelayAliasWouldDisallowIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.NameAlias."
+    "WouldDisallow.Incognito";
+const char kFilterDelayAliasCheckedIncognito[] =
+    "FingerprintingProtection.DocumentLoad.SubframeFilteringDelay.NameAlias."
+    "Checked.Incognito";
+
 class FingerprintingProtectionChildNavigationThrottleTest
-    : public ChildFrameNavigationFilteringThrottleTestHarness {
+    : public ChildFrameNavigationFilteringThrottleTestHarness,
+      public testing::WithParamInterface</*is_incognito*/ bool> {
  public:
   FingerprintingProtectionChildNavigationThrottleTest() = default;
 
@@ -68,6 +91,7 @@ class FingerprintingProtectionChildNavigationThrottleTest
       auto throttle =
           std::make_unique<FingerprintingProtectionChildNavigationThrottle>(
               navigation_handle, parent_filter_.get(),
+              /*is_incognito=*/GetParam(),
               base::BindRepeating([](const GURL& filtered_url) {
                 // TODO(https://crbug.com/40280666): Implement new console
                 // message.
@@ -82,7 +106,12 @@ class FingerprintingProtectionChildNavigationThrottleTest
   }
 };
 
-TEST_F(FingerprintingProtectionChildNavigationThrottleTest, DelayMetrics) {
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix*/,
+    FingerprintingProtectionChildNavigationThrottleTest,
+    testing::Bool());
+
+TEST_P(FingerprintingProtectionChildNavigationThrottleTest, DelayMetrics) {
   base::HistogramTester histogram_tester;
   ChildFrameNavigationFilteringThrottleTestHarness::
       InitializeDocumentSubresourceFilter(GURL("https://example.test"));
@@ -99,6 +128,11 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleTest, DelayMetrics) {
 
   navigation_simulator()->CommitErrorPage();
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 0);
@@ -111,6 +145,16 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleTest, DelayMetrics) {
   EXPECT_EQ(content::NavigationThrottle::PROCEED,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 1);
+
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 1);
@@ -120,7 +164,45 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleTest, DelayMetrics) {
   histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowed, 0);
 }
 
-TEST_F(FingerprintingProtectionChildNavigationThrottleTest,
+// There should be no activation on localhosts, except for when
+// --enable-benchmarking switch is active.
+TEST_P(FingerprintingProtectionChildNavigationThrottleTest,
+       Localhost_SkipThrottleWithoutBenchmarking) {
+  ChildFrameNavigationFilteringThrottleTestHarness::
+      InitializeDocumentSubresourceFilter(
+          GURL("https://127.0.0.1/example.test"));
+  ChildFrameNavigationFilteringThrottleTestHarness::
+      CreateTestSubframeAndInitNavigation(
+          GURL("https://127.0.0.1/example.test/allowed.html"), main_rfh());
+  navigation_simulator()->SetTransition(ui::PAGE_TRANSITION_AUTO_SUBFRAME);
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            SimulateStartAndGetResult(navigation_simulator()));
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            SimulateRedirectAndGetResult(
+                navigation_simulator(),
+                GURL("https://127.0.0.1/example.test/disallowed.html")));
+}
+
+TEST_P(FingerprintingProtectionChildNavigationThrottleTest,
+       Localhost_SkipThrottleWithBenchmarking) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      variations::switches::kEnableBenchmarking);
+  ChildFrameNavigationFilteringThrottleTestHarness::
+      InitializeDocumentSubresourceFilter(
+          GURL("https://127.0.0.1/example.test"));
+  ChildFrameNavigationFilteringThrottleTestHarness::
+      CreateTestSubframeAndInitNavigation(
+          GURL("https://127.0.0.1/example.test/allowed.html"), main_rfh());
+  navigation_simulator()->SetTransition(ui::PAGE_TRANSITION_AUTO_SUBFRAME);
+  EXPECT_EQ(content::NavigationThrottle::PROCEED,
+            SimulateStartAndGetResult(navigation_simulator()));
+  EXPECT_EQ(content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE,
+            SimulateRedirectAndGetResult(
+                navigation_simulator(),
+                GURL("https://127.0.0.1/example.test/disallowed.html")));
+}
+
+TEST_P(FingerprintingProtectionChildNavigationThrottleTest,
        DelayMetricsDryRun) {
   base::HistogramTester histogram_tester;
   ChildFrameNavigationFilteringThrottleTestHarness::
@@ -139,6 +221,11 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleTest,
                 GURL("https://example.test/disallowed.html")));
   navigation_simulator()->Commit();
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 0);
@@ -151,6 +238,16 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleTest,
   EXPECT_EQ(content::NavigationThrottle::PROCEED,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 1);
+
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 1);
@@ -173,7 +270,12 @@ class FingerprintingProtectionChildNavigationThrottleAliasTest
   base::test::ScopedFeatureList feature_list_;
 };
 
-TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix*/,
+    FingerprintingProtectionChildNavigationThrottleAliasTest,
+    testing::Bool());
+
+TEST_P(FingerprintingProtectionChildNavigationThrottleAliasTest,
        FilterOnWillProcessResponse) {
   base::HistogramTester histogram_tester;
   InitializeDocumentSubresourceFilterWithSubstringRules(
@@ -192,6 +294,16 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   EXPECT_EQ(content::NavigationThrottle::CANCEL,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 0);
+
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 1);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 0);
@@ -201,7 +313,7 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowed, 1);
 }
 
-TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
+TEST_P(FingerprintingProtectionChildNavigationThrottleAliasTest,
        DryRunOnWillProcessResponse) {
   base::HistogramTester histogram_tester;
   InitializeDocumentSubresourceFilterWithSubstringRules(
@@ -222,6 +334,12 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   EXPECT_EQ(content::NavigationThrottle::PROCEED,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayAliasChecked, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallow, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowed, 0);
@@ -237,6 +355,16 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   EXPECT_EQ(content::NavigationThrottle::PROCEED,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 0);
+
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 2);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 1);
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 0);
@@ -246,7 +374,7 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowed, 0);
 }
 
-TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
+TEST_P(FingerprintingProtectionChildNavigationThrottleAliasTest,
        AllowedDnsAliasesShouldNotFilter) {
   base::HistogramTester histogram_tester;
   InitializeDocumentSubresourceFilterWithSubstringRules(
@@ -267,6 +395,16 @@ TEST_F(FingerprintingProtectionChildNavigationThrottleAliasTest,
   EXPECT_EQ(content::NavigationThrottle::PROCEED,
             SimulateCommitAndGetResult(navigation_simulator()));
 
+  if (/*is_incognito*/ GetParam()) {
+    histogram_tester.ExpectTotalCount(kFilterDelayDisallowedIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallowIncognito, 0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAllowedIncognito, 1);
+
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasCheckedIncognito, 1);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasWouldDisallowIncognito,
+                                      0);
+    histogram_tester.ExpectTotalCount(kFilterDelayAliasDisallowedIncognito, 0);
+  }
   histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayWouldDisallow, 0);
   histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 1);

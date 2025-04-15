@@ -63,7 +63,14 @@ class ChromeContextMenuItem {
         Item.OPEN_IN_NEW_TAB_IN_GROUP,
         Item.SHARE_HIGHLIGHT,
         Item.REMOVE_HIGHLIGHT,
-        Item.LEARN_MORE
+        Item.LEARN_MORE,
+        Item.SAVE_PAGE,
+        Item.SHARE_PAGE,
+        Item.PRINT_PAGE,
+        Item.BACK,
+        Item.FORWARD,
+        Item.RELOAD,
+        Item.INSPECT_ELEMENT,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface Item {
@@ -111,8 +118,17 @@ class ChromeContextMenuItem {
         int SHARE_HIGHLIGHT = 32;
         int REMOVE_HIGHLIGHT = 33;
         int LEARN_MORE = 34;
+        // Page Group
+        int SAVE_PAGE = 35;
+        int SHARE_PAGE = 36;
+        int PRINT_PAGE = 37;
+        int BACK = 38;
+        int FORWARD = 39;
+        int RELOAD = 40;
+        // Developer Group
+        int INSPECT_ELEMENT = 41;
         // ALWAYS UPDATE!
-        int NUM_ENTRIES = 35;
+        int NUM_ENTRIES = 42;
     }
 
     /** Mapping from {@link Item} to the ID found in the ids.xml. */
@@ -152,6 +168,13 @@ class ChromeContextMenuItem {
         R.id.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.id.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
         R.id.contextmenu_learn_more, // Item.LEARN_MORE
+        R.id.contextmenu_save_page, // Item.SAVE_PAGE
+        R.id.contextmenu_share_page, // Item.SHARE_PAGE
+        R.id.contextmenu_print_page, // Item.PRINT_PAGE
+        R.id.contextmenu_back, // Item.BACK
+        R.id.contextmenu_forward, // Item.FORWARD
+        R.id.contextmenu_reload, // Item.RELOAD
+        R.id.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 
     /** Mapping from {@link Item} to the ID of the string that describes the action of the item. */
@@ -191,6 +214,13 @@ class ChromeContextMenuItem {
         R.string.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.string.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
         R.string.contextmenu_learn_more, // Item.LEARN_MORE
+        R.string.contextmenu_save_page, // Item.SAVE_PAGE
+        R.string.contextmenu_share_page, // Item.SHARE_PAGE
+        R.string.contextmenu_print_page, // Item.PRINT_PAGE
+        R.string.contextmenu_back, // Item.BACK
+        R.string.contextmenu_forward, // Item.FORWARD
+        R.string.contextmenu_reload, // Item.RELOAD
+        R.string.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 
     /**

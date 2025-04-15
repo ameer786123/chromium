@@ -9,8 +9,10 @@ including tips and tricks.
 ## Code Organization
 
 ## Bots & Lab
+
 >**_NOTE:_** Knowledge in this section may become out-of-date as LUCI evolves
 quickly.
+
 ### Builders / Testers
 There are two sets of configuration files for our builders/testers. One is
 for chromium-branded and locates in `src`. The other one is for chrome-branded
@@ -171,6 +173,78 @@ means that the source code of the updater is organized in sub-directories,
 first by functionality (or feature), and second by platform name. For example,
 the source code contains `updater\net` instead of `updater\mac\net`.
 
+### Strings and file paths
+
+Strings in `Posix` are 8-bit encoded characters, usually (but not always) using
+`UTF8` encoding.
+
+Strings in `Windows` can be 8-bit or 16-bit characters, usually `UTF8` or
+`UTF16` respectively. The `updater` project uses 16-bit strings for most
+Windows-specific literals, since that is the Chromium coding style for Windows,
+and there are some Windows APIs that only have the `W` variant that require
+16-bit strings.
+
+The `updater` project uses 8-bit literals and 8-bit characters for
+cross-platform code, and uses conversion functions such as `base::UTF8ToWide`
+and `base::WideToUTF8` to convert to and from 8-bit strings for Windows-specific
+code paths that are called from the cross-platform code.
+
+Using the `ASCII` functions is not allowed in the `updater` codebase, unless
+there is no alternative native or `UTF8` function.
+
+#### Appending strings to a file path
+
+When appending strings to a `FilePath`, there are several functions available,
+such as:
+* `Append`: appends a string using the native format
+* `AppendUTF8`: appends a UTF8-encoded string
+* `AppendASCII`: appends an ASCII-encoded string. ASCII is a subset of UTF8.
+  This function is not used in the `updater` project.
+
+These are the rules to follow when appending strings to a `FilePath`:
+
+1. Use `base::FilePath::Append` for platform-specific code
+    *   Since `Append` does not do any conversions, it is the safest function to
+        use for platform-specific code, since the characters can retain their
+        native format without undergoing any conversions.
+2. Use `base::FilePath::Append` for cross-platform code where
+   `FILE_PATH_LITERAL` can be used to wrap the literals
+    *   Since `Append` does not do any conversions, it is the most efficient
+        function to use in this case.
+3. Use `base::FilePath::AppendUTF8` for all other cross-platform code
+    *   cross-platform code is expected to use UTF8 literals or UTF8 strings
+        only.
+
+#### Creating a file path from a string
+
+These are the rules to follow when constructing a `FilePath` from a string:
+
+1. Use the `base::FilePath` constructor for platform-specific code
+    *   Since the `base::FilePath` constructor does not do any conversions, it
+        is the safest function to use for platform-specific code, since the
+        characters can retain their native format without undergoing any
+        conversions.
+2. Use the `base::FilePath` constructor for cross-platform code where
+   `FILE_PATH_LITERAL` can be used to wrap the literals
+    *   Since the `base::FilePath` constructor does not do any conversions, it
+        is the most efficient function to use in this case.
+3. Use `base::FilePath::FromUTF8Unsafe` for all other cross-platform code
+    *   cross-platform code is expected to use UTF8 literals or UTF8 strings
+        only.
+
+#### Converting a file path to a string
+
+These are the rules to follow when converting a `FilePath` to a string:
+
+1. Use `base::FilePath::value()` for platform-specific code
+    *   Since `value()` does not do any conversions, it is the safest function
+        to use for platform-specific code, since the characters can retain their
+        native format without undergoing any conversions.
+2. Use `base::FilePath::AsUTF8Unsafe` for cross-platform code
+    *   `AsUTF8Unsafe` is safe to use for both `Posix` (where it returns the
+        underlying string unmodified) and `Windows` (where the underlying wide
+        string is converted using `base::WideToUTF8`).
+
 ### Mind the dependencies
 
 To enforce layering, there are enforced rules about what can be included in
@@ -289,6 +363,27 @@ Build outputs will land in the directory created by `gn gen` that you have been
 providing to assorted `gn`, `ninja`, and `autoninja` commands. `updater.zip`
 contains copies of the "final" outputs created by the build. `UpdaterSetup` is
 probably what you want for installing the updater you have built.
+
+## Signing
+
+GoogleUpdater signing doesn't take place on Chromium infra, but rather on
+proprietary Google infrastructure (go/o4signing). The build system packages all
+necessary ingredients for signing in updater.zip, which is uploaded by Chrome
+archive builders to the unsigned builds bucket in GCS. The zip contains both
+the artifacts to be signed and scripts to sign them. Signing infrastructure is
+triggered after each upload, ingests the files, injects the key material, signs,
+and then uploads the results to the signed builds bucket. More detail is
+available for Googlers at go/o4signing.
+
+On Windows, it's important to sign updater.exe, and then package that into
+UpdaterSetup.exe, and sign UpdaterSetup.exe. The signing scripts take an
+unsigned UpdaterSetup.exe, extract updater.exe, sign, reconstruct, and then
+sign the new UpdaterSetup.exe.
+
+On macOS, the GoogleUpdater.app bundle is signed directly, and then notarized
+(sent to Apple for countersigning). Notarization is "stapled" into the app
+bundle, and then the entire thing is packaged into a DMG, which in turn is
+signed, notarized, and stapled.
 
 ## Code Coverage
 Gerrit now down-votes the changes that do not have enough coverage. And it's

@@ -10,8 +10,10 @@
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/views/win/hwnd_message_handler_delegate.h"
 #include "ui/views/win/hwnd_util.h"
 
@@ -31,7 +33,7 @@ constexpr int kZoomedWindowSizeScaleFactor = 2;
 // cannot rely on the platform window size since it gets clamped to the monitor
 // work area.
 gfx::Rect ScaleWindowBoundsMaybe(HWND hwnd, const gfx::Rect& bounds) {
-  const float scale = display::win::ScreenWin::GetScaleFactorForHWND(hwnd);
+  const float scale = display::win::GetScreenWin()->GetScaleFactorForHWND(hwnd);
   if (scale > 1.0) {
     gfx::RectF scaled_bounds(bounds);
     scaled_bounds.Scale(scale);
@@ -423,12 +425,19 @@ void HWNDMessageHandlerHeadless::SetHeadlessWindowBounds(
 void HWNDMessageHandlerHeadless::SetBoundsInternal(
     const gfx::Rect& bounds_in_pixels,
     bool force_size_changed) {
-  gfx::Size old_size = GetClientAreaBounds().size();
+  gfx::Rect old_bounds = GetClientAreaBounds();
 
-  // Update the headless window bounds and notify the delegate pretending the
-  // platform window size has been changed.
   SetHeadlessWindowBounds(bounds_in_pixels);
-  if (old_size != bounds_in_pixels.size() || force_size_changed) {
+
+  // In normal mode the delegate is called when the platform window receives
+  // WM_MOVE/WM_MOVING messages, however, in headless mode platform window is
+  // never moved, so call the delegate here. See http://crbug.com/401294443.
+  if (old_bounds.origin() != bounds_in_pixels.origin()) {
+    delegate_->HandleMove();
+  }
+
+  // Notify the delegate pretending the platform window size has been changed.
+  if (old_bounds.size() != bounds_in_pixels.size() || force_size_changed) {
     delegate_->HandleClientSizeChanged(GetClientAreaBounds().size());
   }
 }

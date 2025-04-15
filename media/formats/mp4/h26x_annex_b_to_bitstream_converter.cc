@@ -14,18 +14,21 @@
 namespace media {
 
 H26xAnnexBToBitstreamConverter::H26xAnnexBToBitstreamConverter(
-    VideoCodec video_codec) {
+    VideoCodec video_codec,
+    bool add_parameter_sets_in_bitstream) {
   CHECK(video_codec == VideoCodec::kH264
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
         || video_codec == VideoCodec::kHEVC
 #endif
   );
   if (video_codec == VideoCodec::kH264) {
-    h264_converter_ = std::make_unique<H264AnnexBToAvcBitstreamConverter>();
+    h264_converter_ = std::make_unique<H264AnnexBToAvcBitstreamConverter>(
+        add_parameter_sets_in_bitstream);
   }
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
   if (video_codec == VideoCodec::kHEVC) {
-    h265_converter_ = std::make_unique<H265AnnexBToHevcBitstreamConverter>();
+    h265_converter_ = std::make_unique<H265AnnexBToHevcBitstreamConverter>(
+        add_parameter_sets_in_bitstream);
   }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 }
@@ -47,7 +50,7 @@ MP4Status H26xAnnexBToBitstreamConverter::ConvertChunk(
                                          size_out);
   }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 scoped_refptr<DecoderBuffer> H26xAnnexBToBitstreamConverter::Convert(
@@ -86,7 +89,7 @@ H26xAnnexBToBitstreamConverter::GetCodecDescription() {
     return hevc_codec_description;
   }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 CodecProfileLevel H26xAnnexBToBitstreamConverter::GetCodecProfileLevel() {
@@ -106,7 +109,7 @@ CodecProfileLevel H26xAnnexBToBitstreamConverter::GetCodecProfileLevel() {
         config.general_level_idc};
   }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace media

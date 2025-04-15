@@ -13,21 +13,23 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_util.h"
+#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/api/automation_internal/chrome_automation_internal_api_delegate.h"
 #include "chrome/browser/extensions/api/chrome_device_permissions_prompt.h"
 #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
 #include "chrome/browser/extensions/api/declarative_content/default_content_predicate_evaluators.h"
-#include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/api/feedback_private/chrome_feedback_private_delegate.h"
 #include "chrome/browser/extensions/api/file_system/chrome_file_system_delegate.h"
 #include "chrome/browser/extensions/api/file_system/consent_provider_impl.h"
 #include "chrome/browser/extensions/api/management/chrome_management_api_delegate.h"
 #include "chrome/browser/extensions/api/messaging/chrome_messaging_delegate.h"
+#include "chrome/browser/extensions/api/messaging/chrome_native_message_port_dispatcher.h"
 #include "chrome/browser/extensions/api/metrics_private/chrome_metrics_private_delegate.h"
 #include "chrome/browser/extensions/api/storage/managed_value_store_cache.h"
 #include "chrome/browser/extensions/api/storage/sync_value_store_cache.h"
+#include "chrome/browser/extensions/extension_action_dispatcher.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/system_display/display_info_provider.h"
@@ -57,6 +59,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/api/messaging/native_message_host.h"
+#include "extensions/browser/api/messaging/native_message_port.h"
 #include "extensions/browser/api/system_display/display_info_provider.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
@@ -94,7 +98,7 @@ namespace extensions {
 
 ChromeExtensionsAPIClient::ChromeExtensionsAPIClient() = default;
 
-ChromeExtensionsAPIClient::~ChromeExtensionsAPIClient() {}
+ChromeExtensionsAPIClient::~ChromeExtensionsAPIClient() = default;
 
 void ChromeExtensionsAPIClient::AddAdditionalValueStoreCaches(
     content::BrowserContext* context,
@@ -252,8 +256,8 @@ void ChromeExtensionsAPIClient::UpdateActionCount(
   if (ExtensionTabUtil::GetTabById(
           tab_id, context, true /* include_incognito */, &tab_contents) &&
       tab_contents) {
-    ExtensionActionAPI::Get(context)->NotifyChange(action, tab_contents,
-                                                   context);
+    ExtensionActionDispatcher::Get(context)->NotifyChange(action, tab_contents,
+                                                          context);
   }
 }
 
@@ -271,8 +275,8 @@ void ChromeExtensionsAPIClient::ClearActionCount(
           context, true /* include_incognito */);
 
   for (auto* active_contents : contents_to_notify) {
-    ExtensionActionAPI::Get(context)->NotifyChange(action, active_contents,
-                                                   context);
+    ExtensionActionDispatcher::Get(context)->NotifyChange(
+        action, active_contents, context);
   }
 }
 
@@ -290,6 +294,7 @@ void ChromeExtensionsAPIClient::OpenFileUrl(
   Navigate(&navigate_params);
 }
 
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
 AppViewGuestDelegate* ChromeExtensionsAPIClient::CreateAppViewGuestDelegate()
     const {
   return new ChromeAppViewGuestDelegate();
@@ -322,6 +327,7 @@ ChromeExtensionsAPIClient::CreateWebViewPermissionHelperDelegate(
     WebViewPermissionHelper* web_view_permission_helper) const {
   return new ChromeWebViewPermissionHelperDelegate(web_view_permission_helper);
 }
+#endif  // BUILDFLAG(ENABLE_GUEST_VIEW)
 
 #if BUILDFLAG(IS_CHROMEOS)
 std::unique_ptr<ConsentProvider>
@@ -471,6 +477,15 @@ ChromeExtensionsAPIClient::GetAutomationInternalApiDelegate() {
         std::make_unique<ChromeAutomationInternalApiDelegate>();
   }
   return extensions_automation_api_delegate_.get();
+}
+
+std::unique_ptr<NativeMessagePortDispatcher>
+ChromeExtensionsAPIClient::CreateNativeMessagePortDispatcher(
+    std::unique_ptr<NativeMessageHost> host,
+    base::WeakPtr<NativeMessagePort> port,
+    scoped_refptr<base::SingleThreadTaskRunner> message_service_task_runner) {
+  return std::make_unique<ChromeNativeMessagePortDispatcher>(
+      std::move(host), std::move(port), std::move(message_service_task_runner));
 }
 
 std::vector<KeyedServiceBaseFactory*>

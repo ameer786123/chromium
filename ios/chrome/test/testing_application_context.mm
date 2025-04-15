@@ -13,6 +13,7 @@
 #import "components/network_time/network_time_tracker.h"
 #import "components/os_crypt/async/browser/test_utils.h"
 #import "components/variations/service/variations_service.h"
+#import "ios/chrome/browser/download/model/auto_deletion/auto_deletion_service.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/configuration_policy_handler_list_factory.h"
 #import "ios/chrome/browser/profile/model/ios_chrome_io_thread.h"
@@ -77,9 +78,15 @@ void TestingApplicationContext::SetLastShutdownClean(bool clean) {
   was_last_shutdown_clean_ = clean;
 }
 
-void TestingApplicationContext::SetProfileManager(ProfileManagerIOS* manager) {
+void TestingApplicationContext::SetProfileManagerAndAccountProfileMapper(
+    ProfileManagerIOS* manager,
+    AccountProfileMapper* mapper) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!default_account_profile_mapper_);
+  DCHECK(!custom_account_profile_mapper_ || !mapper);
+  DCHECK(!!manager == !!mapper);
   profile_manager_ = manager;
+  custom_account_profile_mapper_ = mapper;
 }
 
 void TestingApplicationContext::SetVariationsService(
@@ -92,6 +99,7 @@ void TestingApplicationContext::SetSystemIdentityManager(
     std::unique_ptr<SystemIdentityManager> system_identity_manager) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!system_identity_manager_);
+  DCHECK(!default_account_profile_mapper_);
   system_identity_manager_ = std::move(system_identity_manager);
 }
 
@@ -142,8 +150,7 @@ TestingApplicationContext::GetSharedURLLoaderFactory() {
 network::mojom::NetworkContext*
 TestingApplicationContext::GetSystemNetworkContext() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 const std::string& TestingApplicationContext::GetApplicationLocale() {
@@ -278,11 +285,14 @@ SystemIdentityManager* TestingApplicationContext::GetSystemIdentityManager() {
 
 AccountProfileMapper* TestingApplicationContext::GetAccountProfileMapper() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!account_profile_mapper_) {
-    account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-        GetSystemIdentityManager(), GetProfileManager());
+  if (custom_account_profile_mapper_) {
+    return custom_account_profile_mapper_;
   }
-  return account_profile_mapper_.get();
+  if (!default_account_profile_mapper_) {
+    default_account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
+        GetSystemIdentityManager(), /*profile_manager=*/nullptr);
+  }
+  return default_account_profile_mapper_.get();
 }
 
 IncognitoSessionTracker*
@@ -317,6 +327,15 @@ TestingApplicationContext::GetAdditionalFeaturesController() {
         ios::provider::CreateAdditionalFeaturesController();
   }
   return additional_features_controller_.get();
+}
+
+auto_deletion::AutoDeletionService*
+TestingApplicationContext::GetAutoDeletionService() {
+  if (!auto_deletion_service_) {
+    auto_deletion_service_ =
+        std::make_unique<auto_deletion::AutoDeletionService>(GetLocalState());
+  }
+  return auto_deletion_service_.get();
 }
 
 #if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)

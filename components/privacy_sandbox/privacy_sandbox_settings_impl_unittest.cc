@@ -6,6 +6,7 @@
 
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 #include "base/json/values_util.h"
@@ -41,10 +42,22 @@
 #include "url/origin.h"
 
 namespace privacy_sandbox {
-
-using Topic = browsing_topics::Topic;
-
 namespace {
+
+using ::browsing_topics::Topic;
+using ::privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate;
+using ::privacy_sandbox_test_util::MultipleInputKeys;
+using ::privacy_sandbox_test_util::MultipleOutputKeys;
+using ::privacy_sandbox_test_util::MultipleStateKeys;
+using ::privacy_sandbox_test_util::PrivacySandboxSettingsTestPeer;
+using ::privacy_sandbox_test_util::SiteDataExceptions;
+using ::privacy_sandbox_test_util::TestCase;
+using ::privacy_sandbox_test_util::TestInput;
+using ::privacy_sandbox_test_util::TestOutput;
+using ::privacy_sandbox_test_util::TestState;
+using ::testing::Return;
+
+using Status = PrivacySandboxSettingsTestPeer::Status;
 
 using enum privacy_sandbox_test_util::StateKey;
 using enum privacy_sandbox_test_util::InputKey;
@@ -62,15 +75,6 @@ constexpr auto kLimitedThirdParty =
 
 constexpr int kTestTaxonomyVersion = 1;
 
-using privacy_sandbox_test_util::MultipleInputKeys;
-using privacy_sandbox_test_util::MultipleOutputKeys;
-using privacy_sandbox_test_util::MultipleStateKeys;
-using privacy_sandbox_test_util::SiteDataExceptions;
-using privacy_sandbox_test_util::TestCase;
-using privacy_sandbox_test_util::TestInput;
-using privacy_sandbox_test_util::TestOutput;
-using privacy_sandbox_test_util::TestState;
-
 }  // namespace
 
 class PrivacySandboxSettingsTest : public testing::Test {
@@ -78,20 +82,19 @@ class PrivacySandboxSettingsTest : public testing::Test {
   PrivacySandboxSettingsTest()
       : browser_task_environment_(
             base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-        scoped_attestations_(
-            privacy_sandbox::PrivacySandboxAttestations::CreateForTesting()) {
+        scoped_attestations_(PrivacySandboxAttestations::CreateForTesting()) {
     // Mark all Privacy Sandbox APIs as attested since the test cases are
     // testing behaviors not related to attestations.
-    privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+    PrivacySandboxAttestations::GetInstance()
         ->SetAllPrivacySandboxAttestedForTesting(true);
     content_settings::CookieSettings::RegisterProfilePrefs(prefs()->registry());
     HostContentSettingsMap::RegisterProfilePrefs(prefs()->registry());
-    privacy_sandbox::RegisterProfilePrefs(prefs()->registry());
+    RegisterProfilePrefs(prefs()->registry());
     host_content_settings_map_ = new HostContentSettingsMap(
         &prefs_, false /* is_off_the_record */, false /* store_last_modified */,
         false /* restore_session */, false /* should_record_metrics */);
     tracking_protection_settings_ =
-        std::make_unique<privacy_sandbox::TrackingProtectionSettings>(
+        std::make_unique<TrackingProtectionSettings>(
             &prefs_, host_content_settings_map_.get(),
             /*is_incognito=*/false);
     cookie_settings_ = new content_settings::CookieSettings(
@@ -107,8 +110,8 @@ class PrivacySandboxSettingsTest : public testing::Test {
   }
 
   void SetUp() override {
-    auto mock_delegate = std::make_unique<testing::NiceMock<
-        privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate>>();
+    auto mock_delegate = std::make_unique<
+        testing::NiceMock<MockPrivacySandboxSettingsDelegate>>();
     mock_delegate_ = mock_delegate.get();
 
     InitializePrefsBeforeStart();
@@ -141,10 +144,7 @@ class PrivacySandboxSettingsTest : public testing::Test {
             /*result=*/false);
   }
 
-  privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate*
-  mock_delegate() {
-    return mock_delegate_;
-  }
+  MockPrivacySandboxSettingsDelegate* mock_delegate() { return mock_delegate_; }
   sync_preferences::TestingPrefServiceSyncable* prefs() { return &prefs_; }
   HostContentSettingsMap* host_content_settings_map() {
     return host_content_settings_map_.get();
@@ -158,10 +158,14 @@ class PrivacySandboxSettingsTest : public testing::Test {
   PrivacySandboxSettingsImpl* privacy_sandbox_settings_impl() {
     return privacy_sandbox_settings_.get();
   }
+  bool IsFledgeJoiningAllowed(const std::string& url) {
+    return PrivacySandboxSettingsTestPeer(privacy_sandbox_settings_impl())
+        .IsFledgeJoiningAllowed(url::Origin::Create(GURL(url)));
+  }
   void ResetDisabledTopicsFeature(const std::string& topics_to_disable) {
     // Recreate the service to reset the cache of topics blocked via Finch.
-    auto mock_delegate = std::make_unique<testing::NiceMock<
-        privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate>>();
+    auto mock_delegate = std::make_unique<
+        testing::NiceMock<MockPrivacySandboxSettingsDelegate>>();
     mock_delegate_ = mock_delegate.get();
     privacy_sandbox_settings_ = std::make_unique<PrivacySandboxSettingsImpl>(
         std::move(mock_delegate), host_content_settings_map(), cookie_settings_,
@@ -183,19 +187,14 @@ class PrivacySandboxSettingsTest : public testing::Test {
   base::test::ScopedFeatureList feature_list_;
   base::test::ScopedFeatureList disabled_topics_feature_list_;
 
-  using Status = PrivacySandboxSettingsImpl::Status;
-
  private:
   content::BrowserTaskEnvironment browser_task_environment_;
-  raw_ptr<privacy_sandbox_test_util::MockPrivacySandboxSettingsDelegate,
-          DanglingUntriaged>
-      mock_delegate_;
+  raw_ptr<MockPrivacySandboxSettingsDelegate, DanglingUntriaged> mock_delegate_;
   sync_preferences::TestingPrefServiceSyncable prefs_;
   browsing_topics::MockBrowsingTopicsService mock_browsing_topics_service_;
   scoped_refptr<HostContentSettingsMap> host_content_settings_map_;
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;
-  std::unique_ptr<privacy_sandbox::TrackingProtectionSettings>
-      tracking_protection_settings_;
+  std::unique_ptr<TrackingProtectionSettings> tracking_protection_settings_;
   ScopedPrivacySandboxAttestations scoped_attestations_;
 
   std::unique_ptr<PrivacySandboxSettingsImpl> privacy_sandbox_settings_;
@@ -216,37 +215,25 @@ TEST_F(PrivacySandboxSettingsTest, TopicsDataAccessibleSince) {
 TEST_F(PrivacySandboxSettingsTest, FledgeJoiningAllowed) {
   // Whether or not a site can join a user to an interest group is independent
   // of any other profile state.
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
 
   // Settings should match at the eTLD + 1 level.
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("example.com", false);
 
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://subsite.example.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://example.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com:888"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com.au"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://subsite.example.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("http://example.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://example.com:888"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com.au"));
 
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("example.com", true);
 
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://subsite.example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com:888"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com.au"))));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://subsite.example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("http://example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com:888"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com.au"));
 }
 
 TEST_F(PrivacySandboxSettingsTest, NonEtldPlusOneBlocked) {
@@ -255,40 +242,28 @@ TEST_F(PrivacySandboxSettingsTest, NonEtldPlusOneBlocked) {
                                                       false);
 
   // Applied setting should affect subdomaings.
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://subsite.example.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://another.subsite.example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://subsite.example.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("http://another.subsite.example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
 
   // When removing the setting, only an exact match, and not the associated
   // eTLD+1, should remove a setting.
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("example.com", true);
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://subsite.example.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://another.subsite.example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://subsite.example.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("http://another.subsite.example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
 
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("subsite.example.com",
                                                       true);
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://subsite.example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://another.subsite.example.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://example.com"))));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://subsite.example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("http://another.subsite.example.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://example.com"));
 
   // IP addresses should also be accepted as a fallback.
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("10.1.1.100", false);
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://10.1.1.100"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("http://10.1.1.100:8080"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://10.2.2.200"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://10.1.1.100"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("http://10.1.1.100:8080"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://10.2.2.200"));
 }
 
 TEST_F(PrivacySandboxSettingsTest, FledgeJoinSettingTimeRangeDeletion) {
@@ -303,34 +278,25 @@ TEST_F(PrivacySandboxSettingsTest, FledgeJoinSettingTimeRangeDeletion) {
   task_environment()->AdvanceClock(base::Hours(1));
   privacy_sandbox_settings()->SetFledgeJoiningAllowed("third.com", false);
 
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://first.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://second.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://third.com"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://first.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://second.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://third.com"));
 
   // Construct a deletion which only targets the second setting.
   privacy_sandbox_settings()->ClearFledgeJoiningAllowedSettings(
       kSecondSettingTime - base::Seconds(1),
       kSecondSettingTime + base::Seconds(1));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://first.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://second.com"))));
-  EXPECT_FALSE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://third.com"))));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://first.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://second.com"));
+  EXPECT_FALSE(IsFledgeJoiningAllowed("https://third.com"));
 
   // Perform a maximmal time range deletion, which should remove the two
   // remaining settings.
   privacy_sandbox_settings()->ClearFledgeJoiningAllowedSettings(
       base::Time(), base::Time::Max());
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://first.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://second.com"))));
-  EXPECT_TRUE(privacy_sandbox_settings_impl()->IsFledgeJoiningAllowed(
-      url::Origin::Create(GURL("https://third.com"))));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://first.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://second.com"));
+  EXPECT_TRUE(IsFledgeJoiningAllowed("https://third.com"));
 }
 
 TEST_F(PrivacySandboxSettingsTest, OnRelatedWebsiteSetsEnabledChanged) {
@@ -527,7 +493,7 @@ TEST_F(PrivacySandboxSettingsTest,
   EXPECT_CALL(*mock_delegate(),
               GetCookieDeprecationExperimentCurrentEligibility())
       .Times(1)
-      .WillOnce(testing::Return(TpcdExperimentEligibility(
+      .WillOnce(Return(TpcdExperimentEligibility(
           TpcdExperimentEligibility::Reason::k3pCookiesBlocked)));
   EXPECT_EQ(privacy_sandbox_settings()
                 ->GetCookieDeprecationExperimentCurrentEligibility()
@@ -537,7 +503,7 @@ TEST_F(PrivacySandboxSettingsTest,
   EXPECT_CALL(*mock_delegate(),
               GetCookieDeprecationExperimentCurrentEligibility())
       .Times(1)
-      .WillOnce(testing::Return(TpcdExperimentEligibility(
+      .WillOnce(Return(TpcdExperimentEligibility(
           TpcdExperimentEligibility::Reason::kEligible)));
   EXPECT_EQ(privacy_sandbox_settings()
                 ->GetCookieDeprecationExperimentCurrentEligibility()
@@ -548,12 +514,12 @@ TEST_F(PrivacySandboxSettingsTest,
 TEST_F(PrivacySandboxSettingsTest, IsCookieDeprecationLabelAllowed) {
   EXPECT_CALL(*mock_delegate(), IsCookieDeprecationLabelAllowed())
       .Times(1)
-      .WillOnce(testing::Return(false));
+      .WillOnce(Return(false));
   EXPECT_FALSE(privacy_sandbox_settings()->IsCookieDeprecationLabelAllowed());
 
   EXPECT_CALL(*mock_delegate(), IsCookieDeprecationLabelAllowed())
       .Times(1)
-      .WillOnce(testing::Return(true));
+      .WillOnce(Return(true));
   EXPECT_TRUE(privacy_sandbox_settings()->IsCookieDeprecationLabelAllowed());
 }
 
@@ -600,7 +566,7 @@ TEST_P(
   if (enabled) {
     EXPECT_CALL(*mock_delegate(),
                 AreThirdPartyCookiesBlockedByCookieDeprecationExperiment())
-        .WillOnce(testing::Return(false));
+        .WillOnce(Return(false));
   } else {
     EXPECT_CALL(*mock_delegate(),
                 AreThirdPartyCookiesBlockedByCookieDeprecationExperiment())
@@ -622,7 +588,7 @@ TEST_P(
   if (enabled) {
     EXPECT_CALL(*mock_delegate(),
                 AreThirdPartyCookiesBlockedByCookieDeprecationExperiment())
-        .WillOnce(testing::Return(true));
+        .WillOnce(Return(true));
   } else {
     EXPECT_CALL(*mock_delegate(),
                 AreThirdPartyCookiesBlockedByCookieDeprecationExperiment())
@@ -759,7 +725,7 @@ TEST_P(PrivacySandboxSettingsPrivateAggregationDebugModeTest,
 
   ON_CALL(*mock_delegate(),
           AreThirdPartyCookiesBlockedByCookieDeprecationExperiment())
-      .WillByDefault(testing::Return(test_case.cookies_blocked_by_experiment));
+      .WillByDefault(Return(test_case.cookies_blocked_by_experiment));
 
   prefs()->SetUserPref(prefs::kCookieControlsMode,
                        std::make_unique<base::Value>(static_cast<int>(
@@ -833,12 +799,12 @@ TEST_F(PrivacySandboxSettingsMockDelegateTest, IsSubjectToM1NoticeRestricted) {
   // The settings should return the decision made by the delegate.
   EXPECT_CALL(*mock_delegate(), IsSubjectToM1NoticeRestricted())
       .Times(1)
-      .WillOnce(testing::Return(true));
+      .WillOnce(Return(true));
   EXPECT_TRUE(privacy_sandbox_settings()->IsSubjectToM1NoticeRestricted());
 
   EXPECT_CALL(*mock_delegate(), IsSubjectToM1NoticeRestricted())
       .Times(1)
-      .WillOnce(testing::Return(false));
+      .WillOnce(Return(false));
   EXPECT_FALSE(privacy_sandbox_settings()->IsSubjectToM1NoticeRestricted());
 }
 
@@ -875,7 +841,7 @@ class PrivacySandboxSettingsM1Test : public PrivacySandboxSettingsTest {
   // Pseudo-constants for the convenience of tests that need to check values of
   // type bool*. We can't actually make these const, as then dereferencing them
   // would give the wrong type (i.e. const bool*). Since we are using
-  // absl::variant for the test outputs, the types must exactly match.
+  // std::variant for the test outputs, the types must exactly match.
   bool kTrue_ = true;
   bool kFalse_ = false;
 
@@ -921,7 +887,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApiPreferenceEnabled) {
                kIsSharedStorageAllowed, kIsSharedStorageSelectURLAllowed,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -933,7 +899,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApiPreferenceEnabled) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsSharedStorageSelectURLBlockSiteSettingSpecific,
@@ -976,7 +942,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApiPreferenceDisabled) {
                kIsPrivateAggregationDebugModeAllowed},
            false},
           {MultipleOutputKeys{kIsSharedStorageAllowed,
-                              kIsLocalUnpartitionedDataAccessAllowed},
+                              kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -990,7 +956,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApiPreferenceDisabled) {
                kIsPrivateAggregationAllowedMetric},
            static_cast<int>(Status::kApisDisabled)},
           {MultipleOutputKeys{kIsSharedStorageAllowedMetric,
-                              kIsLocalUnpartitionedDataAccessAllowedMetric},
+                              kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsSharedStorageSelectURLBlockSiteSettingSpecific,
@@ -1000,9 +966,9 @@ TEST_F(PrivacySandboxSettingsM1Test, ApiPreferenceDisabled) {
 
 TEST_F(
     PrivacySandboxSettingsM1Test,
-    CookieControlsModeEffectsOnlyPrivateAggregationDebugModeAndFencedFrameLocalUnpartitionedDataAccess) {
-  // Confirm that Private Aggregation Debug Mode and fenced frame local
-  // unpartitioned data are the only M1 kAPIs affected by 3PC blocking.
+    CookieControlsModeEffectsOnlyPrivateAggregationDebugModeAndFencedStorageRead) {
+  // Confirm that Private Aggregation Debug Mode and fenced storage read are the
+  // only M1 kAPIs affected by 3PC blocking.
   RunTestCase(
       TestState{{MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
                                    kM1FledgeEnabledUserPrefValue,
@@ -1030,7 +996,7 @@ TEST_F(
                kIsPrivateAggregationAllowed},
            true},
           {MultipleOutputKeys{kIsPrivateAggregationDebugModeAllowed,
-                              kIsLocalUnpartitionedDataAccessAllowed},
+                              kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1043,7 +1009,7 @@ TEST_F(
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric},
            static_cast<int>(Status::kAllowed)},
-          {kIsLocalUnpartitionedDataAccessAllowedMetric,
+          {kIsFencedStorageReadAllowedMetric,
            static_cast<int>(Status::kApisDisabled)}});
 }
 
@@ -1087,7 +1053,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataDefaultBlockExceptionApplies) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsCookieDeprecationLabelAllowedForContext,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{kIsTopicsAllowedMetric,
                               kIsAttributionReportingEverAllowedMetric},
@@ -1100,7 +1066,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataDefaultBlockExceptionApplies) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kSiteDataAccessBlocked)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsSharedStorageSelectURLBlockSiteSettingSpecific,
@@ -1142,7 +1108,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataBlockExceptionApplies) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsCookieDeprecationLabelAllowedForContext,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{kIsTopicsAllowedMetric,
                               kIsAttributionReportingEverAllowedMetric},
@@ -1155,7 +1121,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataBlockExceptionApplies) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kSiteDataAccessBlocked)}});
 }
 
@@ -1185,7 +1151,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataAllowDoesntOverridePref) {
       TestOutput{
           {MultipleOutputKeys{kIsSharedStorageAllowed,
                               kIsCookieDeprecationLabelAllowedForContext,
-                              kIsLocalUnpartitionedDataAccessAllowed},
+                              kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{
                kIsTopicsAllowed, kIsTopicsAllowedForContext,
@@ -1197,7 +1163,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataAllowDoesntOverridePref) {
                kIsPrivateAggregationDebugModeAllowed},
            false},
           {MultipleOutputKeys{kIsSharedStorageAllowedMetric,
-                              kIsLocalUnpartitionedDataAccessAllowedMetric},
+                              kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1244,7 +1210,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataAllowExceptions) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsCookieDeprecationLabelAllowedForContext,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1255,7 +1221,7 @@ TEST_F(PrivacySandboxSettingsM1Test, SiteDataAllowExceptions) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)}});
 }
 
@@ -1291,7 +1257,7 @@ TEST_F(PrivacySandboxSettingsM1Test, UnrelatedSiteDataBlock) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsCookieDeprecationLabelAllowedForContext,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1303,7 +1269,7 @@ TEST_F(PrivacySandboxSettingsM1Test, UnrelatedSiteDataBlock) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)}});
 }
 
@@ -1341,7 +1307,7 @@ TEST_F(PrivacySandboxSettingsM1Test, UnrelatedSiteDataAllow) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsCookieDeprecationLabelAllowedForContext,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{kIsTopicsAllowedMetric,
                               kIsAttributionReportingEverAllowedMetric},
@@ -1354,7 +1320,7 @@ TEST_F(PrivacySandboxSettingsM1Test, UnrelatedSiteDataAllow) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kSiteDataAccessBlocked)}});
 }
 
@@ -1392,7 +1358,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApisAreOffInIncognito) {
                kIsSharedStorageAllowed, kIsSharedStorageSelectURLAllowed,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1404,7 +1370,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApisAreOffInIncognito) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kIncognitoProfile)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsSharedStorageSelectURLBlockSiteSettingSpecific,
@@ -1446,7 +1412,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApisAreOffForRestrictedAccounts) {
                kIsSharedStorageAllowed, kIsSharedStorageSelectURLAllowed,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1458,7 +1424,7 @@ TEST_F(PrivacySandboxSettingsM1Test, ApisAreOffForRestrictedAccounts) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kRestricted)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsSharedStorageSelectURLBlockSiteSettingSpecific,
@@ -1534,7 +1500,7 @@ TEST_F(PrivacySandboxSettingsM1Test, NoAppropriateTopicsConsent) {
                kIsSharedStorageAllowed, kIsSharedStorageSelectURLAllowed,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            true},
           {MultipleOutputKeys{kIsTopicsAllowed, kIsTopicsAllowedForContext},
            false},
@@ -1547,7 +1513,7 @@ TEST_F(PrivacySandboxSettingsM1Test, NoAppropriateTopicsConsent) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric,
@@ -1586,7 +1552,7 @@ class PrivacySandboxSettingsM1RestrictedNotice
 TEST_F(PrivacySandboxSettingsM1RestrictedNotice,
        AllApisAreOffExceptMeasurementForRestrictedAccounts) {
   ON_CALL(*mock_delegate(), IsRestrictedNoticeEnabled())
-      .WillByDefault(testing::Return(true));
+      .WillByDefault(Return(true));
   RunTestCase(
       TestState{{MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
                                    kM1FledgeEnabledUserPrefValue,
@@ -1609,7 +1575,7 @@ TEST_F(PrivacySandboxSettingsM1RestrictedNotice,
                               kIsFledgeUpdateAllowed, kIsFledgeSellAllowed,
                               kIsFledgeBuyAllowed, kIsSharedStorageAllowed,
                               kIsSharedStorageSelectURLAllowed,
-                              kIsLocalUnpartitionedDataAccessAllowed},
+                              kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedMetric, kIsTopicsAllowedForContextMetric,
@@ -1617,7 +1583,7 @@ TEST_F(PrivacySandboxSettingsM1RestrictedNotice,
                kIsFledgeUpdateAllowedMetric, kIsFledgeSellAllowedMetric,
                kIsFledgeBuyAllowedMetric, kIsSharedStorageAllowedMetric,
                kIsSharedStorageSelectURLAllowedMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kRestricted)},
 
           {MultipleOutputKeys{kIsAttributionReportingAllowed,
@@ -1640,7 +1606,7 @@ class PrivacySandboxAttestationsTest : public base::test::WithFeatureOverride,
             kDefaultAllowPrivacySandboxAttestations) {
     // This test suite tests Privacy Sandbox Attestations related behaviors,
     // turn off the setting that makes all APIs considered attested.
-    privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+    PrivacySandboxAttestations::GetInstance()
         ->SetAllPrivacySandboxAttestedForTesting(false);
   }
 
@@ -1681,29 +1647,30 @@ TEST_P(PrivacySandboxAttestationsTest, AttestationsFileNotYetChecked) {
       TestOutput{
           {MultipleOutputKeys{
                kIsTopicsAllowedForContext, kIsAttributionReportingAllowed,
-               kMaySendAttributionReport, kIsFledgeJoinAllowed,
-               kIsFledgeLeaveAllowed, kIsFledgeUpdateAllowed,
-               kIsFledgeSellAllowed, kIsFledgeBuyAllowed,
+               kIsFledgeJoinAllowed, kIsFledgeLeaveAllowed,
+               kIsFledgeUpdateAllowed, kIsFledgeSellAllowed,
+               kIsFledgeBuyAllowed,
                kIsEventReportingDestinationAttestedForFledge,
                kIsEventReportingDestinationAttestedForSharedStorage,
                kIsSharedStorageAllowed, kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            IsAttestationsDefaultAllowed()},
           {MultipleOutputKeys{
                kIsTopicsAllowedForContextMetric,
-               kIsAttributionReportingAllowedMetric,
-               kMaySendAttributionReportMetric, kIsFledgeJoinAllowedMetric,
+               kIsAttributionReportingAllowedMetric, kIsFledgeJoinAllowedMetric,
                kIsFledgeLeaveAllowedMetric, kIsFledgeUpdateAllowedMetric,
                kIsFledgeSellAllowedMetric, kIsFledgeBuyAllowedMetric,
                kIsSharedStorageAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(IsAttestationsDefaultAllowed()
                                 ? Status::kAllowed
                                 : Status::kAttestationsFileNotYetChecked)},
+          {kMaySendAttributionReport, true},
+          {kMaySendAttributionReportMetric, static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsPrivateAggregationBlockSiteSettingSpecific},
            &kFalse_}});
@@ -1746,7 +1713,7 @@ TEST_P(PrivacySandboxAttestationsTest, NoEnrollments) {
                kIsEventReportingDestinationAttestedForSharedStorage,
                kIsSharedStorageAllowed, kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedForContextMetric,
@@ -1758,7 +1725,7 @@ TEST_P(PrivacySandboxAttestationsTest, NoEnrollments) {
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsPrivateAggregationBlockSiteSettingSpecific},
@@ -1799,7 +1766,7 @@ TEST_P(PrivacySandboxAttestationsTest, EnrollmentWithoutAttestations) {
                kIsEventReportingDestinationAttestedForSharedStorage,
                kIsSharedStorageAllowed, kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsTopicsAllowedForContextMetric,
@@ -1811,7 +1778,7 @@ TEST_P(PrivacySandboxAttestationsTest, EnrollmentWithoutAttestations) {
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)}});
 }
 
@@ -1849,7 +1816,7 @@ TEST_P(PrivacySandboxAttestationsTest, TopicsAttestation) {
                kIsEventReportingDestinationAttestedForSharedStorage,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {kIsTopicsAllowedForContextMetric,
            static_cast<int>(Status::kAllowed)},
@@ -1862,7 +1829,7 @@ TEST_P(PrivacySandboxAttestationsTest, TopicsAttestation) {
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)}});
 }
 
@@ -1906,7 +1873,7 @@ TEST_P(PrivacySandboxAttestationsTest, PrivateAggregationAttestation) {
                kIsFledgeSellAllowed, kIsFledgeBuyAllowed,
                kIsEventReportingDestinationAttestedForFledge,
                kIsEventReportingDestinationAttestedForSharedStorage,
-               kIsSharedStorageAllowed, kIsLocalUnpartitionedDataAccessAllowed},
+               kIsSharedStorageAllowed, kIsFencedStorageReadAllowed},
            false},
           {kIsPrivateAggregationAllowedMetric,
            static_cast<int>(Status::kAllowed)},
@@ -1919,7 +1886,7 @@ TEST_P(PrivacySandboxAttestationsTest, PrivateAggregationAttestation) {
                kIsSharedStorageAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)},
           {MultipleOutputKeys{kIsSharedStorageBlockSiteSettingSpecific,
                               kIsPrivateAggregationBlockSiteSettingSpecific},
@@ -1986,20 +1953,19 @@ TEST_P(PrivacySandboxAttestationsTest, SharedStorageAttestation) {
            &kFalse_}});
 }
 
-TEST_P(PrivacySandboxAttestationsTest,
-       LocalUnpartitionedDataAccessAttestation) {
+TEST_P(PrivacySandboxAttestationsTest, FencedStorageReadAttestation) {
   GURL top_frame_url("https://top-frame.com");
   GURL enrollee_url("https://embedded.com");
   RunTestCase(
-      TestState{{MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
-                                   kM1FledgeEnabledUserPrefValue,
-                                   kM1AdMeasurementEnabledUserPrefValue},
-                 true},
-                {kAttestationsMap,
-                 PrivacySandboxAttestationsMap{
-                     {net::SchemefulSite(enrollee_url),
-                      {PrivacySandboxAttestationsGatedAPI::
-                           kLocalUnpartitionedDataAccess}}}}},
+      TestState{
+          {MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
+                             kM1FledgeEnabledUserPrefValue,
+                             kM1AdMeasurementEnabledUserPrefValue},
+           true},
+          {kAttestationsMap,
+           PrivacySandboxAttestationsMap{
+               {net::SchemefulSite(enrollee_url),
+                {PrivacySandboxAttestationsGatedAPI::kFencedStorageRead}}}}},
       TestInput{
           {kTopicsURL, enrollee_url},
           {kTopFrameOrigin, url::Origin::Create(top_frame_url)},
@@ -2016,7 +1982,7 @@ TEST_P(PrivacySandboxAttestationsTest,
           {kOutPrivateAggregationBlockIsSiteSettingSpecific,
            &actual_out_private_aggregation_block_is_site_setting_specific_}},
       TestOutput{
-          {kIsLocalUnpartitionedDataAccessAllowed, true},
+          {kIsFencedStorageReadAllowed, true},
           {MultipleOutputKeys{kIsTopicsAllowedForContext,
                               kIsAttributionReportingAllowed,
                               kMaySendAttributionReport,
@@ -2027,7 +1993,7 @@ TEST_P(PrivacySandboxAttestationsTest,
                               kIsPrivateAggregationAllowed,
                               kIsPrivateAggregationDebugModeAllowed},
            false},
-          {kIsLocalUnpartitionedDataAccessAllowedMetric,
+          {kIsFencedStorageReadAllowedMetric,
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{
                kIsTopicsAllowedForContextMetric,
@@ -2044,20 +2010,20 @@ TEST_P(PrivacySandboxAttestationsTest,
 }
 
 TEST_P(PrivacySandboxAttestationsTest,
-       LocalUnpartitionedDataAccessEnabledWhen3pcsLimited) {
+       FencedStorageReadEnabledWhen3pcsLimited) {
   GURL top_frame_url("https://top-frame.com");
   GURL enrollee_url("https://embedded.com");
   RunTestCase(
-      TestState{{MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
-                                   kM1FledgeEnabledUserPrefValue,
-                                   kM1AdMeasurementEnabledUserPrefValue},
-                 true},
-                {kCookieControlsModeUserPrefValue, kLimitedThirdParty},
-                {kAttestationsMap,
-                 PrivacySandboxAttestationsMap{
-                     {net::SchemefulSite(enrollee_url),
-                      {PrivacySandboxAttestationsGatedAPI::
-                           kLocalUnpartitionedDataAccess}}}}},
+      TestState{
+          {MultipleStateKeys{kM1TopicsEnabledUserPrefValue,
+                             kM1FledgeEnabledUserPrefValue,
+                             kM1AdMeasurementEnabledUserPrefValue},
+           true},
+          {kCookieControlsModeUserPrefValue, kLimitedThirdParty},
+          {kAttestationsMap,
+           PrivacySandboxAttestationsMap{
+               {net::SchemefulSite(enrollee_url),
+                {PrivacySandboxAttestationsGatedAPI::kFencedStorageRead}}}}},
       TestInput{
           {kTopicsURL, enrollee_url},
           {kTopFrameOrigin, url::Origin::Create(top_frame_url)},
@@ -2074,7 +2040,7 @@ TEST_P(PrivacySandboxAttestationsTest,
           {kOutPrivateAggregationBlockIsSiteSettingSpecific,
            &actual_out_private_aggregation_block_is_site_setting_specific_}},
       TestOutput{
-          {kIsLocalUnpartitionedDataAccessAllowed, true},
+          {kIsFencedStorageReadAllowed, true},
           {MultipleOutputKeys{kIsTopicsAllowedForContext,
                               kIsAttributionReportingAllowed,
                               kMaySendAttributionReport,
@@ -2085,7 +2051,7 @@ TEST_P(PrivacySandboxAttestationsTest,
                               kIsPrivateAggregationAllowed,
                               kIsPrivateAggregationDebugModeAllowed},
            false},
-          {kIsLocalUnpartitionedDataAccessAllowedMetric,
+          {kIsFencedStorageReadAllowedMetric,
            static_cast<int>(Status::kAllowed)},
           {MultipleOutputKeys{
                kIsTopicsAllowedForContextMetric,
@@ -2137,7 +2103,7 @@ TEST_P(PrivacySandboxAttestationsTest, FledgeAttestation) {
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsEventReportingDestinationAttestedForSharedStorage,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsFledgeJoinAllowedMetric, kIsFledgeLeaveAllowedMetric,
@@ -2151,7 +2117,7 @@ TEST_P(PrivacySandboxAttestationsTest, FledgeAttestation) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)}});
 }
 
@@ -2191,7 +2157,7 @@ TEST_P(PrivacySandboxAttestationsTest, FledgeAttestationBlockJoiningEtldplus1) {
                kIsSharedStorageAllowed, kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
                kIsEventReportingDestinationAttestedForSharedStorage,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{
                kIsFledgeLeaveAllowedMetric, kIsFledgeUpdateAllowedMetric,
@@ -2206,7 +2172,7 @@ TEST_P(PrivacySandboxAttestationsTest, FledgeAttestationBlockJoiningEtldplus1) {
                kMaySendAttributionReportMetric, kIsSharedStorageAllowedMetric,
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)}});
 }
 
@@ -2247,7 +2213,7 @@ TEST_P(PrivacySandboxAttestationsTest, AttributionReportingAttestation) {
                kIsEventReportingDestinationAttestedForSharedStorage,
                kIsPrivateAggregationAllowed,
                kIsPrivateAggregationDebugModeAllowed,
-               kIsLocalUnpartitionedDataAccessAllowed},
+               kIsFencedStorageReadAllowed},
            false},
           {MultipleOutputKeys{kIsAttributionReportingAllowedMetric,
                               kMaySendAttributionReportMetric},
@@ -2260,7 +2226,7 @@ TEST_P(PrivacySandboxAttestationsTest, AttributionReportingAttestation) {
                kIsPrivateAggregationAllowedMetric,
                kIsEventReportingDestinationAttestedForSharedStorageMetric,
                kIsEventReportingDestinationAttestedForFledgeMetric,
-               kIsLocalUnpartitionedDataAccessAllowedMetric},
+               kIsFencedStorageReadAllowedMetric},
            static_cast<int>(Status::kAttestationFailed)}});
 }
 
@@ -2272,8 +2238,8 @@ TEST_P(PrivacySandboxAttestationsTest, SetOverrideFromDevtools) {
 
   // Set an empty attestations map to prevent the API being default allowed
   // when feature `kDefaultAllowPrivacySandboxAttestations` is on.
-  privacy_sandbox::PrivacySandboxAttestations::GetInstance()
-      ->SetAttestationsForTesting(PrivacySandboxAttestationsMap{});
+  PrivacySandboxAttestations::GetInstance()->SetAttestationsForTesting(
+      PrivacySandboxAttestationsMap{});
 
   GURL top_level_url("https://top-level-origin.com");
   GURL caller_url("https://embedded.com");
@@ -2283,7 +2249,7 @@ TEST_P(PrivacySandboxAttestationsTest, SetOverrideFromDevtools) {
       url::Origin::Create(top_level_url), caller_url));
   EXPECT_FALSE(privacy_sandbox_settings()->IsEventReportingDestinationAttested(
       url::Origin::Create(GURL("https://embedded.com")),
-      privacy_sandbox::PrivacySandboxAttestationsGatedAPI::kProtectedAudience));
+      PrivacySandboxAttestationsGatedAPI::kProtectedAudience));
 
   // With an override of the site from a devtools call, Topics is allowed.
   PrivacySandboxAttestations::GetInstance()->AddOverride(
@@ -2292,7 +2258,7 @@ TEST_P(PrivacySandboxAttestationsTest, SetOverrideFromDevtools) {
       url::Origin::Create(top_level_url), caller_url));
   EXPECT_TRUE(privacy_sandbox_settings()->IsEventReportingDestinationAttested(
       url::Origin::Create(GURL("https://embedded.com")),
-      privacy_sandbox::PrivacySandboxAttestationsGatedAPI::kProtectedAudience));
+      PrivacySandboxAttestationsGatedAPI::kProtectedAudience));
 }
 
 TEST_P(PrivacySandboxAttestationsTest, SetOverrideFromFlags) {
@@ -2320,29 +2286,27 @@ TEST_P(PrivacySandboxAttestationsTest, SetOverrideFromFlags) {
 
   // Set an empty attestations map to prevent the API being default allowed
   // when feature `kDefaultAllowPrivacySandboxAttestations` is on.
-  privacy_sandbox::PrivacySandboxAttestations::GetInstance()
-      ->SetAttestationsForTesting(PrivacySandboxAttestationsMap{});
+  PrivacySandboxAttestations::GetInstance()->SetAttestationsForTesting(
+      PrivacySandboxAttestationsMap{});
 
   for (const auto& test : kTestCases) {
     // Reset the overrides flags from the previous test loop.
     scoped_command_line.GetProcessCommandLine()->RemoveSwitch(
-        privacy_sandbox::kPrivacySandboxEnrollmentOverrides);
+        kPrivacySandboxEnrollmentOverrides);
 
     // Event reporting for Protected Audience should not be allowed at first.
     EXPECT_FALSE(
         privacy_sandbox_settings()->IsEventReportingDestinationAttested(
             url::Origin::Create(test.report_url),
-            privacy_sandbox::PrivacySandboxAttestationsGatedAPI::
-                kProtectedAudience));
+            PrivacySandboxAttestationsGatedAPI::kProtectedAudience));
 
     scoped_command_line.GetProcessCommandLine()->AppendSwitchASCII(
-        privacy_sandbox::kPrivacySandboxEnrollmentOverrides, test.flags);
+        kPrivacySandboxEnrollmentOverrides, test.flags);
 
     // Check reporting for Protected Audience after setting the flag.
     EXPECT_EQ(privacy_sandbox_settings()->IsEventReportingDestinationAttested(
                   url::Origin::Create(test.report_url),
-                  privacy_sandbox::PrivacySandboxAttestationsGatedAPI::
-                      kProtectedAudience),
+                  PrivacySandboxAttestationsGatedAPI::kProtectedAudience),
               test.expected)
         << test.name;
   }
@@ -2467,7 +2431,7 @@ class PrivacySandboxSettingsSharedStorageDebugTest
 
     // This test suite tests Privacy Sandbox Attestations related behaviors,
     // turn off the setting that makes all APIs considered attested.
-    privacy_sandbox::PrivacySandboxAttestations::GetInstance()
+    PrivacySandboxAttestations::GetInstance()
         ->SetAllPrivacySandboxAttestedForTesting(false);
   }
 
@@ -2505,23 +2469,22 @@ TEST_F(PrivacySandboxSettingsSharedStorageDebugTest, ApiPreferenceEnabled) {
            &actual_out_shared_storage_block_is_site_setting_specific_},
           {kOutSharedStorageSelectURLBlockIsSiteSettingSpecific,
            &actual_out_select_url_block_is_site_setting_specific_}},
-      TestOutput{
-          {MultipleOutputKeys{kIsSharedStorageAllowed,
-                              kIsSharedStorageSelectURLAllowed,
-                              kIsLocalUnpartitionedDataAccessAllowed},
-           true},
-          {MultipleOutputKeys{kIsSharedStorageAllowedMetric,
-                              kIsSharedStorageSelectURLAllowedMetric,
-                              kIsLocalUnpartitionedDataAccessAllowedMetric},
-           static_cast<int>(Status::kAllowed)},
-          {kIsSharedStorageAllowedDebugMessage,
-           &expected_out_shared_storage_debug_message},
-          {kIsSharedStorageSelectURLAllowedDebugMessage,
-           &expected_out_select_url_debug_message},
-          {MultipleOutputKeys{
-               kIsSharedStorageBlockSiteSettingSpecific,
-               kIsSharedStorageSelectURLBlockSiteSettingSpecific},
-           &kFalse_}});
+      TestOutput{{MultipleOutputKeys{kIsSharedStorageAllowed,
+                                     kIsSharedStorageSelectURLAllowed,
+                                     kIsFencedStorageReadAllowed},
+                  true},
+                 {MultipleOutputKeys{kIsSharedStorageAllowedMetric,
+                                     kIsSharedStorageSelectURLAllowedMetric,
+                                     kIsFencedStorageReadAllowedMetric},
+                  static_cast<int>(Status::kAllowed)},
+                 {kIsSharedStorageAllowedDebugMessage,
+                  &expected_out_shared_storage_debug_message},
+                 {kIsSharedStorageSelectURLAllowedDebugMessage,
+                  &expected_out_select_url_debug_message},
+                 {MultipleOutputKeys{
+                      kIsSharedStorageBlockSiteSettingSpecific,
+                      kIsSharedStorageSelectURLBlockSiteSettingSpecific},
+                  &kFalse_}});
 }
 
 TEST_F(PrivacySandboxSettingsSharedStorageDebugTest, ApiPreferenceDisabled) {
@@ -2679,7 +2642,7 @@ class PrivacySandboxSettingsCookieControlsModeTest
  public:
   PrivacySandboxSettingsCookieControlsModeTest() {
     feature_list_.InitWithFeatures(
-        {privacy_sandbox::kAddLimit3pcsSetting},
+        {kAddLimit3pcsSetting},
         {content_settings::features::kTrackingProtection3pcd});
   }
 };

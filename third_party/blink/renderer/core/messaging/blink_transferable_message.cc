@@ -5,6 +5,8 @@
 #include "third_party/blink/renderer/core/messaging/blink_transferable_message.h"
 
 #include <utility>
+
+#include "base/compiler_specific.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/mojom/blob/blob.mojom-blink.h"
@@ -75,7 +77,8 @@ BlinkTransferableMessage BlinkTransferableMessage::FromTransferableMessage(
       // Check if we allocated the backing store of the ArrayBufferContents
       // correctly.
       CHECK_EQ(contents.DataLength(), big_buffer.size());
-      memcpy(contents.Data(), big_buffer.data(), big_buffer.size());
+      UNSAFE_TODO(
+          memcpy(contents.Data(), big_buffer.data(), big_buffer.size()));
       array_buffer_contents_array.push_back(std::move(contents));
     }
     result.message->SetArrayBufferContentsArray(
@@ -139,8 +142,7 @@ scoped_refptr<StaticBitmapImage> ToStaticBitmapImage(
 scoped_refptr<StaticBitmapImage> WrapAcceleratedBitmapImage(
     AcceleratedImageInfo image) {
   return AcceleratedStaticBitmapImage::CreateFromExternalSharedImage(
-      image.shared_image, image.image_info, image.is_origin_top_left,
-      image.supports_display_compositing, image.is_overlay_candidate,
-      std::move(image.release_callback));
+      std::move(image.shared_image), image.sync_token, image.size, image.format,
+      image.alpha_type, image.color_space, std::move(image.release_callback));
 }
 }  // namespace blink

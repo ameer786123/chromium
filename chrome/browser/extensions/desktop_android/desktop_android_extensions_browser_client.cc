@@ -8,21 +8,27 @@
 #include <utility>
 
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/extensions/api/management/chrome_management_api_delegate.h"
+#include "chrome/browser/extensions/chrome_extensions_browser_api_provider.h"
 #include "chrome/browser/extensions/desktop_android/desktop_android_extension_host_delegate.h"
 #include "chrome/browser/extensions/desktop_android/desktop_android_extension_system.h"
 #include "chrome/browser/extensions/desktop_android/desktop_android_extension_web_contents_observer.h"
 #include "chrome/browser/extensions/desktop_android/desktop_android_runtime_api_delegate.h"
+#include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/profile_selections.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/common/user_agent.h"
 #include "extensions/browser/api/core_extensions_browser_api_provider.h"
 #include "extensions/browser/api/extensions_api_client.h"
+#include "extensions/browser/api/messaging/messaging_delegate.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_error.h"
+#include "extensions/browser/extension_util.h"
 #include "extensions/browser/extension_web_contents_observer.h"
 #include "extensions/browser/extensions_browser_interface_binders.h"
 #include "extensions/browser/kiosk/kiosk_delegate.h"
@@ -50,17 +56,45 @@ class DesktopAndroidKioskDelegate : public KioskDelegate {
   }
 };
 
+class DesktopAndroidExtensionsAPIClient : public ExtensionsAPIClient {
+ public:
+  DesktopAndroidExtensionsAPIClient() = default;
+  ~DesktopAndroidExtensionsAPIClient() override = default;
+
+  // ExtensionsAPIClient:
+  MessagingDelegate* GetMessagingDelegate() override {
+    // The default implementation does nothing, which is fine for now, since
+    // this is mostly needed for:
+    //   a) tab-specifics,
+    //   b) platform apps, and
+    //   c) native messaging
+    if (!messaging_delegate_) {
+      messaging_delegate_ = std::make_unique<MessagingDelegate>();
+    }
+    return messaging_delegate_.get();
+  }
+
+  ManagementAPIDelegate* CreateManagementAPIDelegate() const override {
+    // `ManagementAPI` owns the object.
+    return new ChromeManagementAPIDelegate;
+  }
+
+ private:
+  std::unique_ptr<MessagingDelegate> messaging_delegate_;
+};
+
 }  // namespace
 
 DesktopAndroidExtensionsBrowserClient::DesktopAndroidExtensionsBrowserClient()
     : extension_cache_(std::make_unique<NullExtensionCache>()),
       kiosk_delegate_(std::make_unique<DesktopAndroidKioskDelegate>()),
-      api_client_(std::make_unique<ExtensionsAPIClient>()) {
+      api_client_(std::make_unique<DesktopAndroidExtensionsAPIClient>()) {
   AddAPIProvider(std::make_unique<CoreExtensionsBrowserAPIProvider>());
+  AddAPIProvider(std::make_unique<ChromeExtensionsBrowserAPIProvider>());
 }
 
 DesktopAndroidExtensionsBrowserClient::
-    ~DesktopAndroidExtensionsBrowserClient() {}
+    ~DesktopAndroidExtensionsBrowserClient() = default;
 
 bool DesktopAndroidExtensionsBrowserClient::IsShuttingDown() {
   return false;
@@ -108,7 +142,11 @@ BrowserContext* DesktopAndroidExtensionsBrowserClient::GetOriginalContext(
 content::BrowserContext*
 DesktopAndroidExtensionsBrowserClient::GetContextRedirectedToOriginal(
     content::BrowserContext* context) {
-  return context;
+  return ProfileSelections::Builder()
+      .WithRegular(ProfileSelection::kRedirectedToOriginal)
+      .WithGuest(ProfileSelection::kRedirectedToOriginal)
+      .Build()
+      .ApplyProfileSelection(Profile::FromBrowserContext(context));
 }
 
 content::BrowserContext*
@@ -136,13 +174,14 @@ bool DesktopAndroidExtensionsBrowserClient::IsGuestSession(
 bool DesktopAndroidExtensionsBrowserClient::IsExtensionIncognitoEnabled(
     const std::string& extension_id,
     content::BrowserContext* context) const {
-  return false;
+  return IsGuestSession(context) ||
+         util::IsIncognitoEnabled(extension_id, context);
 }
 
 bool DesktopAndroidExtensionsBrowserClient::CanExtensionCrossIncognito(
     const Extension* extension,
     content::BrowserContext* context) const {
-  return false;
+  return IsGuestSession(context) || util::CanCrossIncognito(extension, context);
 }
 
 base::FilePath DesktopAndroidExtensionsBrowserClient::GetBundleResourcePath(
@@ -283,6 +322,13 @@ bool DesktopAndroidExtensionsBrowserClient::IsMinBrowserVersionSupported(
   return true;
 }
 
+void DesktopAndroidExtensionsBrowserClient::ReportError(
+    content::BrowserContext* context,
+    std::unique_ptr<ExtensionError> error) {
+  LOG(ERROR) << error->GetDebugString();
+  ErrorConsole::Get(context)->ReportError(std::move(error));
+}
+
 void DesktopAndroidExtensionsBrowserClient::CreateExtensionWebContentsObserver(
     content::WebContents* web_contents) {
   DesktopAndroidExtensionWebContentsObserver::CreateForWebContents(
@@ -300,18 +346,8 @@ KioskDelegate* DesktopAndroidExtensionsBrowserClient::GetKioskDelegate() {
   return kiosk_delegate_.get();
 }
 
-bool DesktopAndroidExtensionsBrowserClient::IsLockScreenContext(
-    content::BrowserContext* context) {
-  return false;
-}
-
 std::string DesktopAndroidExtensionsBrowserClient::GetApplicationLocale() {
   return "en-US";
-}
-
-std::string DesktopAndroidExtensionsBrowserClient::GetUserAgent() const {
-  return content::BuildUserAgentFromProduct(
-      std::string(version_info::GetProductNameAndVersionForUserAgent()));
 }
 
 }  // namespace extensions

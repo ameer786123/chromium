@@ -15,7 +15,6 @@ constexpr char kEnterprisePlusAddressOAuthScopeName[] = "oauth-scope";
 constexpr char kEnterprisePlusAddressServerUrlName[] = "server-url";
 constexpr char kPlusAddressManagementUrlName[] = "manage-url";
 constexpr char kPlusAddressLearnMoreUrlName[] = "learn-more";
-constexpr char kPlusAddressErrorReportUrlName[] = "error-report-url";
 constexpr char kPlusAddressRequestTimeoutName[] = "request-timeout";
 
 }  // namespace
@@ -41,8 +40,6 @@ const base::FeatureParam<std::string> kPlusAddressManagementUrl{
     &kPlusAddressesEnabled, kPlusAddressManagementUrlName, ""};
 const base::FeatureParam<std::string> kPlusAddressLearnMoreUrl{
     &kPlusAddressesEnabled, kPlusAddressLearnMoreUrlName, ""};
-const base::FeatureParam<std::string> kPlusAddressErrorReportUrl{
-    &kPlusAddressesEnabled, kPlusAddressErrorReportUrlName, ""};
 const base::FeatureParam<base::TimeDelta> kPlusAddressRequestTimeout{
     &kPlusAddressesEnabled, kPlusAddressRequestTimeoutName, base::Seconds(5)};
 
@@ -59,41 +56,6 @@ BASE_FEATURE(kPlusAddressFullFormFill,
              "PlusAddressFullFormFill",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// When enabled, the `PlusAddressSettingService` will be consulted on whether
-// to offer plus address creation.
-BASE_FEATURE(kPlusAddressGlobalToggle,
-             "PlusAddressGlobalToggle",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-// When enabled, users that have accepted the legal notice will see a
-// streamlined flow for creating plus addresses that never leaves the Autofill
-// popup.
-BASE_FEATURE(kPlusAddressInlineCreation,
-             "PlusAddressInlineCreation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-
-#if BUILDFLAG(IS_IOS)
-// When enabled, plus address creation bottom sheet shows enhanced UI for
-// different error states as well as loading states on iOS.
-BASE_FEATURE(kPlusAddressIOSErrorAndLoadingStatesEnabled,
-             "PlusAddressIOSErrorAndLoadingStatesEnabled",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// When enabled, mobile manual fallbacks for addresses and passwords show plus
-// address filling information.
-BASE_FEATURE(kPlusAddressIOSManualFallbackEnabled,
-             "PlusAddressIOSManualFallbackEnabled",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(IS_IOS)
-
-// When enabled, plus address creation is offered also on login forms if the
-// password field is not visible.
-BASE_FEATURE(kPlusAddressOfferCreationIfPasswordFieldIsNotVisible,
-             "PlusAddressOfferCreationIfPasswordFieldIsNotVisible",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // When enabled, plus address creation is offered on all email fields that are
 // not a username field - even if they are on a login form or a change password
 // form.
@@ -102,11 +64,6 @@ BASE_FEATURE(kPlusAddressOfferCreationIfPasswordFieldIsNotVisible,
 BASE_FEATURE(kPlusAddressOfferCreationOnAllNonUsernameFields,
              "PlusAddressOfferCreationOnAllNonUsernameFields",
              base::FEATURE_ENABLED_BY_DEFAULT);
-
-// When enabled, we offer plus address creation on single username forms.
-BASE_FEATURE(kPlusAddressOfferCreationOnSingleUsernameForms,
-             "PlusAddressOfferCreationOnSingleUsernameForms",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // When enabled, we check whether the server response to a Create call returned
 // information about existing profiles and return those as the parsing result.
@@ -127,21 +84,11 @@ extern const base::FeatureParam<int> kPlusAddressPreallocationMinimumSize(
     "minimum-size",
     10);
 
-// When enabled, plus address creation will be offered on forms that Password
-// Manager classifies as login forms if those forms have a predicted field
-// types that we believe not to be consistent with a login form - for example,
-// FIRST_NAME or LAST_NAME.
-// This therefore "refines" Password Manager predictions.
-// TODO(crbug.com/364555384): Eventually, this should either be removed or
-// integrated into Password Manager's own logic.
-BASE_FEATURE(kPlusAddressRefinedPasswordFormClassification,
-             "PlusAddressRefinedPasswordFormClassification",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// When enabled, the plus address creation dialogs or bottom sheets include
-// extended feature description and usage notice.
-BASE_FEATURE(kPlusAddressUserOnboardingEnabled,
-             "PlusAddressUserOnboardingEnabled",
+// When enabled, focusing on a username field will show plus address suggestion
+// alongside the autocomplete suggestions.
+// TODO(crbug.com/360791229): Remove when launched.
+BASE_FEATURE(kPlusAddressSuggestionsOnUsernameFields,
+             "PlusAddressSuggestionsOnUsernameFields",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace plus_addresses::features

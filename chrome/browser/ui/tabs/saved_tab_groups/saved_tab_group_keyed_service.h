@@ -5,35 +5,41 @@
 #ifndef CHROME_BROWSER_UI_TABS_SAVED_TAB_GROUPS_SAVED_TAB_GROUP_KEYED_SERVICE_H_
 #define CHROME_BROWSER_UI_TABS_SAVED_TAB_GROUPS_SAVED_TAB_GROUP_KEYED_SERVICE_H_
 
+#include <map>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_controller.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_model_listener.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/saved_tab_groups/internal/saved_tab_group_model.h"
-#include "components/saved_tab_groups/internal/saved_tab_group_sync_bridge.h"
-#include "components/saved_tab_groups/internal/tab_group_sync_bridge_mediator.h"
-#include "components/saved_tab_groups/public/tab_group_sync_metrics_logger.h"
+#include "components/saved_tab_groups/internal/saved_tab_group_model_observer.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/sync/model/data_type_store.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "ui/gfx/range/range.h"
 
 class Profile;
 class TabGroup;
-
-namespace tabs {
-class TabModel;
-}
+class TabStripModel;
 
 namespace syncer {
 class DeviceInfoTracker;
 }
 
+namespace tabs {
+class TabInterface;
+}
+
 namespace tab_groups {
 
+class SavedTabGroupModel;
+class SavedTabGroupModelListener;
+class TabGroupSyncBridgeMediator;
+class TabGroupSyncMetricsLogger;
 class TabGroupSyncServiceProxy;
 
 // Serves to instantiate and own the SavedTabGroup infrastructure for the
@@ -57,6 +63,8 @@ class SavedTabGroupKeyedService : public KeyedService,
   GetSavedTabGroupControllerDelegate();
   base::WeakPtr<syncer::DataTypeControllerDelegate>
   GetSharedTabGroupControllerDelegate();
+  base::WeakPtr<syncer::DataTypeControllerDelegate>
+  GetSharedTabGroupAccountControllerDelegate();
   Profile* profile() { return profile_; }
 
   // SavedTabGroupController
@@ -64,8 +72,9 @@ class SavedTabGroupKeyedService : public KeyedService,
       Browser* browser,
       const base::Uuid saved_group_guid,
       tab_groups::OpeningSource opening_source) override;
+  using SavedTabGroupController::SaveGroup;
   base::Uuid SaveGroup(const tab_groups::TabGroupId& group_id,
-                       bool is_pinned = false) override;
+                       bool is_pinned) override;
   void UnsaveGroup(const tab_groups::TabGroupId& group_id,
                    ClosingSource closing_source) override;
   void PauseTrackingLocalTabGroup(
@@ -152,7 +161,7 @@ class SavedTabGroupKeyedService : public KeyedService,
   // should be part of `saved_group` outputs a mapping of tab to guid. This
   // method performs no checks to make sure that the tabs are the correct ones
   // that should be connected.
-  std::map<tabs::TabModel*, base::Uuid> GetTabToGuidMappingForSavedGroup(
+  std::map<tabs::TabInterface*, base::Uuid> GetTabToGuidMappingForSavedGroup(
       const TabStripModel* const tab_strip_model,
       const SavedTabGroup* const saved_group,
       const gfx::Range& tab_range);
@@ -163,7 +172,8 @@ class SavedTabGroupKeyedService : public KeyedService,
   // This method does not check that the saved group is already open so that
   // must be done by callers. This method does not check if the saved_group is
   // part of the model, this must be done by callers.
-  std::map<tabs::TabModel*, base::Uuid> OpenSavedTabGroupAndGetTabToGuidMapping(
+  std::map<tabs::TabInterface*, base::Uuid>
+  OpenSavedTabGroupAndGetTabToGuidMapping(
       Browser* browser,
       const SavedTabGroup* const saved_group);
 
@@ -171,7 +181,7 @@ class SavedTabGroupKeyedService : public KeyedService,
   // for the saved group, and then groups them in the tabstrip model.
   tab_groups::TabGroupId AddOpenedTabsToGroup(
       TabStripModel* const tab_strip_model_for_creation,
-      const std::map<tabs::TabModel*, base::Uuid>& tab_guid_mapping,
+      const std::map<tabs::TabInterface*, base::Uuid>& tab_guid_mapping,
       const SavedTabGroup& saved_group);
 
   // Returns a pointer to the TabStripModel which contains `local_group_id`.

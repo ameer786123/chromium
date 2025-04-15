@@ -38,8 +38,16 @@ class KeyboardAccessoryIphUtils {
             case FeatureConstants.KEYBOARD_ACCESSORY_ADDRESS_FILL_FEATURE:
                 tracker.notifyEvent(EventConstants.KEYBOARD_ACCESSORY_ADDRESS_AUTOFILLED);
                 return;
+            case FeatureConstants.KEYBOARD_ACCESSORY_HOME_WORK_PROFILE_SUGGESTION_FEATURE:
+                tracker.notifyEvent(
+                        EventConstants.KEYBOARD_ACCESSORY_HOME_AND_WORK_ADDRESS_AUTOFILLED);
+                return;
             case FeatureConstants.KEYBOARD_ACCESSORY_PASSWORD_FILLING_FEATURE:
                 tracker.notifyEvent(EventConstants.KEYBOARD_ACCESSORY_PASSWORD_AUTOFILLED);
+                return;
+            case FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_CARD_INFO_RETRIEVAL_FEATURE:
+                tracker.notifyEvent(
+                        EventConstants.KEYBOARD_ACCESSORY_PAYMENT_CARD_INFO_RETRIEVAL_AUTOFILLED);
                 return;
             case FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_FILLING_FEATURE:
             case FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_OFFER_FEATURE:
@@ -183,7 +191,7 @@ class KeyboardAccessoryIphUtils {
             View rootView,
             @Nullable String helpText) {
         if (!tracker.isInitialized()) return null;
-        if (!tracker.shouldTriggerHelpUI(feature)) return null; // This call records the IPH intent.
+        if (!tracker.shouldTriggerHelpUi(feature)) return null; // This call records the IPH intent.
         TextBubble helpBubble;
         // If the help text is provided, then use it directly to generate the text bubble.
         if (helpText != null && !helpText.isEmpty()) {
@@ -229,6 +237,8 @@ class KeyboardAccessoryIphUtils {
                 return R.string.iph_keyboard_accessory_fill_with_chrome;
             case FeatureConstants.KEYBOARD_ACCESSORY_BAR_SWIPING_FEATURE:
                 return R.string.iph_keyboard_accessory_swipe_for_more;
+            case FeatureConstants.KEYBOARD_ACCESSORY_HOME_WORK_PROFILE_SUGGESTION_FEATURE:
+                return R.string.iph_keyboard_accessory_home_work_profile_suggestion;
             case FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_VIRTUAL_CARD_FEATURE:
                 return R.string.iph_keyboard_accessory_payment_virtual_cards;
             case FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_VIRTUAL_CARD_DISABLED_FEATURE:
@@ -240,6 +250,8 @@ class KeyboardAccessoryIphUtils {
                         .autofill_iph_external_account_profile_suggestion;
             case FeatureConstants.KEYBOARD_ACCESSORY_VIRTUAL_CARD_CVC_FILL_FEATURE:
                 return R.string.iph_keyboard_accessory_virtual_card_cvc_fill_feature;
+            case FeatureConstants.KEYBOARD_ACCESSORY_PLUS_ADDRESS_CREATE_SUGGESTION:
+                return R.string.plus_address_create_suggestion_iph_android;
         }
         assert false : "Unknown help text for feature: " + feature;
         return 0;

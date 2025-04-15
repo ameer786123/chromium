@@ -51,17 +51,17 @@ export class SitePermissionsSiteGroupElement extends CrLitElement {
     };
   }
 
-  data: chrome.developerPrivate.SiteGroup = {
+  accessor data: chrome.developerPrivate.SiteGroup = {
     etldPlusOne: '',
     numExtensions: 0,
     sites: [],
   };
-  delegate: SiteSettingsDelegate = new DummySiteSettingsDelegate();
-  extensions: chrome.developerPrivate.ExtensionInfo[] = [];
-  listIndex: number = -1;
-  protected expanded_: boolean = false;
-  protected showEditSitePermissionsDialog_: boolean = false;
-  protected siteToEdit_: chrome.developerPrivate.SiteInfo|null = null;
+  accessor delegate: SiteSettingsDelegate = new DummySiteSettingsDelegate();
+  accessor extensions: chrome.developerPrivate.ExtensionInfo[] = [];
+  accessor listIndex: number = -1;
+  protected accessor expanded_: boolean = false;
+  protected accessor showEditSitePermissionsDialog_: boolean = false;
+  protected accessor siteToEdit_: chrome.developerPrivate.SiteInfo|null = null;
 
   protected getEtldOrSiteFaviconUrl_(): string {
     return getFaviconUrl(this.getDisplayUrl_());
@@ -81,7 +81,7 @@ export class SitePermissionsSiteGroupElement extends CrLitElement {
 
   protected getDisplayUrl_(): string {
     return this.data.sites.length === 1 ?
-        this.getSiteWithoutSubdomainSpecifier_(this.data.sites[0].site) :
+        this.getSiteWithoutSubdomainSpecifier_(this.data.sites[0]!.site) :
         this.data.etldPlusOne;
   }
 
@@ -92,7 +92,7 @@ export class SitePermissionsSiteGroupElement extends CrLitElement {
     if (this.data.sites.length === 0) {
       return '';
     }
-    const siteSet = this.data.sites[0].siteSet;
+    const siteSet = this.data.sites[0]!.siteSet;
     const isSiteSetConsistent =
         this.data.sites.every(site => site.siteSet === siteSet);
     if (!isSiteSetConsistent) {
@@ -113,7 +113,7 @@ export class SitePermissionsSiteGroupElement extends CrLitElement {
   }
 
   protected etldOrFirstSiteMatchesSubdomains_(): boolean {
-    const site = this.data.sites.length === 1 ? this.data.sites[0].site :
+    const site = this.data.sites.length === 1 ? this.data.sites[0]!.site :
                                                 this.data.etldPlusOne;
     return matchesSubdomains(site);
   }
@@ -147,7 +147,7 @@ export class SitePermissionsSiteGroupElement extends CrLitElement {
   }
 
   protected onEditSiteClick_() {
-    this.siteToEdit_ = this.data.sites[0];
+    this.siteToEdit_ = this.data.sites[0] || null;
     this.showEditSitePermissionsDialog_ = true;
   }
 

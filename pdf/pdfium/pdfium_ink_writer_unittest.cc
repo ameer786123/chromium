@@ -8,33 +8,31 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "pdf/pdf_ink_brush.h"
 #include "pdf/pdfium/pdfium_engine.h"
-#include "pdf/pdfium/pdfium_engine_exports.h"
+#include "pdf/pdfium/pdfium_ink_reader.h"
 #include "pdf/pdfium/pdfium_page.h"
 #include "pdf/pdfium/pdfium_test_base.h"
 #include "pdf/test/pdf_ink_test_helpers.h"
 #include "pdf/test/test_client.h"
 #include "pdf/test/test_helpers.h"
-#include "printing/units.h"
+#include "third_party/ink/src/ink/geometry/affine_transform.h"
+#include "third_party/ink/src/ink/geometry/intersects.h"
+#include "third_party/ink/src/ink/geometry/partitioned_mesh.h"
+#include "third_party/ink/src/ink/geometry/point.h"
 #include "third_party/ink/src/ink/strokes/input/stroke_input.h"
 #include "third_party/ink/src/ink/strokes/input/stroke_input_batch.h"
 #include "third_party/ink/src/ink/strokes/stroke.h"
 #include "third_party/pdfium/public/fpdf_edit.h"
 #include "third_party/pdfium/public/fpdfview.h"
-#include "third_party/skia/include/core/SkAlphaType.h"
-#include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkColorType.h"
-#include "third_party/skia/include/core/SkImage.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/geometry/skia_conversions.h"
+#include "ui/gfx/geometry/test/geometry_util.h"
 
 namespace chrome_pdf {
 
@@ -82,44 +80,11 @@ std::unique_ptr<PdfInkBrush> CreateTestBrush() {
                                        /*size=*/4.0f);
 }
 
-base::FilePath GetReferenceFilePath(std::string_view test_filename) {
-  return base::FilePath(FILE_PATH_LITERAL("pdfium_ink"))
-      .AppendASCII(test_filename);
-}
-
-// Takes `pdf_data` and loads it using PDFium. Then renders the page at
-// `page_index` to a bitmap of `size_in_points` and checks if it matches
-// `expected_png_file`.
-void CheckPdfRendering(base::span<const uint8_t> pdf_data,
-                       int page_index,
-                       const gfx::Size& size_in_points,
-                       const base::FilePath& expected_png_file) {
-  const gfx::Rect page_rect(size_in_points);
-  SkBitmap page_bitmap;
-  page_bitmap.allocPixels(
-      SkImageInfo::Make(gfx::SizeToSkISize(page_rect.size()),
-                        kBGRA_8888_SkColorType, kPremul_SkAlphaType));
-
-  PDFiumEngineExports::RenderingSettings settings(
-      gfx::Size(printing::kPointsPerInch, printing::kPointsPerInch), page_rect,
-      /*fit_to_bounds=*/false,
-      /*stretch_to_bounds=*/false,
-      /*keep_aspect_ratio=*/true,
-      /*center_in_bounds=*/false,
-      /*autorotate=*/false, /*use_color=*/true, /*render_for_printing=*/false);
-
-  PDFiumEngineExports exports;
-  ASSERT_TRUE(exports.RenderPDFPageToBitmap(pdf_data, page_index, settings,
-                                            page_bitmap.getPixels()));
-
-  EXPECT_TRUE(MatchesPngFile(page_bitmap.asImage().get(), expected_png_file));
-}
-
 }  // namespace
 
 using PDFiumInkWriterTest = PDFiumTestBase;
 
-TEST_P(PDFiumInkWriterTest, Basic) {
+TEST_P(PDFiumInkWriterTest, BasicWriteAndRead) {
   TestClient client;
   std::unique_ptr<PDFiumEngine> engine =
       InitializeEngine(&client, FILE_PATH_LITERAL("blank.pdf"));
@@ -135,16 +100,139 @@ TEST_P(PDFiumInkWriterTest, Basic) {
       CreateInkInputBatch(kBasicInputs);
   ASSERT_TRUE(inputs.has_value());
   ink::Stroke stroke(brush->ink_brush(), inputs.value());
-  ASSERT_TRUE(WriteStrokeToPage(engine->doc(), page, stroke));
+  std::vector<FPDF_PAGEOBJECT> results =
+      WriteStrokeToPage(engine->doc(), page, stroke);
+  EXPECT_EQ(1u, results.size());
 
   ASSERT_TRUE(FPDFPage_GenerateContent(page));
 
   std::vector<uint8_t> saved_pdf_data = engine->GetSaveData();
   ASSERT_TRUE(!saved_pdf_data.empty());
 
-  CheckPdfRendering(saved_pdf_data,
-                    /*page_number=*/0, gfx::Size(200, 200),
-                    GetReferenceFilePath("basic.png"));
+  CheckPdfRendering(
+      saved_pdf_data,
+      /*page_index=*/0, gfx::Size(200, 200),
+      GetInkTestDataFilePath(FILE_PATH_LITERAL("ink_writer_basic.png")));
+
+  // Load `saved_pdf_data` into `saved_engine` and get a handle to the one and
+  // only page.
+  TestClient saved_client;
+  std::unique_ptr<PDFiumEngine> saved_engine =
+      InitializeEngineFromData(&saved_client, std::move(saved_pdf_data));
+  ASSERT_TRUE(saved_engine);
+  ASSERT_EQ(saved_engine->GetNumberOfPages(), 1);
+  PDFiumPage& saved_pdfium_page = GetPDFiumPageForTest(*saved_engine, 0);
+  FPDF_PAGE saved_page = saved_pdfium_page.GetPage();
+  ASSERT_TRUE(saved_page);
+
+  // Complete the round trip and read the written PDF data back into memory as
+  // an ink::PartitionedMesh. ReadV2InkPathsFromPageAsModeledShapes() is known
+  // to be good because its unit tests reads from a real, known to be good Ink
+  // PDF.
+  std::vector<ReadV2InkPathResult> saved_results =
+      ReadV2InkPathsFromPageAsModeledShapes(saved_page);
+  ASSERT_EQ(saved_results.size(), 1u);
+
+  // Take the original and saved shapes and compare them. Note that
+  // `saved_shape` does not have an outline, so just check they behave the same
+  // way with ink::Intersects().
+  const auto& shape = stroke.GetShape();
+  const auto& saved_shape = saved_results[0].shape;
+
+  // All point values below are in canonical coordinates, so no transform is
+  // necessary.
+  const auto no_transform = ink::AffineTransform::Identity();
+
+  // Points at the corners do not intersect.
+  EXPECT_FALSE(ink::Intersects(ink::Point{0, 0}, shape, no_transform));
+  EXPECT_FALSE(ink::Intersects(ink::Point{0, 0}, saved_shape, no_transform));
+  EXPECT_FALSE(ink::Intersects(ink::Point{266, 266}, shape, no_transform));
+  EXPECT_FALSE(
+      ink::Intersects(ink::Point{266, 266}, saved_shape, no_transform));
+
+  // Points close to `shape`, that still do not intersect.
+  EXPECT_FALSE(ink::Intersects(ink::Point{139, 51}, shape, no_transform));
+  EXPECT_FALSE(ink::Intersects(ink::Point{139, 51}, saved_shape, no_transform));
+  EXPECT_FALSE(ink::Intersects(ink::Point{128, 63}, shape, no_transform));
+  EXPECT_FALSE(ink::Intersects(ink::Point{128, 63}, saved_shape, no_transform));
+
+  // Points that do intersect.
+  EXPECT_TRUE(ink::Intersects(ink::Point{139, 53}, shape, no_transform));
+  EXPECT_TRUE(ink::Intersects(ink::Point{139, 53}, saved_shape, no_transform));
+  EXPECT_TRUE(ink::Intersects(ink::Point{129, 63}, shape, no_transform));
+  EXPECT_TRUE(ink::Intersects(ink::Point{129, 63}, saved_shape, no_transform));
+}
+
+TEST_P(PDFiumInkWriterTest, WriteToCroppedPage) {
+  TestClient client;
+  std::unique_ptr<PDFiumEngine> engine =
+      InitializeEngine(&client, FILE_PATH_LITERAL("hello_world_cropped.pdf"));
+  ASSERT_TRUE(engine);
+
+  PDFiumPage& pdfium_page = GetPDFiumPageForTest(*engine, 0);
+  FPDF_PAGE page = pdfium_page.GetPage();
+  ASSERT_TRUE(page);
+
+  auto brush = CreateTestBrush();
+
+  // `kBasicInputs` values range from (125.143, 49.7908) to (137.878, 61.301)
+  // in screen coordinates.  Converted to points, (125.143, 49.7908) becomes
+  // (93.75, 37).  So the upper-left corner of the captured stroke should be
+  // roughly starting at that location, minus a little bit for implementation
+  // details of how Ink draws strokes.
+  std::optional<ink::StrokeInputBatch> inputs =
+      CreateInkInputBatch(kBasicInputs);
+  ASSERT_TRUE(inputs.has_value());
+  ink::Stroke stroke(brush->ink_brush(), inputs.value());
+  std::vector<FPDF_PAGEOBJECT> results =
+      WriteStrokeToPage(engine->doc(), page, stroke);
+  EXPECT_EQ(results.size(), 1u);
+
+  ASSERT_TRUE(FPDFPage_GenerateContent(page));
+
+  std::vector<uint8_t> saved_pdf_data = engine->GetSaveData();
+  ASSERT_TRUE(!saved_pdf_data.empty());
+
+  base::FilePath expectation_path = GetInkTestDataFilePath(
+      GetTestDataPathWithPlatformSuffix("ink_writer_cropped.png"));
+  CheckPdfRendering(saved_pdf_data, /*page_index=*/0, gfx::Size(145, 97),
+                    expectation_path);
+
+  // Load `saved_pdf_data` into `saved_engine` and get a handle to the one and
+  // only page.
+  TestClient saved_client;
+  std::unique_ptr<PDFiumEngine> saved_engine =
+      InitializeEngineFromData(&saved_client, std::move(saved_pdf_data));
+  ASSERT_TRUE(saved_engine);
+  ASSERT_EQ(saved_engine->GetNumberOfPages(), 1);
+  PDFiumPage& saved_pdfium_page = GetPDFiumPageForTest(*saved_engine, 0);
+  FPDF_PAGE saved_page = saved_pdfium_page.GetPage();
+  ASSERT_TRUE(saved_page);
+
+  // Complete the round trip and read the written PDF data back into memory as
+  // an ink::PartitionedMesh. ReadV2InkPathsFromPageAsModeledShapes() is known
+  // to be good because its unit tests reads from a real, known to be good Ink
+  // PDF.
+  std::vector<ReadV2InkPathResult> saved_results =
+      ReadV2InkPathsFromPageAsModeledShapes(saved_page);
+  ASSERT_EQ(saved_results.size(), 1u);
+
+  float left;
+  float bottom;
+  float right;
+  float top;
+  bool get_bounds = FPDFPageObj_GetBounds(saved_results[0].page_object, &left,
+                                          &bottom, &right, &top);
+  ASSERT_TRUE(get_bounds);
+  // While the cropped image shows the stroke on the visible page at an X coord
+  // of 92, that object's position in the PDF page is relative to the MediaBox,
+  // not the CropBox.  So its bounding box should be 55 points to the right of
+  // that.
+  EXPECT_RECTF_NEAR(gfx::RectF(gfx::PointF(left, bottom),
+                               gfx::SizeF(right - left, top - bottom)),
+                    gfx::RectF(gfx::PointF(147.3787f, 49.5206f),
+                               gfx::SizeF(12.5402f, 11.6486f)),
+                    /*abs_error=*/0.0001f);
 }
 
 TEST_P(PDFiumInkWriterTest, EmptyStroke) {
@@ -159,7 +247,9 @@ TEST_P(PDFiumInkWriterTest, EmptyStroke) {
 
   auto brush = CreateTestBrush();
   ink::Stroke unused_stroke(brush->ink_brush());
-  ASSERT_FALSE(WriteStrokeToPage(engine->doc(), page, unused_stroke));
+  std::vector<FPDF_PAGEOBJECT> results =
+      WriteStrokeToPage(engine->doc(), page, unused_stroke);
+  EXPECT_TRUE(results.empty());
 }
 
 TEST_P(PDFiumInkWriterTest, NoDocumentNoPage) {
@@ -174,11 +264,13 @@ TEST_P(PDFiumInkWriterTest, NoDocumentNoPage) {
 
   auto brush = CreateTestBrush();
   ink::Stroke unused_stroke(brush->ink_brush());
-  ASSERT_FALSE(
-      WriteStrokeToPage(/*document=*/nullptr, /*page=*/nullptr, unused_stroke));
-  ASSERT_FALSE(WriteStrokeToPage(/*document=*/nullptr, page, unused_stroke));
-  ASSERT_FALSE(
-      WriteStrokeToPage(engine->doc(), /*page=*/nullptr, unused_stroke));
+  std::vector<FPDF_PAGEOBJECT> results =
+      WriteStrokeToPage(/*document=*/nullptr, /*page=*/nullptr, unused_stroke);
+  EXPECT_TRUE(results.empty());
+  results = WriteStrokeToPage(/*document=*/nullptr, page, unused_stroke);
+  EXPECT_TRUE(results.empty());
+  results = WriteStrokeToPage(engine->doc(), /*page=*/nullptr, unused_stroke);
+  EXPECT_TRUE(results.empty());
 }
 
 // Don't be concerned about any slight rendering differences in AGG vs. Skia,

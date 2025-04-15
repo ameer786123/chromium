@@ -263,7 +263,8 @@ void AwPermissionManager::RequestPermissions(
     base::OnceCallback<void(const std::vector<PermissionStatus>&)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  auto const& permissions = request_description.permissions;
+  auto const& permissions = blink::PermissionDescriptorToPermissionTypes(
+      request_description.permissions);
   if (permissions.empty()) {
     std::move(callback).Run(std::vector<PermissionStatus>());
     return;
@@ -343,16 +344,8 @@ void AwPermissionManager::RequestPermissions(
         // custom data is represented with the CLIPBOARD_READ_WRITE permission,
         // and that requires an explicit user approval, which is not implemented
         // yet. See crbug.com/1271620
-        if (base::FeatureList::IsEnabled(
-                features::kWebViewAutoGrantSanitizedClipboardWrite)) {
-          pending_request_raw->SetPermissionStatus(permissions[i],
-                                                   PermissionStatus::GRANTED);
-        } else {
-          pending_request_raw->SetPermissionStatus(
-              permissions[i], request_description.user_gesture
-                                  ? PermissionStatus::GRANTED
-                                  : PermissionStatus::DENIED);
-        }
+        pending_request_raw->SetPermissionStatus(permissions[i],
+                                                 PermissionStatus::GRANTED);
         break;
       case PermissionType::AUDIO_CAPTURE:
       case PermissionType::VIDEO_CAPTURE:
@@ -423,6 +416,13 @@ void AwPermissionManager::RequestPermissions(
       case PermissionType::WAKE_LOCK_SYSTEM:
         pending_request_raw->SetPermissionStatus(permissions[i],
                                                  PermissionStatus::DENIED);
+        break;
+      case PermissionType::LOCAL_NETWORK_ACCESS:
+        // PermissionType::LOCAL_NETWORK_ACCESS requests are always granted so
+        // that local network requests in WebView work as-is. WebView is
+        // currently out-of-scope for Local Network Access restrictions.
+        pending_request_raw->SetPermissionStatus(permissions[i],
+                                                 PermissionStatus::GRANTED);
         break;
       case PermissionType::NUM:
         NOTREACHED() << "PermissionType::NUM was not expected here.";
@@ -563,16 +563,9 @@ PermissionStatus AwPermissionManager::GetPermissionStatusInternal(
       return GetGeolocationPermission(requesting_origin, web_contents);
 
     case blink::PermissionType::CLIPBOARD_SANITIZED_WRITE:
-      // These permissions are auto-granted by WebView.
-      if (base::FeatureList::IsEnabled(
-              features::kWebViewAutoGrantSanitizedClipboardWrite)) {
-        return PermissionStatus::GRANTED;
-      } else {
-        return PermissionStatus::ASK;
-      }
-
     case blink::PermissionType::MIDI:
     case blink::PermissionType::SENSORS:
+    case blink::PermissionType::LOCAL_NETWORK_ACCESS:
       // These permissions are auto-granted by WebView.
       return PermissionStatus::GRANTED;
 
@@ -624,15 +617,16 @@ PermissionStatus AwPermissionManager::GetGeolocationPermission(
   }
 
   AwSettings* settings = AwSettings::FromWebContents(web_contents);
+  if (!settings) {
+    // If we don't have a settings, we can't determine if we have
+    // permission.
+    return PermissionStatus::ASK;
+  }
+
   if (!settings->geolocation_enabled()) {
     return PermissionStatus::DENIED;
   }
-  AwContents* aw_contents = AwContents::FromWebContents(web_contents);
-  if (!aw_contents->UseLegacyGeolocationPermissionAPI()) {
-    // The new geolocation API does not have a cache for permission decisions,
-    // so if that's in use, we will need to ask the app.
-    return PermissionStatus::ASK;
-  }
+
   return context_delegate_->GetGeolocationPermission(requesting_origin);
 }
 
@@ -766,6 +760,7 @@ void AwPermissionManager::CancelPermissionRequest(int request_id) {
       case PermissionType::SENSORS:
       case PermissionType::WAKE_LOCK_SCREEN:
       case PermissionType::WAKE_LOCK_SYSTEM:
+      case PermissionType::LOCAL_NETWORK_ACCESS:
         // There is nothing to cancel so this is simply ignored.
         break;
       case PermissionType::NUM:
@@ -847,7 +842,7 @@ void AwPermissionManager::ClearEnumerateDevicesCachedPermission(
 
 int AwPermissionManager::GetRenderProcessID(
     content::RenderFrameHost* render_frame_host) {
-  return render_frame_host->GetProcess()->GetID();
+  return render_frame_host->GetProcess()->GetDeprecatedID();
 }
 
 int AwPermissionManager::GetRenderFrameID(

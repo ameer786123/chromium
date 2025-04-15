@@ -18,15 +18,14 @@ import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.Intent;
 
-import dagger.Lazy;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -34,7 +33,6 @@ import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsVisibilityManager;
 import org.chromium.chrome.browser.browserservices.intents.CustomButtonParams;
-import org.chromium.chrome.browser.customtabs.BaseCustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CloseButtonVisibilityManager;
 import org.chromium.chrome.browser.customtabs.CustomButtonParamsImpl;
 import org.chromium.chrome.browser.customtabs.CustomTabCompositorContentInitializer;
@@ -44,6 +42,7 @@ import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvid
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.share.ShareDelegateSupplier;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.url.GURL;
 
@@ -51,6 +50,8 @@ import org.chromium.url.GURL;
 @RunWith(BaseRobolectricTestRunner.class)
 @EnableFeatures({SHARE_CUSTOM_ACTIONS_IN_CCT})
 public class CustomTabToolbarCoordinatorUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public final CustomTabActivityContentTestEnvironment env =
             new CustomTabActivityContentTestEnvironment();
@@ -59,7 +60,7 @@ public class CustomTabToolbarCoordinatorUnitTest {
     @Mock private ShareDelegateSupplier mShareDelegateSupplier;
     @Mock private CustomTabActivityTabProvider mTabProvider;
     @Mock private ActivityWindowAndroid mActivityWindowAndroid;
-    @Mock private Lazy<BrowserControlsVisibilityManager> mBrowserControlsVisibilityManager;
+    @Mock private BrowserControlsVisibilityManager mBrowserControlsVisibilityManager;
     @Mock private CloseButtonVisibilityManager mCloseButtonVisibilityManager;
     @Mock private CustomTabBrowserControlsVisibilityDelegate mVisibilityDelegate;
     @Mock private CustomTabCompositorContentInitializer mCompositorContentInitializer;
@@ -67,7 +68,8 @@ public class CustomTabToolbarCoordinatorUnitTest {
     @Mock private Tab mTab;
     @Mock private CustomButtonParams mCustomButtonParams;
     @Mock private PendingIntent mPendingIntent;
-    @Mock private BaseCustomTabActivity mActivity;
+    @Mock private Activity mActivity;
+    @Mock private ToolbarManager mToolbarManager;
 
     private Activity mActivityForResources;
     private CustomTabActivityTabController mTabController;
@@ -75,26 +77,21 @@ public class CustomTabToolbarCoordinatorUnitTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
 
         mActivityForResources = Robolectric.setupActivity(Activity.class);
         mTabController = env.createTabController();
-
-        when(mActivity.getCustomTabActivityTabProvider()).thenReturn(mTabProvider);
-
         mCoordinator =
                 new CustomTabToolbarCoordinator(
                         env.intentDataProvider,
-                        env.connection,
+                        mTabProvider,
                         mActivity,
                         mActivityWindowAndroid,
-                        mActivity,
                         mBrowserControlsVisibilityManager,
                         env.createNavigationController(mTabController),
                         mCloseButtonVisibilityManager,
                         mVisibilityDelegate,
-                        mCompositorContentInitializer,
-                        mToolbarColorController);
+                        mToolbarColorController,
+                        mCompositorContentInitializer);
 
         ShareDelegateSupplier.setInstanceForTesting(mShareDelegateSupplier);
         when(mShareDelegateSupplier.get()).thenReturn(mShareDelegate);
@@ -115,14 +112,7 @@ public class CustomTabToolbarCoordinatorUnitTest {
             mCoordinator.onCustomButtonClick(mCustomButtonParams);
             verify(mShareDelegate, never()).share(any(Tab.class), eq(false), anyInt());
             verify(mPendingIntent)
-                    .send(
-                            eq(mActivity),
-                            eq(0),
-                            any(Intent.class),
-                            any(),
-                            isNull(),
-                            isNull(),
-                            any());
+                    .send(any(), eq(0), any(Intent.class), any(), isNull(), isNull(), any());
         } catch (PendingIntent.CanceledException e) {
             assert false;
         }
@@ -160,5 +150,21 @@ public class CustomTabToolbarCoordinatorUnitTest {
                 .thenReturn(CustomButtonParams.ButtonType.CCT_SHARE_BUTTON);
 
         clickButtonAndVerifyPendingIntent();
+    }
+
+    @Test
+    public void testToolbarInitialized_closeButtonEnabled() {
+        when(env.intentDataProvider.isCloseButtonEnabled()).thenReturn(true);
+
+        mCoordinator.onToolbarInitialized(mToolbarManager);
+        verify(mCloseButtonVisibilityManager).setVisibility(true);
+    }
+
+    @Test
+    public void testToolbarInitialized_closeButtonDisabled() {
+        when(env.intentDataProvider.isCloseButtonEnabled()).thenReturn(false);
+
+        mCoordinator.onToolbarInitialized(mToolbarManager);
+        verify(mCloseButtonVisibilityManager).setVisibility(false);
     }
 }

@@ -46,7 +46,7 @@ class ContactInfoLocalDataBatchUploader
   // that have their guid in `items`. `syncer::LocalDataItemModel::DataId` maps
   // to the guid that is populated in the returned values of
   // `GetLocalDataDescription()`.
-  void TriggerLocalDataMigration(
+  void TriggerLocalDataMigrationForItems(
       std::vector<syncer::LocalDataItemModel::DataId> items) override;
 
  private:
@@ -68,8 +68,7 @@ class ContactInfoLocalDataBatchUploader
 
   // Do not use these members directly. Use `GetAddressDataManager()` to use
   // the `AddressDataManager` instance.
-  base::RepeatingCallback<autofill::AddressDataManager*()>
-      address_data_manager_callback_;
+  base::RepeatingCallback<AddressDataManager*()> address_data_manager_callback_;
 };
 
 }  // namespace autofill

@@ -12,6 +12,8 @@
 
 #include <memory>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -21,6 +23,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/win/scoped_com_initializer.h"
@@ -39,7 +42,10 @@
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::AtLeast;
+using ::testing::Eq;
 using ::testing::Gt;
+using ::testing::IsFalse;
+using ::testing::IsTrue;
 using ::testing::NotNull;
 
 namespace media {
@@ -120,17 +126,16 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
   ~WriteToFileAudioSink() override {
     size_t bytes_written = 0;
     while (bytes_written < bytes_to_write_) {
-      const uint8_t* chunk;
-      int chunk_size;
-
       // Stop writing if no more data is available.
-      if (!buffer_.GetCurrentChunk(&chunk, &chunk_size))
+      const base::span<const uint8_t> chunk = buffer_.GetCurrentChunk();
+      if (chunk.empty()) {
         break;
+      }
 
       // Write recorded data chunk to the file and prepare for next chunk.
-      fwrite(chunk, 1, chunk_size, binary_file_);
-      buffer_.Seek(chunk_size);
-      bytes_written += chunk_size;
+      UNSAFE_TODO(fwrite(chunk.data(), 1, chunk.size(), binary_file_));
+      buffer_.Seek(chunk.size());
+      bytes_written += chunk.size();
     }
     base::CloseFile(binary_file_);
   }
@@ -141,17 +146,16 @@ class WriteToFileAudioSink : public AudioInputStream::AudioInputCallback {
               double volume,
               const AudioGlitchInfo& glitch_info) override {
     const int num_samples = src->frames() * src->channels();
-    auto interleaved = std::make_unique<int16_t[]>(num_samples);
-    const int bytes_per_sample = sizeof(interleaved[0]);
+    auto interleaved = base::HeapArray<int16_t>::Uninit(num_samples);
     src->ToInterleaved<SignedInt16SampleTypeTraits>(src->frames(),
-                                                    interleaved.get());
+                                                    interleaved.data());
 
     // Store data data in a temporary buffer to avoid making blocking
     // fwrite() calls in the audio callback. The complete buffer will be
     // written to file in the destructor.
-    const int size = bytes_per_sample * num_samples;
-    if (buffer_.Append((const uint8_t*)interleaved.get(), size)) {
-      bytes_to_write_ += size;
+    const auto byte_span = base::as_bytes(interleaved.as_span());
+    if (buffer_.Append(byte_span)) {
+      bytes_to_write_ += byte_span.size();
     }
   }
 
@@ -271,11 +275,12 @@ class ScopedAudioInputStream {
   }
 
  private:
-  raw_ptr<AudioInputStream> stream_;
+  // TODO(crbug.com/377749732): Fix dangling pointer when used with
+  // `AudioInputStreamDataInterceptor`.
+  raw_ptr<AudioInputStream, DanglingUntriaged> stream_;
 };
 
-class WinAudioInputTest : public ::testing::Test,
-                          public ::testing::WithParamInterface<bool> {
+class WinAudioInputTest : public ::testing::Test {
  public:
   WinAudioInputTest() {
     audio_manager_ =
@@ -336,6 +341,122 @@ TEST_F(WinAudioInputTest, WASAPIAudioInputStreamEffects) {
   params = device_info_accessor.GetInputStreamParameters(
       AudioDeviceDescription::kLoopbackWithMuteDeviceId);
   EXPECT_EQ(params.effects(), AudioParameters::NO_EFFECTS);
+}
+
+TEST_F(WinAudioInputTest,
+       WASAPIAudioInputStreamLoopbackDevicesDoNotSupportSystemEffects) {
+  AudioDeviceInfoAccessorForTests device_info_accessor(audio_manager_.get());
+  ABORT_AUDIO_TEST_IF_NOT(device_info_accessor.HasAudioInputDevices() &&
+                          CoreAudioUtil::IsSupported());
+
+  base::HistogramTester histogram_tester;
+
+  // Loopback devices do not support system effects when asked for its input
+  // parameters.
+  AudioParameters params = device_info_accessor.GetInputStreamParameters(
+      AudioDeviceDescription::kLoopbackInputDeviceId);
+  EXPECT_EQ(params.effects(), AudioParameters::NO_EFFECTS);
+  histogram_tester.ExpectTotalCount(
+      "Media.Audio.Capture.Win.VoiceProcessingEffects", 0);
+
+  // Loopback devices do not support system effects when asked for its input
+  // parameters even if we enable the system AEC flag.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(media::kEnforceSystemEchoCancellation);
+  params = device_info_accessor.GetInputStreamParameters(
+      AudioDeviceDescription::kLoopbackInputDeviceId);
+  EXPECT_EQ(params.effects(), AudioParameters::NO_EFFECTS);
+  histogram_tester.ExpectTotalCount(
+      "Media.Audio.Capture.Win.VoiceProcessingEffects", 0);
+
+  // Loopback devices to not support system AEC when used as device for an
+  // input stream even when the system AEC flag is enabled.
+  ScopedAudioInputStream stream(audio_manager_->MakeAudioInputStream(
+      params, AudioDeviceDescription::kLoopbackInputDeviceId,
+      base::BindRepeating(&LogCallbackDummy)));
+  EXPECT_EQ(stream->Open(), AudioInputStream::OpenOutcome::kSuccess);
+  EXPECT_EQ(params.effects(), AudioParameters::NO_EFFECTS);
+  histogram_tester.ExpectTotalCount(
+      "Media.Audio.Capture.Win.VoiceProcessingEffects", 0);
+}
+
+class WinAudioInputSystemEffectsTest : public WinAudioInputTest {
+ public:
+  using AP = AudioParameters;
+  WinAudioInputSystemEffectsTest()
+      : device_info_accessor_(audio_manager_.get()),
+        params_(device_info_accessor_.GetInputStreamParameters(
+            AudioDeviceDescription::kDefaultDeviceId)) {
+    feature_list_.InitAndEnableFeature(media::kEnforceSystemEchoCancellation);
+  }
+
+ protected:
+  AudioDeviceInfoAccessorForTests device_info_accessor_;
+  AudioParameters params_;
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_F(WinAudioInputSystemEffectsTest,
+       ParameterMustContainEchoCancellationToEnableSystemEffects) {
+  ABORT_AUDIO_TEST_IF_NOT(device_info_accessor_.HasAudioInputDevices() &&
+                          CoreAudioUtil::IsSupported());
+
+  base::HistogramTester histogram_tester;
+
+  static constexpr int kEffectsWithoutAEC[] = {
+      AP::NO_EFFECTS, AP::NOISE_SUPPRESSION, AP::AUTOMATIC_GAIN_CONTROL,
+      AP::NOISE_SUPPRESSION | AP::AUTOMATIC_GAIN_CONTROL};
+
+  // Emulate that the enumeration found an effect mask *without* AEC and create
+  // an input stream based on that. None of these should trigger a
+  // VoiceProcessingEffects histogram after the stream has been opened and
+  // closed.
+  for (const int& effect : kEffectsWithoutAEC) {
+    params_.set_effects(effect);
+    {
+      ScopedAudioInputStream stream(audio_manager_->MakeAudioInputStream(
+          params_, AudioDeviceDescription::kDefaultDeviceId,
+          base::BindRepeating(&LogCallbackDummy)));
+      ASSERT_THAT(stream.get(), NotNull());
+      ASSERT_THAT(stream->Open(), Eq(AudioInputStream::OpenOutcome::kSuccess));
+    }
+    histogram_tester.ExpectTotalCount(
+        "Media.Audio.Capture.Win.VoiceProcessingEffects", 0);
+  }
+}
+
+TEST_F(WinAudioInputSystemEffectsTest,
+       ParameterWithEchoCancellationShouldEnableSystemEffects) {
+  ABORT_AUDIO_TEST_IF_NOT(device_info_accessor_.HasAudioInputDevices() &&
+                          CoreAudioUtil::IsSupported());
+
+  static constexpr int kEffectsWithAEC[] = {
+      AP::ECHO_CANCELLER,
+      AP::ECHO_CANCELLER | AP::AUTOMATIC_GAIN_CONTROL,
+      AP::ECHO_CANCELLER | AP::NOISE_SUPPRESSION,
+      AP::ECHO_CANCELLER | AP::AUTOMATIC_GAIN_CONTROL | AP::NOISE_SUPPRESSION,
+  };
+
+  // Emulate that the enumeration found an effect mask *with* AEC and create
+  // an input stream based on that. All of these effect masks should trigger a
+  // VoiceProcessingEffects histogram after the stream has been opened and
+  // closed. The exact count can't be predicted.
+  for (const int& effect : kEffectsWithAEC) {
+    base::HistogramTester histogram_tester;
+    params_.set_effects(effect);
+    {
+      ScopedAudioInputStream stream(audio_manager_->MakeAudioInputStream(
+          params_, AudioDeviceDescription::kDefaultDeviceId,
+          base::BindRepeating(&LogCallbackDummy)));
+      ASSERT_THAT(stream.get(), NotNull());
+      ASSERT_THAT(stream->Open(), Eq(AudioInputStream::OpenOutcome::kSuccess));
+    }
+    EXPECT_THAT(histogram_tester.GetTotalCountsForPrefix(
+                    "Media.Audio.Capture.Win.VoiceProcessingEffects"),
+                ::testing::Contains(::testing::Pair(
+                    "Media.Audio.Capture.Win.VoiceProcessingEffects",
+                    ::testing::Gt(0))));
+  }
 }
 
 // Test Create(), Close() calling sequence.

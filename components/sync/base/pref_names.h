@@ -6,7 +6,6 @@
 #define COMPONENTS_SYNC_BASE_PREF_NAMES_H_
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 namespace syncer::prefs {
 
@@ -43,6 +42,11 @@ inline constexpr char kSyncKeepEverythingSynced[] =
 inline constexpr char kSelectedTypesPerAccount[] =
     "sync.selected_types_per_account";
 
+// Dict specifying the sync transport data (e.g. cache GUID, birthday, etc) per
+// account.
+inline constexpr char kSyncTransportDataPerAccount[] =
+    "sync.transport_data_per_account";
+
 #if BUILDFLAG(IS_CHROMEOS)
 // Boolean specifying whether sync was disabled due to a dashboard reset event.
 inline constexpr char kSyncDisabledViaDashboard[] =
@@ -77,7 +81,6 @@ inline constexpr char kSyncPreferences[] = "sync.preferences";
 inline constexpr char kSyncProductComparison[] = "sync.product_comparison";
 inline constexpr char kSyncReadingList[] = "sync.reading_list";
 inline constexpr char kSyncSavedTabGroups[] = "sync.saved_tab_groups";
-inline constexpr char kSyncSharedTabGroupData[] = "sync.shared_tab_group_data";
 inline constexpr char kSyncTabs[] = "sync.tabs";
 inline constexpr char kSyncThemes[] = "sync.themes";
 
@@ -91,6 +94,11 @@ inline constexpr char kSyncManaged[] = "sync.managed";
 // PassphraseType, see ProtoPassphraseInt32ToEnum() etc.
 inline constexpr char kSyncCachedPassphraseType[] =
     "sync.cached_passphrase_type";
+
+// Whether or not a persistent auth error is known to exist, cached in prefs
+// because IdentityManager doesn't persist this information.
+inline constexpr char kSyncCachedPersistentAuthErrorForMetrics[] =
+    "sync.cached_persistent_auth_error";
 
 // The user's TrustedVaultAutoUpgradeExperimentGroup, determined the first time
 // the engine is successfully initialized.

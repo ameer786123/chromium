@@ -351,10 +351,9 @@ class ConnectionCoordinator::OpenRequest
     Transaction* transaction = connection_->CreateVersionChangeTransaction(
         pending_->transaction_id,
         std::set<int64_t>(object_store_ids.begin(), object_store_ids.end()),
-        db_->backing_store()
-            ->CreateTransaction(blink::mojom::IDBTransactionDurability::Strict,
-                                blink::mojom::IDBTransactionMode::ReadWrite)
-            .release());
+        db_->backing_store()->CreateTransaction(
+            blink::mojom::IDBTransactionDurability::Strict,
+            blink::mojom::IDBTransactionMode::ReadWrite));
 
     // Save a WeakPtr<Transaction> for the BindTransactionReceiver
     // function to use later.
@@ -563,15 +562,11 @@ class ConnectionCoordinator::DeleteRequest
     state_ = RequestState::kDone;
   }
 
-  void BindTransactionReceiver() override { NOTREACHED_IN_MIGRATION(); }
+  void BindTransactionReceiver() override { NOTREACHED(); }
 
-  void UpgradeTransactionStarted(int64_t old_version) override {
-    NOTREACHED_IN_MIGRATION();
-  }
+  void UpgradeTransactionStarted(int64_t old_version) override { NOTREACHED(); }
 
-  void UpgradeTransactionFinished(bool committed) override {
-    NOTREACHED_IN_MIGRATION();
-  }
+  void UpgradeTransactionFinished(bool committed) override { NOTREACHED(); }
 
   // The delete requests should always be run during force close.
   bool ShouldPruneForForceClose() override { return false; }
@@ -693,8 +688,7 @@ ConnectionCoordinator::ExecuteTask(bool has_connections) {
 
   switch (request->state()) {
     case RequestState::kNotStarted:
-      NOTREACHED_IN_MIGRATION();
-      return {ExecuteTaskResult::kError, Status::OK()};
+      NOTREACHED();
     case RequestState::kPendingNoConnections:
     case RequestState::kPendingLocks:
     case RequestState::kPendingTransactionComplete:
@@ -725,7 +719,7 @@ ConnectionCoordinator::ExecuteTask(bool has_connections) {
       return {ExecuteTaskResult::kError, status};
     }
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 size_t ConnectionCoordinator::ActiveOpenDeleteCount() const {

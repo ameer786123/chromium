@@ -15,14 +15,14 @@
 
 namespace blink {
 
-DOMFloat32Array* transformationMatrixToDOMFloat32Array(
+NotShared<DOMFloat32Array> transformationMatrixToDOMFloat32Array(
     const gfx::Transform& matrix) {
   float array[16];
   matrix.GetColMajorF(array);
-  return DOMFloat32Array::Create(array);
+  return NotShared<DOMFloat32Array>(DOMFloat32Array::Create(array));
 }
 
-gfx::Transform DOMFloat32ArrayToTransform(DOMFloat32Array* m) {
+gfx::Transform DOMFloat32ArrayToTransform(NotShared<DOMFloat32Array> m) {
   DCHECK_EQ(m->length(), 16u);
   return gfx::Transform::ColMajorF(m->Data());
 }
@@ -55,8 +55,7 @@ WebGLRenderingContextBase* webglRenderingContextBaseFromUnion(
     case V8XRWebGLRenderingContext::ContentType::kWebGLRenderingContext:
       return context->GetAsWebGLRenderingContext();
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 std::optional<device::Pose> CreatePose(const gfx::Transform& matrix) {
@@ -117,8 +116,7 @@ device::mojom::blink::XRHandJoint StringToMojomHandJoint(
     return device::mojom::blink::XRHandJoint::kPinkyFingerTip;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return device::mojom::blink::XRHandJoint::kMaxValue;
+  NOTREACHED();
 }
 
 V8XRHandJoint::Enum MojomHandJointToV8Enum(

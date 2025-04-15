@@ -20,6 +20,7 @@
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_icon_image.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/icons/extension_icon_set.h"
@@ -155,14 +156,16 @@ DeprecatedAppsDialogView::DeprecatedAppsDialogView(
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(web_contents_->GetBrowserContext())
             ->GetInstalledExtension(optional_launched_extension_id);
-    launched_extension_name_ = base::UTF8ToUTF16(extension->name());
+    launched_extension_name_ =
+        extensions::util::GetFixupExtensionNameForUIDisplay(extension->name());
   }
   if (deprecated_app_ids_.size() == 1) {
     const extensions::Extension* extension =
         extensions::ExtensionRegistry::Get(web_contents_->GetBrowserContext())
             ->GetInstalledExtension(*deprecated_app_ids_.begin());
     DCHECK(extension);
-    single_app_name_ = base::UTF8ToUTF16(extension->name());
+    single_app_name_ =
+        extensions::util::GetFixupExtensionNameForUIDisplay(extension->name());
   }
   deprecated_apps_table_model_ = std::make_unique<DeprecatedAppsTableModel>(
       deprecated_app_ids, web_contents,
@@ -223,7 +226,7 @@ void DeprecatedAppsDialogView::InitDialog() {
 
   // Set up the table view.
   std::vector<ui::TableColumn> columns;
-  columns.emplace_back(ui::TableColumn());
+  columns.emplace_back();
 
   auto table = std::make_unique<views::TableView>(
       deprecated_apps_table_model_.get(), columns,
@@ -252,8 +255,7 @@ void DeprecatedAppsDialogView::OnIconsLoadedForTable() {
 
 void DeprecatedAppsDialogView::OnAccept() {
   for (extensions::ExtensionId id : deprecated_app_ids_) {
-    extensions::ExtensionSystem::Get(web_contents_->GetBrowserContext())
-        ->extension_service()
+    extensions::ExtensionRegistrar::Get(web_contents_->GetBrowserContext())
         ->UninstallExtension(id, extensions::UNINSTALL_REASON_USER_INITIATED,
                              /*error=*/nullptr);
   }

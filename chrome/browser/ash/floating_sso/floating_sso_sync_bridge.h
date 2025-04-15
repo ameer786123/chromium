@@ -8,8 +8,10 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
+#include "base/containers/flat_set.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
@@ -77,6 +79,14 @@ class FloatingSsoSyncBridge : public syncer::DataTypeSyncBridge {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
+  // `callback` will be run immediately if `MergeFullSyncData` was already
+  // called.
+  void SetOnMergeFullSyncDataCallback(base::OnceClosure callback);
+
+  // Cookie corresponding to `storage_key` will not be overridden by remote
+  // cookie on initial merge of Sync data.
+  void AddToLocallyPreferredCookies(const std::string& storage_key);
+
   // Assumes that the `store_` is initialized.
   const CookieSpecificsEntries& CookieSpecificsInStore() const;
   bool IsInitialDataReadFinishedForTest() const;
@@ -93,12 +103,18 @@ class FloatingSsoSyncBridge : public syncer::DataTypeSyncBridge {
   void OnStoreCommit(const std::optional<syncer::ModelError>& error);
   void CommitToStore(std::unique_ptr<StoreWithCache::WriteBatch> batch);
   bool IsCookieInStore(const std::string& storage_key) const;
+  void OnMergeFullSyncDataFinished();
 
   // Whether we finished reading data and metadata from disk on initial bridge
   // creation.
   bool is_initial_data_read_finished_ = false;
 
   base::RepeatingClosure on_store_commit_callback_for_test_;
+
+  // Whether `MergeFullSyncData()` was executed.
+  bool merge_full_sync_data_finished_ = false;
+
+  base::OnceClosure on_merge_full_sync_data_callback_;
 
   // Reads and writes data from/to disk, maintains an in-memory copy of the
   // data.
@@ -108,6 +124,10 @@ class FloatingSsoSyncBridge : public syncer::DataTypeSyncBridge {
   // processor are not ready.
   std::map<std::string, sync_pb::CookieSpecifics> deferred_cookie_additions_;
   std::set<std::string> deferred_cookie_deletions_;
+
+  // Storage keys of cookies for which we should always prefer local version
+  // during conflict resolution.
+  base::flat_set<std::string> keep_local_cookie_keys_;
 
   // Observers which are notified about all incoming remote changes.
   base::ObserverList<Observer> observers_;

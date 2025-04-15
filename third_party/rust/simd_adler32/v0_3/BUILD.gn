@@ -12,18 +12,18 @@ cargo_crate("lib") {
   crate_name = "simd_adler32"
   epoch = "0.3"
   crate_type = "rlib"
-  crate_root = "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/lib.rs"
+  crate_root = "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/lib.rs"
   sources = [
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/hash.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/avx2.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/avx512.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/mod.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/neon.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/scalar.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/sse2.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/ssse3.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/imp/wasm.rs",
-    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-0.3.7/src/lib.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/hash.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/avx2.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/avx512.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/neon.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/scalar.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/sse2.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/ssse3.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/imp/wasm.rs",
+    "//third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/src/lib.rs",
   ]
   inputs = []
 
@@ -34,6 +34,7 @@ cargo_crate("lib") {
   cargo_pkg_name = "simd-adler32"
   cargo_pkg_description =
       "A SIMD-accelerated Adler-32 hash algorithm implementation."
+  library_configs -= [ "//build/config/coverage:default_coverage" ]
   library_configs -= [ "//build/config/compiler:chromium_code" ]
   library_configs += [ "//build/config/compiler:no_chromium_code" ]
   executable_configs -= [ "//build/config/compiler:chromium_code" ]
@@ -42,7 +43,11 @@ cargo_crate("lib") {
   proc_macro_configs += [ "//build/config/compiler:no_chromium_code" ]
   features = [
     "const-generics",
+    "default",
     "std",
+  ]
+  rustflags = [
+    "--cap-lints=allow",  # Suppress all warnings in crates.io crates
   ]
 
   # Only for usage from third-party crates. Add the crate to

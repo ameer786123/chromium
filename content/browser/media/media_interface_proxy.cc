@@ -18,7 +18,6 @@
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/media/cdm_storage_common.h"
 #include "content/browser/renderer_host/render_frame_host_delegate.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
@@ -35,7 +34,6 @@
 #include "media/mojo/buildflags.h"
 #include "media/mojo/mojom/frame_interface_factory.mojom.h"
 #include "media/mojo/mojom/media_service.mojom.h"
-#include "media/mojo/mojom/stable/stable_video_decoder.mojom.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
 
@@ -51,7 +49,6 @@
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/browser/media/cdm_storage_manager.h"
-#include "content/browser/media/media_license_manager.h"
 #include "media/base/key_system_names.h"
 #include "media/mojo/mojom/cdm_service.mojom.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
@@ -76,7 +73,6 @@
 #endif
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-#include "content/public/browser/stable_video_decoder_factory.h"
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/message.h"
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
@@ -273,8 +269,7 @@ void MediaInterfaceProxy::CreateAudioDecoder(
 
 void MediaInterfaceProxy::CreateVideoDecoder(
     mojo::PendingReceiver<media::mojom::VideoDecoder> receiver,
-    mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-        dst_video_decoder) {
+    mojo::PendingRemote<media::mojom::VideoDecoder> dst_video_decoder) {
   DCHECK(thread_checker_.CalledOnValidThread());
   // The browser process cannot act as a proxy for video decoding and clients
   // should not attempt to use it that way.
@@ -284,23 +279,11 @@ void MediaInterfaceProxy::CreateVideoDecoder(
   if (!factory)
     return;
 
-  mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-      oop_video_decoder;
+  mojo::PendingRemote<media::mojom::VideoDecoder> oop_video_decoder;
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  switch (media::GetOutOfProcessVideoDecodingMode()) {
-    case media::OOPVDMode::kEnabledWithGpuProcessAsProxy:
-      render_frame_host().GetProcess()->CreateStableVideoDecoder(
-          oop_video_decoder.InitWithNewPipeAndPassReceiver());
-      break;
-    case media::OOPVDMode::kEnabledWithoutGpuProcessAsProxy:
-      // Well-behaved clients shouldn't call CreateVideoDecoder() in this OOP-VD
-      // mode and MediaInterfaceProxy::CreateVideoDecoder() should always be
-      // called during a message dispatch.
-      CHECK(mojo::IsInMessageDispatch());
-      mojo::ReportBadMessage("CreateVideoDecoder() called unexpectedly");
-      return;
-    case media::OOPVDMode::kDisabled:
-      break;
+  if (media::IsOutOfProcessVideoDecodingEnabled()) {
+    render_frame_host().GetProcess()->CreateOOPVideoDecoder(
+        oop_video_decoder.InitWithNewPipeAndPassReceiver());
   }
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
   factory->CreateVideoDecoder(std::move(receiver),
@@ -308,24 +291,16 @@ void MediaInterfaceProxy::CreateVideoDecoder(
 }
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-void MediaInterfaceProxy::CreateStableVideoDecoder(
-    mojo::PendingReceiver<media::stable::mojom::StableVideoDecoder>
-        video_decoder) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  switch (media::GetOutOfProcessVideoDecodingMode()) {
-    case media::OOPVDMode::kEnabledWithGpuProcessAsProxy:
-    case media::OOPVDMode::kDisabled:
-      // Well-behaved clients shouldn't call CreateStableVideoDecoder() in this
-      // OOP-VD mode and MediaInterfaceProxy::CreateStableVideoDecoder() should
-      // always be called during a message dispatch.
-      CHECK(mojo::IsInMessageDispatch());
-      mojo::ReportBadMessage("CreateStableVideoDecoder() called unexpectedly");
-      return;
-    case media::OOPVDMode::kEnabledWithoutGpuProcessAsProxy:
-      render_frame_host().GetProcess()->CreateStableVideoDecoder(
-          std::move(video_decoder));
-      break;
-  }
+void MediaInterfaceProxy::CreateVideoDecoderWithTracker(
+    mojo::PendingReceiver<media::mojom::VideoDecoder> receiver,
+    mojo::PendingRemote<media::mojom::VideoDecoderTracker> tracker) {
+  // mojo::ReportBadMessage() should be called directly within the stack frame
+  // of a message dispatch, hence the CHECK().
+  // CreateVideoDecoderWithTracker() should be called by the browser process
+  // only. This implementation is exposed to the renderer. Well-behaved clients
+  // (renderers) shouldn't call CreateVideoDecoderWithTracker().
+  CHECK(mojo::IsInMessageDispatch());
+  mojo::ReportBadMessage("CreateVideoDecoderWithTracker() called unexpectedly");
 }
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
@@ -392,7 +367,7 @@ void MediaInterfaceProxy::CreateMediaPlayerRenderer(
   media::MojoRendererService::Create(
       nullptr,
       std::make_unique<MediaPlayerRenderer>(
-          render_frame_host().GetProcess()->GetID(),
+          render_frame_host().GetProcess()->GetDeprecatedID(),
           render_frame_host().GetRoutingID(),
           WebContents::FromRenderFrameHost(&render_frame_host()),
           std::move(renderer_extension_receiver),
@@ -438,13 +413,7 @@ void MediaInterfaceProxy::CreateCdm(const media::CdmConfig& cdm_config,
 
   // Handle `use_hw_secure_codecs` cases first.
 #if BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  bool enable_cdm_factory_daemon =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kLacrosUseChromeosProtectedMedia);
-#else   // BUILDFLAG(IS_CHROMEOS_LACROS)
   bool enable_cdm_factory_daemon = true;
-#endif  // else BUILDFLAG(IS_CHROMEOS_LACROS)
 #if defined(ARCH_CPU_ARM_FAMILY)
   if (!base::FeatureList::IsEnabled(media::kEnableArmHwdrm)) {
     enable_cdm_factory_daemon = false;
@@ -547,8 +516,9 @@ void MediaInterfaceProxy::ConnectToMediaFoundationService(
   DVLOG(1) << __func__ << ": this=" << this << ", cdm_path=" << cdm_path;
   DCHECK(!mf_interface_factory_remote_);
 
+  // Passing an empty CdmType since it is not needed in this scenario.
   auto& mf_service = GetMediaFoundationService(
-      render_frame_host().GetBrowserContext(),
+      media::CdmType(), render_frame_host().GetBrowserContext(),
       render_frame_host().GetSiteInstance()->GetSiteURL(), cdm_path);
 
   // Passing an empty CdmType as MediaFoundation-based CDMs don't use CdmStorage
@@ -586,16 +556,15 @@ media::mojom::CdmFactory* MediaInterfaceProxy::GetCdmFactory(
   auto cdm_info = CdmRegistryImpl::GetInstance()->GetCdmInfo(
       key_system, CdmInfo::Robustness::kSoftwareSecure);
   if (!cdm_info) {
-    NOTREACHED_IN_MIGRATION() << "No valid CdmInfo for " << key_system;
+    DLOG(ERROR) << "No valid CdmInfo for " << key_system;
     return nullptr;
   }
+
   if (cdm_info->path.empty()) {
-    NOTREACHED_IN_MIGRATION() << "CDM path for " << key_system << " is empty";
-    return nullptr;
+    NOTREACHED() << "CDM path for " << key_system << " is empty";
   }
   if (!IsValidCdmDisplayName(cdm_info->name)) {
-    NOTREACHED_IN_MIGRATION() << "Invalid CDM display name " << cdm_info->name;
-    return nullptr;
+    NOTREACHED() << "Invalid CDM display name " << cdm_info->name;
   }
 
   auto& cdm_type = cdm_info->type;

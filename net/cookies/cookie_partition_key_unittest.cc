@@ -4,13 +4,14 @@
 
 #include "net/cookies/cookie_partition_key.h"
 
+#include <optional>
 #include <string>
 #include <tuple>
 
 #include "base/test/scoped_feature_list.h"
 #include "net/base/features.h"
+#include "net/base/network_isolation_partition.h"
 #include "net/cookies/cookie_constants.h"
-#include "net/cookies/cookie_switches.h"
 #include "net/cookies/site_for_cookies.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,26 +19,10 @@ namespace net {
 
 using enum CookiePartitionKey::AncestorChainBit;
 
-class CookiePartitionKeyTest : public testing::TestWithParam<bool> {
- protected:
-  // testing::Test
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(
-        features::kAncestorChainBitEnabledInPartitionedCookies,
-        AncestorChainBitEnabled());
-  }
+class CookiePartitionKeyTest : public ::testing::Test {};
 
-  bool AncestorChainBitEnabled() { return GetParam(); }
 
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(/* no label */,
-                         CookiePartitionKeyTest,
-                         ::testing::Bool());
-
-TEST_P(CookiePartitionKeyTest, TestFromStorage) {
+TEST(CookiePartitionKeyTest, TestFromStorage) {
   struct {
     const std::string top_level_site;
     bool third_party;
@@ -66,17 +51,19 @@ TEST_P(CookiePartitionKeyTest, TestFromStorage) {
     }
   }
 
+#if BUILDFLAG(IS_ANDROID)
   {
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        kDisablePartitionedCookiesSwitch);
+    base::AutoReset<bool> reset =
+        CookiePartitionKey::DisablePartitioningInScopeForTesting();
     EXPECT_FALSE(
         CookiePartitionKey::FromStorage("https://toplevelsite.com",
                                         /*has_cross_site_ancestor=*/true)
             .has_value());
   }
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
-TEST_P(CookiePartitionKeyTest, TestFromUntrustedInput) {
+TEST(CookiePartitionKeyTest, TestFromUntrustedInput) {
   const std::string kFullURL = "https://subdomain.toplevelsite.com/index.html";
   const std::string kValidSite = "https://toplevelsite.com";
   struct Output {
@@ -118,17 +105,19 @@ TEST_P(CookiePartitionKeyTest, TestFromUntrustedInput) {
     }
   }
 
+#if BUILDFLAG(IS_ANDROID)
   {
-    base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        kDisablePartitionedCookiesSwitch);
+    base::AutoReset<bool> reset =
+        CookiePartitionKey::DisablePartitioningInScopeForTesting();
     EXPECT_FALSE(
         CookiePartitionKey::FromUntrustedInput("https://toplevelsite.com",
                                                /*has_cross_site_ancestor=*/true)
             .has_value());
   }
+#endif  // BUILDFLAG(IS_ANDROID)
 }
 
-TEST_P(CookiePartitionKeyTest, Serialization) {
+TEST(CookiePartitionKeyTest, Serialization) {
   base::UnguessableToken nonce = base::UnguessableToken::Create();
   struct Output {
     std::string top_level_site;
@@ -232,7 +221,7 @@ TEST_P(CookiePartitionKeyTest, Serialization) {
   }
 }
 
-TEST_P(CookiePartitionKeyTest, FromNetworkIsolationKey) {
+TEST(CookiePartitionKeyTest, FromNetworkIsolationKey) {
   const SchemefulSite kTopLevelSite =
       SchemefulSite(GURL("https://toplevelsite.com"));
   const SchemefulSite kCookieSite =
@@ -258,6 +247,13 @@ TEST_P(CookiePartitionKeyTest, FromNetworkIsolationKey) {
        CookiePartitionKey::FromURLForTesting(kCookieSite.GetURL(), kCrossSite,
                                              kNonce),
        SiteForCookies::FromUrl(GURL::EmptyGURL()), SchemefulSite(kTopLevelSite),
+       /*main_frame_navigation=*/false},
+      {"WithNetworkIsolationPartition",
+       NetworkIsolationKey(
+           kTopLevelSite, kCookieSite, /*nonce=*/std::nullopt,
+           NetworkIsolationPartition::kProtectedAudienceSellerWorklet),
+       std::nullopt, SiteForCookies::FromUrl(GURL::EmptyGURL()),
+       SchemefulSite(kTopLevelSite),
        /*main_frame_navigation=*/false},
       {"WithCrossSiteAncestorSameSite",
        NetworkIsolationKey(kTopLevelSite, kTopLevelSite),
@@ -291,11 +287,6 @@ TEST_P(CookiePartitionKeyTest, FromNetworkIsolationKey) {
        SchemefulSite(kTopLevelSite), /*main_frame_navigation=*/true},
   };
 
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatureState(
-      features::kAncestorChainBitEnabledInPartitionedCookies,
-      AncestorChainBitEnabled());
-
   for (const auto& test_case : test_cases) {
     SCOPED_TRACE(test_case.desc);
 
@@ -311,7 +302,7 @@ TEST_P(CookiePartitionKeyTest, FromNetworkIsolationKey) {
   }
 }
 
-TEST_P(CookiePartitionKeyTest, FromWire) {
+TEST(CookiePartitionKeyTest, FromWire) {
   struct TestCase {
     const GURL url;
     const std::optional<base::UnguessableToken> nonce;
@@ -333,7 +324,7 @@ TEST_P(CookiePartitionKeyTest, FromWire) {
   }
 }
 
-TEST_P(CookiePartitionKeyTest, FromStorageKeyComponents) {
+TEST(CookiePartitionKeyTest, FromStorageKeyComponents) {
   struct TestCase {
     const GURL url;
     const std::optional<base::UnguessableToken> nonce = std::nullopt;
@@ -355,7 +346,7 @@ TEST_P(CookiePartitionKeyTest, FromStorageKeyComponents) {
   }
 }
 
-TEST_P(CookiePartitionKeyTest, FromScript) {
+TEST(CookiePartitionKeyTest, FromScript) {
   auto key = CookiePartitionKey::FromScript();
   EXPECT_TRUE(key);
   EXPECT_TRUE(key->from_script());
@@ -374,14 +365,14 @@ TEST_P(CookiePartitionKeyTest, FromScript) {
   EXPECT_TRUE(key != key2);
 }
 
-TEST_P(CookiePartitionKeyTest, IsSerializeable) {
+TEST(CookiePartitionKeyTest, IsSerializeable) {
   EXPECT_FALSE(CookiePartitionKey::FromURLForTesting(GURL()).IsSerializeable());
   EXPECT_TRUE(
       CookiePartitionKey::FromURLForTesting(GURL("https://www.example.com"))
           .IsSerializeable());
 }
 
-TEST_P(CookiePartitionKeyTest, Equality) {
+TEST(CookiePartitionKeyTest, Equality) {
   // Same eTLD+1 but different scheme are not equal.
   EXPECT_NE(CookiePartitionKey::FromURLForTesting(GURL("https://foo.com")),
             CookiePartitionKey::FromURLForTesting(GURL("http://foo.com")));
@@ -391,18 +382,18 @@ TEST_P(CookiePartitionKeyTest, Equality) {
             CookiePartitionKey::FromURLForTesting(GURL("https://b.foo.com")));
 }
 
-TEST_P(CookiePartitionKeyTest, Equality_WithAncestorChain) {
+TEST(CookiePartitionKeyTest, Equality_WithAncestorChain) {
   CookiePartitionKey key1 = CookiePartitionKey::FromURLForTesting(
       GURL("https://foo.com"), kSameSite, std::nullopt);
   CookiePartitionKey key2 = CookiePartitionKey::FromURLForTesting(
       GURL("https://foo.com"), kCrossSite, std::nullopt);
 
-  EXPECT_EQ((key1 == key2), !AncestorChainBitEnabled());
+  EXPECT_NE(key1 , key2);
   EXPECT_EQ(key1, CookiePartitionKey::FromURLForTesting(
                       GURL("https://foo.com"), kSameSite, std::nullopt));
 }
 
-TEST_P(CookiePartitionKeyTest, Equality_WithNonce) {
+TEST(CookiePartitionKeyTest, Equality_WithNonce) {
   SchemefulSite top_level_site =
       SchemefulSite(GURL("https://toplevelsite.com"));
   SchemefulSite frame_site = SchemefulSite(GURL("https://cookiesite.com"));
@@ -435,7 +426,23 @@ TEST_P(CookiePartitionKeyTest, Equality_WithNonce) {
   EXPECT_NE(key1, unnonced_key);
 }
 
-TEST_P(CookiePartitionKeyTest, Localhost) {
+TEST(CookiePartitionKeyTest, NoncedKeyForbidsUnpartitionedAccess) {
+  SchemefulSite top_level_site(GURL("https://toplevelsite.com"));
+  SchemefulSite frame_site(GURL("https://cookiesite.com"));
+
+  auto key = CookiePartitionKey::FromNetworkIsolationKey(
+      NetworkIsolationKey(top_level_site, frame_site), SiteForCookies(),
+      top_level_site, /*main_frame_navigation=*/false);
+  EXPECT_FALSE(key->ForbidsUnpartitionedCookieAccess());
+
+  base::UnguessableToken nonce = base::UnguessableToken::Create();
+  key = CookiePartitionKey::FromNetworkIsolationKey(
+      NetworkIsolationKey(top_level_site, frame_site, nonce), SiteForCookies(),
+      top_level_site, /*main_frame_navigation=*/false);
+  EXPECT_TRUE(key->ForbidsUnpartitionedCookieAccess());
+}
+
+TEST(CookiePartitionKeyTest, Localhost) {
   SchemefulSite top_level_site(GURL("https://localhost:8000"));
 
   auto key = CookiePartitionKey::FromNetworkIsolationKey(

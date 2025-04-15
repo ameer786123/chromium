@@ -6,12 +6,12 @@
 
 #include <inttypes.h>
 
+#include <algorithm>
+
 #include "base/functional/callback.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "media/base/video_frame.h"
 
 namespace media {
@@ -188,7 +188,7 @@ std::string VideoEncodeAccelerator::Config::AsHumanReadableString() const {
 }
 
 bool VideoEncodeAccelerator::Config::HasTemporalLayer() const {
-  return base::ranges::any_of(spatial_layers, [](const SpatialLayer& sl) {
+  return std::ranges::any_of(spatial_layers, [](const SpatialLayer& sl) {
     return sl.num_of_temporal_layers > 1u;
   });
 }
@@ -247,7 +247,7 @@ bool VideoEncodeAccelerator::IsFlushSupported() {
 }
 
 bool VideoEncodeAccelerator::IsGpuFrameResizeSupported() {
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
   // TODO(crbug.com/40164413) Add proper method overrides in
   // MojoVideoEncodeAccelerator and other subclasses that might return true.
   return true;
@@ -268,6 +268,41 @@ void VideoEncodeAccelerator::RequestEncodingParametersChange(
   RequestEncodingParametersChange(
       Bitrate::ConstantBitrate(bitrate_allocation.GetSumBps()), framerate,
       size);
+}
+
+// static
+size_t VideoEncodeAccelerator::EstimateBitstreamBufferSize(
+    const Bitrate& bitrate,
+    uint32_t framerate,
+    const gfx::Size& coded_size) {
+  // Calculate how much data the frame takes without encoding.
+  // Adding 2KB just in case the frame is really small, we don't want to
+  // end up with no space for a video codec's headers.
+  // This is about 1.3Mb for 1280x720 frames.
+  size_t raw_frame_size =
+      VideoFrame::AllocationSize(PIXEL_FORMAT_I420, coded_size) + 2048;
+
+  // Estimate the expected size of an encoded chunk based on bitrate and
+  // framerate. This is capped at 30Mb, i.e. 50 Mbps at 1fps.
+  size_t expected_bitrate = 0;
+  switch (bitrate.mode()) {
+    case Bitrate::Mode::kVariable:
+      expected_bitrate = bitrate.peak_bps();
+      break;
+    case Bitrate::Mode::kConstant:
+      expected_bitrate = bitrate.target_bps();
+      break;
+    case Bitrate::Mode::kExternal:
+      break;
+  }
+  const size_t kOvershootAllowance = 5;
+  const size_t kMaxAverageBitrate = 50000000;
+  expected_bitrate =
+      std::min(expected_bitrate, kMaxAverageBitrate) * kOvershootAllowance;
+  size_t expected_chunk_size = expected_bitrate / framerate / CHAR_BIT;
+
+  // Let's be conservative and take the maximum of both methods.
+  return std::max(expected_chunk_size, raw_frame_size);
 }
 
 bool operator==(const VideoEncodeAccelerator::SupportedProfile& l,

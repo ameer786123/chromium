@@ -31,6 +31,7 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/gcm/gcm_product_util.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -51,10 +52,12 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -109,12 +112,12 @@ void RequestProxyResolvingSocketFactory(
 // Helper class for asynchronous waiting.
 class Waiter {
  public:
-  Waiter() {}
+  Waiter() = default;
 
   Waiter(const Waiter&) = delete;
   Waiter& operator=(const Waiter&) = delete;
 
-  ~Waiter() {}
+  ~Waiter() = default;
 
   // Waits until the asynchronous operation finishes.
   void WaitUntilCompleted() {
@@ -180,7 +183,7 @@ class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
   FakeExtensionGCMAppHandler& operator=(const FakeExtensionGCMAppHandler&) =
       delete;
 
-  ~FakeExtensionGCMAppHandler() override {}
+  ~FakeExtensionGCMAppHandler() override = default;
 
   void OnMessage(const std::string& app_id,
                  const gcm::IncomingMessage& message) override {}
@@ -256,13 +259,17 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
       : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
         extension_service_(nullptr),
         registration_result_(gcm::GCMClient::UNKNOWN_ERROR),
-        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR) {}
+        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR) {
+    // Allow unpacked extensions without developer mode for testing.
+    scoped_feature_list_.InitAndDisableFeature(
+        extensions_features::kExtensionDisableUnsupportedDeveloper);
+  }
 
   ExtensionGCMAppHandlerTest(const ExtensionGCMAppHandlerTest&) = delete;
   ExtensionGCMAppHandlerTest& operator=(const ExtensionGCMAppHandlerTest&) =
       delete;
 
-  ~ExtensionGCMAppHandlerTest() override {}
+  ~ExtensionGCMAppHandlerTest() override = default;
 
   // Overridden from test::Test:
   void SetUp() override {
@@ -361,7 +368,11 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     extensions::CRXFileInfo crx_info(path, extensions::GetTestVerifierFormat());
     crx_info.extension_id = extension->id();
 
-    auto installer = extension_service_->CreateUpdateInstaller(crx_info, true);
+    ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+    ExtensionUpdater updater(profile());
+    updater.InitAndEnable(prefs, prefs->pref_service(), base::Minutes(10),
+                          /*cache=*/nullptr, ExtensionDownloader::Factory());
+    auto installer = updater.CreateUpdateInstaller(crx_info, true);
     installer->AddInstallerCallback(base::BindOnce(
         &ExtensionGCMAppHandlerTest::InstallerDone, base::Unretained(this)));
     installer->InstallCrxFile(crx_info);
@@ -418,6 +429,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;

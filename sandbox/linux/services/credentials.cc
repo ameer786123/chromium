@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
@@ -106,7 +108,7 @@ bool ChrootToSafeEmptyDir() {
   // TODO(crbug.com/40196869) Broken in MSan builds after LLVM f1bb30a4956f.
   clone_flags |= CLONE_VM | CLONE_VFORK | CLONE_SETTLS;
 
-  char tls_buf[PTHREAD_STACK_MIN_CONST] = {0};
+  char tls_buf[PTHREAD_STACK_MIN_CONST] = {};
   tls = tls_buf;
 #endif
 
@@ -202,7 +204,7 @@ bool Credentials::SetCapabilitiesOnCurrentThread(
     const std::vector<Capability>& caps) {
   struct cap_hdr hdr = {};
   hdr.version = _LINUX_CAPABILITY_VERSION_3;
-  struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {{}};
+  std::array<cap_data, _LINUX_CAPABILITY_U32S_3> data = {};
 
   // Initially, cap has no capability flags set. Enable the effective and
   // permitted flags only for the requested capabilities.
@@ -214,7 +216,7 @@ bool Credentials::SetCapabilitiesOnCurrentThread(
     data[index].permitted |= mask;
   }
 
-  return sys_capset(&hdr, data) == 0;
+  return sys_capset(&hdr, data.data()) == 0;
 }
 
 // static
@@ -234,9 +236,9 @@ bool Credentials::SetCapabilities(int proc_fd,
 bool Credentials::HasAnyCapability() {
   struct cap_hdr hdr = {};
   hdr.version = _LINUX_CAPABILITY_VERSION_3;
-  struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {{}};
+  std::array<cap_data, _LINUX_CAPABILITY_U32S_3> data = {};
 
-  PCHECK(sys_capget(&hdr, data) == 0);
+  PCHECK(sys_capget(&hdr, data.data()) == 0);
 
   for (size_t i = 0; i < std::size(data); ++i) {
     if (data[i].effective || data[i].permitted || data[i].inheritable) {
@@ -250,9 +252,9 @@ bool Credentials::HasAnyCapability() {
 bool Credentials::HasCapability(Capability cap) {
   struct cap_hdr hdr = {};
   hdr.version = _LINUX_CAPABILITY_VERSION_3;
-  struct cap_data data[_LINUX_CAPABILITY_U32S_3] = {{}};
+  std::array<cap_data, _LINUX_CAPABILITY_U32S_3> data = {};
 
-  PCHECK(sys_capget(&hdr, data) == 0);
+  PCHECK(sys_capget(&hdr, data.data()) == 0);
 
   const int cap_num = CapabilityToKernelValue(cap);
   const size_t index = CAP_TO_INDEX(cap_num);

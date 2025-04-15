@@ -43,6 +43,8 @@ namespace blink {
 
 class Animation;
 class CallbackFunctionTest;
+class CanvasImageSource;
+class CanvasRenderingContext;
 class DOMArrayBuffer;
 class DOMPoint;
 class DOMRect;
@@ -71,9 +73,9 @@ class InternalsUkmRecorder;
 class LocalDOMWindow;
 class LocalFrame;
 class Location;
+class NADCAttributeTest;
 class Node;
 class OriginTrialsTest;
-class OffscreenCanvas;
 class Page;
 class Range;
 class ReadableStream;
@@ -415,6 +417,7 @@ class Internals final : public ScriptWrappable {
   UnionTypesTest* unionTypesTest() const;
   OriginTrialsTest* originTrialsTest() const;
   CallbackFunctionTest* callbackFunctionTest() const;
+  NADCAttributeTest* nadcAttributeTest() const;
 
   Vector<String> getReferencedFilePaths() const;
   void disableReferencedFilePathsVerification() const;
@@ -503,12 +506,9 @@ class Internals final : public ScriptWrappable {
 
   bool isInCanvasFontCache(Document*, const String&);
   unsigned canvasFontCacheMaxFonts();
-  void forceLoseCanvasContext(HTMLCanvasElement* canvas,
-                              const String& context_type);
-
-  void forceLoseCanvasContext(OffscreenCanvas* offscreencanvas,
-                              const String& context_type);
+  void forceLoseCanvasContext(CanvasRenderingContext* context);
   void disableCanvasAcceleration(HTMLCanvasElement* canvas);
+  bool isCanvasImageSourceAccelerated(const CanvasImageSource*) const;
 
   String selectedHTMLForClipboard();
   String selectedTextForClipboard();
@@ -633,6 +633,8 @@ class Internals final : public ScriptWrappable {
 
   ScriptPromise<IDLUndefined> exemptUrlFromNetworkRevocation(ScriptState*,
                                                              const String& url);
+  String lastCompiledScriptFileName(Document* document);
+  bool lastCompiledScriptUsedCodeCache(Document* document);
 
  private:
   Document* ContextDocument() const;

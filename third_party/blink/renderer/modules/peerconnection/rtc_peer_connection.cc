@@ -28,11 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.h"
 
 #include <algorithm>
@@ -41,6 +36,8 @@
 #include <string>
 #include <utility>
 
+#include "base/compiler_specific.h"
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
@@ -245,7 +242,7 @@ RTCIceCandidatePlatform* ConvertToRTCIceCandidatePlatform(
   return MakeGarbageCollected<RTCIceCandidatePlatform>(
       candidate->candidate(), candidate->sdpMid(), sdp_m_line_index,
       candidate->usernameFragment(),
-      /*url can not be reconstruncted*/ std::nullopt);
+      /*url can not be reconstruncted*/ String());
 }
 
 webrtc::PeerConnectionInterface::IceTransportsType IceTransportPolicyFromEnum(
@@ -320,7 +317,8 @@ webrtc::PeerConnectionInterface::RTCConfiguration ParseConfiguration(
   }
 
   if (configuration->hasIceServers()) {
-    WebVector<webrtc::PeerConnectionInterface::IceServer> ice_servers;
+    std::vector<webrtc::PeerConnectionInterface::IceServer>& ice_servers =
+        web_configuration.servers;
     for (const RTCIceServer* ice_server : configuration->iceServers()) {
       Vector<String> url_strings;
       std::vector<std::string> converted_urls;
@@ -379,18 +377,12 @@ webrtc::PeerConnectionInterface::RTCConfiguration ParseConfiguration(
       }
       ice_servers.emplace_back(std::move(converted_ice_server));
     }
-    web_configuration.servers = ice_servers.ReleaseVector();
   }
 
   if (configuration->hasCertificates()) {
-    const HeapVector<Member<RTCCertificate>>& certificates =
-        configuration->certificates();
-    WebVector<rtc::scoped_refptr<rtc::RTCCertificate>> certificates_copy(
-        certificates.size());
-    for (wtf_size_t i = 0; i < certificates.size(); ++i) {
-      certificates_copy[i] = certificates[i]->Certificate();
-    }
-    web_configuration.certificates = certificates_copy.ReleaseVector();
+    web_configuration.certificates = base::ToVector(
+        configuration->certificates(),
+        [](const auto& certificate) { return certificate->Certificate(); });
   }
 
   web_configuration.ice_candidate_pool_size =
@@ -512,13 +504,13 @@ enum class GenerateCertificateAlgorithms {
 };
 
 void MeasureGenerateCertificateKeyType(
-    const std::optional<rtc::KeyParams>& key_params) {
+    const std::optional<webrtc::KeyParams>& key_params) {
   if (!key_params.has_value()) {
     return;
   }
   GenerateCertificateAlgorithms bucket =
       GenerateCertificateAlgorithms::kEcDsaP256;
-  if (key_params->type() == rtc::KT_RSA) {
+  if (key_params->type() == webrtc::KT_RSA) {
     switch (key_params->rsa_params().mod_size) {
       case 1024:
         bucket = GenerateCertificateAlgorithms::kRsa1024;
@@ -601,7 +593,7 @@ RTCPeerConnection* RTCPeerConnection::Create(
   if (!configuration.certificates.empty()) {
     DOMTimeStamp now = ConvertSecondsToDOMTimeStamp(
         base::Time::Now().InSecondsFSinceUnixEpoch());
-    for (const rtc::scoped_refptr<rtc::RTCCertificate>& certificate :
+    for (const webrtc::scoped_refptr<webrtc::RTCCertificate>& certificate :
          configuration.certificates) {
       DOMTimeStamp expires = certificate->Expires();
       if (expires <= now) {
@@ -945,7 +937,7 @@ HeapHashSet<Member<RTCIceTransport>> RTCPeerConnection::ActiveIceTransports()
 
 void RTCPeerConnection::GenerateCertificateCompleted(
     ScriptPromiseResolver<RTCCertificate>* resolver,
-    rtc::scoped_refptr<rtc::RTCCertificate> certificate) {
+    webrtc::scoped_refptr<webrtc::RTCCertificate> certificate) {
   if (!certificate) {
     resolver->Reject();
     return;
@@ -1230,7 +1222,7 @@ RTCConfiguration* RTCPeerConnection::getConfiguration(
       result->setIceTransportPolicy("all");
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   switch (webrtc_configuration.bundle_policy) {
@@ -1244,7 +1236,7 @@ RTCConfiguration* RTCPeerConnection::getConfiguration(
       result->setBundlePolicy("balanced");
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   switch (webrtc_configuration.rtcp_mux_policy) {
@@ -1255,7 +1247,7 @@ RTCConfiguration* RTCPeerConnection::getConfiguration(
       result->setRtcpMuxPolicy("require");
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   HeapVector<Member<RTCIceServer>> ice_servers;
@@ -1370,9 +1362,7 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
   // attribute.
   std::optional<DOMTimeStamp> expires;
   if (keygen_algorithm->IsObject()) {
-    Dictionary keygen_algorithm_dict(script_state->GetIsolate(),
-                                     keygen_algorithm->GetAsObject().V8Value(),
-                                     exception_state);
+    Dictionary keygen_algorithm_dict(keygen_algorithm->GetAsObject());
     if (exception_state.HadException())
       return EmptyPromise();
 
@@ -1409,7 +1399,7 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
   const char* unsupported_params_string =
       "The 1st argument provided is an AlgorithmIdentifier with a supported "
       "algorithm name, but the parameters are not supported.";
-  std::optional<rtc::KeyParams> key_params;
+  std::optional<webrtc::KeyParams> key_params;
   switch (crypto_algorithm.Id()) {
     case kWebCryptoAlgorithmIdRsaSsaPkcs1v1_5: {
       // name: "RSASSA-PKCS1-v1_5"
@@ -1417,7 +1407,7 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
           crypto_algorithm.RsaHashedKeyGenParams()->PublicExponentAsU32();
       unsigned modulus_length =
           crypto_algorithm.RsaHashedKeyGenParams()->ModulusLengthBits();
-      // Parameters must fit in int to be passed to rtc::KeyParams::RSA. The
+      // Parameters must fit in int to be passed to webrtc::KeyParams::RSA. The
       // only recognized "hash" is "SHA-256".
       // TODO(bugs.webrtc.org/364338811): deprecate 1024 bit keys.
       if (public_exponent &&
@@ -1426,8 +1416,8 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
           crypto_algorithm.RsaHashedKeyGenParams()->GetHash().Id() ==
               kWebCryptoAlgorithmIdSha256) {
         key_params =
-            rtc::KeyParams::RSA(base::checked_cast<int>(modulus_length),
-                                base::checked_cast<int>(*public_exponent));
+            webrtc::KeyParams::RSA(base::checked_cast<int>(modulus_length),
+                                   base::checked_cast<int>(*public_exponent));
       } else {
         exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                           unsupported_params_string);
@@ -1440,7 +1430,7 @@ ScriptPromise<RTCCertificate> RTCPeerConnection::generateCertificate(
       // The only recognized "namedCurve" is "P-256".
       if (crypto_algorithm.EcKeyGenParams()->NamedCurve() ==
           kWebCryptoNamedCurveP256) {
-        key_params = rtc::KeyParams::ECDSA(rtc::EC_NIST_P256);
+        key_params = webrtc::KeyParams::ECDSA(webrtc::EC_NIST_P256);
       } else {
         exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                           unsupported_params_string);
@@ -1689,7 +1679,7 @@ void RTCPeerConnection::restartIce() {
   peer_handler_->RestartIce();
 }
 
-void RTCPeerConnection::addStream(ScriptState* script_state,
+void RTCPeerConnection::addStream(v8::Isolate* isolate,
                                   MediaStream* stream,
                                   ExceptionState& exception_state) {
   if (ThrowExceptionIfSignalingStateClosed(signaling_state_, &exception_state))
@@ -1698,13 +1688,14 @@ void RTCPeerConnection::addStream(ScriptState* script_state,
   MediaStreamVector streams;
   streams.push_back(stream);
   for (const auto& track : stream->getTracks()) {
-    addTrack(track, streams, IGNORE_EXCEPTION);
+    addTrack(track, streams, IgnoreException(isolate));
   }
 
   stream->RegisterObserver(this);
 }
 
-void RTCPeerConnection::removeStream(MediaStream* stream,
+void RTCPeerConnection::removeStream(v8::Isolate* isolate,
+                                     MediaStream* stream,
                                      ExceptionState& exception_state) {
   if (ThrowExceptionIfSignalingStateClosed(signaling_state_, &exception_state))
     return;
@@ -1712,7 +1703,7 @@ void RTCPeerConnection::removeStream(MediaStream* stream,
     auto* sender = FindSenderForTrackAndStream(track, stream);
     if (!sender)
       continue;
-    removeTrack(sender, IGNORE_EXCEPTION);
+    removeTrack(sender, IgnoreException(isolate));
   }
   stream->UnregisterObserver(this);
 }
@@ -1879,7 +1870,7 @@ RTCRtpTransceiver* RTCPeerConnection::addTransceiver(
     }
     case V8UnionMediaStreamTrackOrString::ContentType::kString: {
       const String& kind_string = track_or_kind->GetAsString();
-      // TODO(hbos): Make cricket::MediaType an allowed identifier in
+      // TODO(hbos): Make webrtc::MediaType an allowed identifier in
       // rtc_peer_connection.cc and use that instead of a boolean.
       String kind;
       if (kind_string == "audio") {
@@ -2067,7 +2058,7 @@ RTCDataChannel* RTCPeerConnection::createDataChannel(
   }
   // Further checks of DataChannelId are done in the webrtc layer.
 
-  rtc::scoped_refptr<webrtc::DataChannelInterface> webrtc_channel =
+  webrtc::scoped_refptr<webrtc::DataChannelInterface> webrtc_channel =
       peer_handler_->CreateDataChannel(label, init);
   if (!webrtc_channel) {
     exception_state.ThrowDOMException(DOMExceptionCode::kOperationError,
@@ -2105,14 +2096,14 @@ RTCRtpSender* RTCPeerConnection::FindSenderForTrackAndStream(
 
 HeapVector<Member<RTCRtpSender>>::iterator RTCPeerConnection::FindSender(
     const RTCRtpSenderPlatform& web_sender) {
-  return base::ranges::find_if(rtp_senders_, [&](const auto& sender) {
+  return std::ranges::find_if(rtp_senders_, [&](const auto& sender) {
     return sender->web_sender()->Id() == web_sender.Id();
   });
 }
 
 HeapVector<Member<RTCRtpReceiver>>::iterator RTCPeerConnection::FindReceiver(
     const RTCRtpReceiverPlatform& platform_receiver) {
-  return base::ranges::find_if(rtp_receivers_, [&](const auto& receiver) {
+  return std::ranges::find_if(rtp_receivers_, [&](const auto& receiver) {
     return receiver->platform_receiver()->Id() == platform_receiver.Id();
   });
 }
@@ -2120,7 +2111,7 @@ HeapVector<Member<RTCRtpReceiver>>::iterator RTCPeerConnection::FindReceiver(
 HeapVector<Member<RTCRtpTransceiver>>::iterator
 RTCPeerConnection::FindTransceiver(
     const RTCRtpTransceiverPlatform& platform_transceiver) {
-  return base::ranges::find_if(transceivers_, [&](const auto& transceiver) {
+  return std::ranges::find_if(transceivers_, [&](const auto& transceiver) {
     return transceiver->platform_transceiver()->Id() ==
            platform_transceiver.Id();
   });
@@ -2233,7 +2224,7 @@ RTCRtpTransceiver* RTCPeerConnection::CreateOrUpdateTransceiver(
 }
 
 RTCDtlsTransport* RTCPeerConnection::CreateOrUpdateDtlsTransport(
-    rtc::scoped_refptr<webrtc::DtlsTransportInterface> native_transport,
+    webrtc::scoped_refptr<webrtc::DtlsTransportInterface> native_transport,
     const webrtc::DtlsTransportInformation& information) {
   if (!native_transport.get()) {
     return nullptr;
@@ -2252,7 +2243,7 @@ RTCDtlsTransport* RTCPeerConnection::CreateOrUpdateDtlsTransport(
 }
 
 RTCIceTransport* RTCPeerConnection::CreateOrUpdateIceTransport(
-    rtc::scoped_refptr<webrtc::IceTransportInterface> ice_transport) {
+    webrtc::scoped_refptr<webrtc::IceTransportInterface> ice_transport) {
   if (!ice_transport.get()) {
     return nullptr;
   }
@@ -2437,7 +2428,8 @@ void RTCPeerConnection::DidModifyTransceivers(
   // Remove transceivers and update their states to reflect that they are
   // necessarily stopped.
   for (auto id : removed_transceiver_ids) {
-    for (auto it = transceivers_.begin(); it != transceivers_.end(); ++it) {
+    for (auto it = transceivers_.begin(); it != transceivers_.end();
+         UNSAFE_TODO(++it)) {
       if ((*it)->platform_transceiver()->Id() == id) {
         // All streams are removed on stop, update `remove_list` if necessary.
         auto* track = (*it)->receiver()->track();
@@ -2613,7 +2605,7 @@ void RTCPeerConnection::SetAssociatedMediaStreams(
 }
 
 void RTCPeerConnection::DidAddRemoteDataChannel(
-    rtc::scoped_refptr<webrtc::DataChannelInterface> channel) {
+    webrtc::scoped_refptr<webrtc::DataChannelInterface> channel) {
   DCHECK(!closed_);
   DCHECK(GetExecutionContext()->IsContextThread());
 
@@ -2930,7 +2922,7 @@ void RTCPeerConnection::DispatchScheduledEvents() {
   events.swap(scheduled_events_);
 
   HeapVector<Member<EventWrapper>>::iterator it = events.begin();
-  for (; it != events.end(); ++it) {
+  for (; it != events.end(); UNSAFE_TODO(++it)) {
     if ((*it)->Setup()) {
       DispatchEvent(*(*it)->event_.Release());
     }

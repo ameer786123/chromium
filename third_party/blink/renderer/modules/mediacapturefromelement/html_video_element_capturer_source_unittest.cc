@@ -48,7 +48,7 @@ class MockWebMediaPlayer : public WebMediaPlayer {
     return LoadTiming::kImmediate;
   }
   void Play() override {}
-  void Pause() override {}
+  void Pause(PauseReason pause_reason) override {}
   void Seek(double seconds) override {}
   void SetRate(double) override {}
   void SetVolume(double) override {}
@@ -87,6 +87,8 @@ class MockWebMediaPlayer : public WebMediaPlayer {
   uint64_t VideoDecodedByteCount() const override { return 0; }
   void SetVolumeMultiplier(double multiplier) override {}
   void SuspendForFrameClosed() override {}
+  void RecordAutoPictureInPictureInfo(
+      const WebString& auto_picture_in_picture_info) override {}
 
   void SetWouldTaintOrigin(bool taint) { would_taint_origin_ = taint; }
   bool PassedTimingAllowOriginCheck() const override { return true; }

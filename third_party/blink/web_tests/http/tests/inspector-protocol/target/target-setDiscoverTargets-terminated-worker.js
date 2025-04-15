@@ -8,7 +8,7 @@
     const myWorker = new Worker(url);
     myWorker.postMessage('Hello');
     myWorker.terminate();
-  }, testRunner.url('./resources/empty-worklet.js'));
+  }, testRunner.url('./resources/empty.js'));
 
   const workerTarget = await target.onceTargetCreated(event => event.params.targetInfo.type === 'worker');
   await target.onceTargetDestroyed(event => event.params.targetId === workerTarget.params.targetInfo.targetId);

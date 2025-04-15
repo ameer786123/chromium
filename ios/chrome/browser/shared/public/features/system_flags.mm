@@ -29,6 +29,7 @@ NSString* const kAlternateDiscoverFeedServerURL =
     @"AlternateDiscoverFeedServerURL";
 NSString* const kEnableStartupCrash = @"EnableStartupCrash";
 NSString* const kFirstRunForceEnabled = @"FirstRunForceEnabled";
+NSString* const kFirstRunForceDisabled = @"FirstRunForceDisabled";
 NSString* const kUpgradePromoForceEnabled = @"UpgradePromoForceEnabled";
 NSString* const kOriginServerHost = @"AlternateOriginServerHost";
 NSString* const kWhatsNewPromoStatus = @"WhatsNewPromoStatus";
@@ -39,6 +40,8 @@ NSString* const kForceExperienceForDeviceSwitcherExperimentalSettings =
     @"ForceExperienceForDeviceSwitcher";
 NSString* const kForceExperienceForShopperExperimentalSettings =
     @"ForceExperienceForShopper";
+NSString* const kForceReaderModeDebugHTMLOverride =
+    @"ForceReaderModeDebugHTMLOverride";
 NSString* const kSafetyCheckUpdateChromeStateOverride =
     @"SafetyCheckUpdateChromeStateOverride";
 NSString* const kSafetyCheckPasswordStateOverride =
@@ -59,22 +62,24 @@ NSString* const kSafetyCheckNotificationsInactivityThreshold =
 BASE_FEATURE(kEnableThirdPartyKeyboardWorkaround,
              "EnableThirdPartyKeyboardWorkaround",
              base::FEATURE_ENABLED_BY_DEFAULT);
-NSString* const kTabResumptionDecorationOverride =
-    @"TabResumptionDecorationOverride";
 NSString* const kTipsMagicStackLensShopWithImage =
     @"TipsMagicStackLensShopWithImage";
 NSString* const kTipsMagicStackStateOverride = @"TipsMagicStackStateOverride";
 NSString* const kInactiveTabsDemoMode = @"InactiveTabsDemoMode";
 NSString* const kInactiveTabsTestMode = @"InactiveTabsTestMode";
+NSString* const kAsyncStartupOverrideResponse = @"AsyncStartupOverrideResponse";
 }  // namespace
 
 namespace experimental_flags {
 
-NSString* const kDisplaySwitchProfile = @"DisplaySwitchProfile";
-
 bool AlwaysDisplayFirstRun() {
   return
       [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceEnabled];
+}
+
+bool NeverDisplayFirstRun() {
+  return
+      [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceDisabled];
 }
 
 bool AlwaysDisplayUpgradePromo() {
@@ -289,13 +294,6 @@ bool ShouldIgnoreHistorySyncDeclineLimits() {
       boolForKey:kShouldIgnoreHistorySyncDeclineLimits];
 }
 
-bool DisplaySwitchProfile() {
-  int switchProfileCount = [[NSUserDefaults standardUserDefaults]
-      integerForKey:kDisplaySwitchProfile];
-
-  return switchProfileCount > 0;
-}
-
 std::optional<int> GetForcedInactivityThresholdForSafetyCheckNotifications() {
   int threshold = [[NSUserDefaults standardUserDefaults]
       integerForKey:kSafetyCheckNotificationsInactivityThreshold];
@@ -333,13 +331,35 @@ bool ShouldUseInactiveTabsTestThreshold() {
       [[NSUserDefaults standardUserDefaults] boolForKey:kInactiveTabsTestMode];
 }
 
-NSString* GetTabResumptionDecorationOverride() {
-  NSString* override_value = [[NSUserDefaults standardUserDefaults]
-      stringForKey:kTabResumptionDecorationOverride];
-  if ([override_value length]) {
-    return override_value;
-  }
-  return nil;
+bool ShouldOpenInIncognitoOverride() {
+  NSString* value = [[NSUserDefaults standardUserDefaults]
+      stringForKey:kAsyncStartupOverrideResponse];
+  return ([value isEqualToString:@"FirstPartyIncognitoNoDelay"] ||
+          [value isEqualToString:@"FirstPartyIncognito500Delay"] ||
+          [value isEqualToString:@"AlwaysShowTheUI"]);
+}
+
+bool ShouldDelayAsyncStartup() {
+  NSString* value = [[NSUserDefaults standardUserDefaults]
+      stringForKey:kAsyncStartupOverrideResponse];
+  return ([value isEqualToString:@"FirstPartyIncognito500Delay"] ||
+          [value isEqualToString:@"500ms"]);
+}
+
+bool AlwaysShowTheFirstPartyIncognitoUI() {
+  NSString* value = [[NSUserDefaults standardUserDefaults]
+      stringForKey:kAsyncStartupOverrideResponse];
+  return [value isEqualToString:@"AlwaysShowTheUI"];
+}
+
+bool EnableAIPrototypingMenu() {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:@"EnableAIPrototypingMenu"];
+}
+
+bool ShouldForceReaderModeDebugHTMLOverride() {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:@"ForceReaderModeDebugHTMLOverride"];
 }
 
 }  // namespace experimental_flags

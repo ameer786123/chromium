@@ -27,7 +27,6 @@ namespace {
 // clang-format off
 const char* const BOOL_ATTRIBUTES[] = {
     "checkable",
-    "checked",
     "clickable",
     "collapsed",
     "collection",
@@ -49,6 +48,7 @@ const char* const BOOL_ATTRIBUTES[] = {
     "multiselectable",
     "password",
     "range",
+    "required",
     "selected",
     "interesting",
     "table_header"
@@ -58,6 +58,9 @@ const char* const STRING_ATTRIBUTES[] = {
     "name",
     "hint",
     "state_description",
+    "container_title",
+    "content_description",
+    "supplemental_description",
 };
 
 const char* const INT_ATTRIBUTES[] = {
@@ -76,6 +79,9 @@ const char* const INT_ATTRIBUTES[] = {
     "range_current_value",
     "text_change_added_count",
     "text_change_removed_count",
+    "selection_mode",
+    "expanded_state",
+    "checked",
 };
 
 const char* const ACTION_ATTRIBUTES[] = {
@@ -103,8 +109,7 @@ base::Value::Dict AccessibilityTreeFormatterAndroid::BuildTree(
 
 base::Value::Dict AccessibilityTreeFormatterAndroid::BuildTreeForSelector(
     const AXTreeSelector& selector) const {
-  NOTREACHED_IN_MIGRATION();
-  return base::Value::Dict();
+  NOTREACHED();
 }
 
 base::Value::Dict AccessibilityTreeFormatterAndroid::BuildNode(
@@ -118,7 +123,6 @@ base::Value::Dict AccessibilityTreeFormatterAndroid::BuildNode(
 void AccessibilityTreeFormatterAndroid::AddDefaultFilters(
     std::vector<AXPropertyFilter>* property_filters) {
   AddPropertyFilter(property_filters, "hint=*");
-  AddPropertyFilter(property_filters, "interesting", AXPropertyFilter::DENY);
   AddPropertyFilter(property_filters, "has_character_locations",
                     AXPropertyFilter::DENY);
   AddPropertyFilter(property_filters, "has_image", AXPropertyFilter::DENY);
@@ -164,7 +168,6 @@ void AccessibilityTreeFormatterAndroid::AddProperties(
 
   // Bool attributes.
   dict->Set("checkable", android_node->IsCheckable());
-  dict->Set("checked", android_node->IsChecked());
   dict->Set("clickable", android_node->IsClickable());
   dict->Set("collapsed", android_node->IsCollapsed());
   dict->Set("collection", android_node->IsCollection());
@@ -185,6 +188,7 @@ void AccessibilityTreeFormatterAndroid::AddProperties(
   dict->Set("multiline", android_node->IsMultiLine());
   dict->Set("multiselectable", android_node->IsMultiselectable());
   dict->Set("range", android_node->GetData().IsRangeValueSupported());
+  dict->Set("required", android_node->IsRequired());
   dict->Set("password", android_node->IsPasswordField());
   dict->Set("selected", android_node->IsSelected());
   dict->Set("interesting", android_node->IsInterestingOnAndroid());
@@ -195,6 +199,10 @@ void AccessibilityTreeFormatterAndroid::AddProperties(
   dict->Set("hint", android_node->GetHint());
   dict->Set("role_description", android_node->GetRoleDescription());
   dict->Set("state_description", android_node->GetStateDescription());
+  dict->Set("container_title", android_node->GetContainerTitle());
+  dict->Set("content_description", android_node->GetContentDescription());
+  dict->Set("supplemental_description",
+            android_node->GetSupplementalDescription());
 
   // Int attributes.
   dict->Set("item_index", android_node->GetItemIndex());
@@ -214,6 +222,9 @@ void AccessibilityTreeFormatterAndroid::AddProperties(
   dict->Set("text_change_added_count", android_node->GetTextChangeAddedCount());
   dict->Set("text_change_removed_count",
             android_node->GetTextChangeRemovedCount());
+  dict->Set("selection_mode", android_node->GetSelectionMode());
+  dict->Set("expanded_state", android_node->ExpandedState());
+  dict->Set("checked", android_node->GetChecked());
 
   // Actions.
   dict->Set("action_expand", android_node->IsCollapsed());

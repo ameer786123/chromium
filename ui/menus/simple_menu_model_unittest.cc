@@ -106,6 +106,20 @@ TEST(SimpleMenuModelTest, SetLabel) {
   ASSERT_EQ(u"new label", simple_menu_model.GetLabelAt(0));
 }
 
+TEST(SimpleMenuModelTest, SetAccelerator) {
+  SimpleMenuModel simple_menu_model(nullptr);
+  simple_menu_model.AddItem(/*command_id*/ 5, u"menu item 0");
+
+  const ui::Accelerator accelerator_set(VKEY_A, EF_NONE);
+  simple_menu_model.SetAcceleratorAt(/*index*/ 0, accelerator_set);
+
+  ui::Accelerator accelerator_get;
+  simple_menu_model.GetAcceleratorAt(0, &accelerator_get);
+  EXPECT_TRUE(simple_menu_model.GetAcceleratorAt(0, &accelerator_get));
+
+  ASSERT_EQ(accelerator_set, accelerator_get);
+}
+
 TEST(SimpleMenuModelTest, SetEnabledAt) {
   SimpleMenuModel simple_menu_model(nullptr);
   simple_menu_model.AddItem(/*command_id*/ 5, u"menu item 0");
@@ -259,7 +273,7 @@ TEST(SimpleMenuModelTest, HasIconsViaVectorIcon) {
   EXPECT_TRUE(simple_menu_model.GetIconAt(0).IsEmpty());
 
   gfx::PathElement path[] = {gfx::CommandType::CIRCLE, 24, 18, 5};
-  gfx::VectorIconRep rep[] = {{path, 4}};
+  gfx::VectorIconRep rep[] = {{path}};
   gfx::VectorIcon circle_icon = {rep, 1, "circle"};
 
   simple_menu_model.AddItemWithIcon(

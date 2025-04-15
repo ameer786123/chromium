@@ -20,6 +20,7 @@
 #include "components/omnibox/browser/mock_tab_matcher.h"
 #include "components/omnibox/browser/remote_suggestions_service.h"
 #include "components/omnibox/browser/shortcuts_backend.h"
+#include "components/omnibox/browser/unscoped_extension_provider_delegate.h"
 #include "components/omnibox/browser/zero_suggest_cache_service.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -93,6 +94,11 @@ class MockAutocompleteProviderClient
       KeywordProvider* keyword_provider) override {
     return nullptr;
   }
+  std::unique_ptr<UnscopedExtensionProviderDelegate>
+  GetUnscopedExtensionProviderDelegate(
+      UnscopedExtensionProvider* unscoped_extension_provider) override {
+    return std::move(unscoped_extension_provider_delegate_);
+  }
   OmniboxTriggeredFeatureService* GetOmniboxTriggeredFeatureService()
       const override {
     return omnibox_triggered_feature_service_.get();
@@ -134,11 +140,14 @@ class MockAutocompleteProviderClient
   MOCK_CONST_METHOD0(IsIncognitoProfile, bool());
   MOCK_CONST_METHOD0(IsGuestSession, bool());
   MOCK_CONST_METHOD0(SearchSuggestEnabled, bool());
-  MOCK_CONST_METHOD0(IsPersonalizedUrlDataCollectionActive, bool());
+  MOCK_CONST_METHOD0(IsUrlDataCollectionActive, bool());
   MOCK_CONST_METHOD0(IsAuthenticated, bool());
   MOCK_CONST_METHOD0(IsSyncActive, bool());
   MOCK_CONST_METHOD0(IsHistoryEmbeddingsEnabled, bool());
   MOCK_CONST_METHOD0(IsHistoryEmbeddingsSettingVisible, bool());
+  MOCK_CONST_METHOD1(GetLensSuggestInputsWhenReady,
+                     base::CallbackListSubscription(
+                         LensOverlaySuggestInputsCallback callback));
 
   MOCK_METHOD6(
       Classify,
@@ -155,6 +164,11 @@ class MockAutocompleteProviderClient
   void set_pedal_provider(
       std::unique_ptr<OmniboxPedalProvider> pedal_provider) {
     pedal_provider_ = std::move(pedal_provider);
+  }
+
+  void set_unscoped_extension_provider_delegate(
+      std::unique_ptr<UnscopedExtensionProviderDelegate> delegate) {
+    unscoped_extension_provider_delegate_ = std::move(delegate);
   }
 
   void set_template_url_service(TemplateURLService* template_url_service) {
@@ -174,6 +188,11 @@ class MockAutocompleteProviderClient
   MOCK_METHOD0(OpenIncognitoClearBrowsingDataDialog, void());
   MOCK_METHOD0(CloseIncognitoWindows, void());
   MOCK_METHOD0(PromptPageTranslation, void());
+  MOCK_METHOD1(OpenLensOverlay, void(bool));
+  MOCK_METHOD3(IssueContextualSearchRequest,
+               void(const GURL& destination_url,
+                    AutocompleteMatchType::Type match_type,
+                    bool is_zero_prefix_suggestion));
 
  private:
   network::TestURLLoaderFactory test_url_loader_factory_;
@@ -189,6 +208,8 @@ class MockAutocompleteProviderClient
   std::unique_ptr<OmniboxTriggeredFeatureService>
       omnibox_triggered_feature_service_;
   std::unique_ptr<ProviderStateService> provider_state_service_;
+  std::unique_ptr<UnscopedExtensionProviderDelegate>
+      unscoped_extension_provider_delegate_;
   MockTabMatcher tab_matcher_;
   raw_ptr<signin::IdentityManager> identity_manager_ = nullptr;  // Not owned.
 };

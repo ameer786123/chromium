@@ -3,42 +3,41 @@
 // found in the LICENSE file.
 import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 
-// <if expr="chromeos_ash">
+// <if expr="is_chromeos">
 import type {LanguageToastElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 // </if>
-import {BrowserProxy, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {BrowserProxy, SpeechBrowserProxyImpl, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import type {AppElement, NotificationType, VoiceNotificationListener} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import {convertLangOrLocaleForVoicePackManager, VoiceClientSideStatusCode, VoiceNotificationManager, VoicePackServerStatusErrorCode, VoicePackServerStatusSuccessCode} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
-import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {createAndSetVoices, createSpeechSynthesisVoice, emitEvent, setVoices} from './common.js';
+import {createAndSetVoices, createApp, createSpeechSynthesisVoice, emitEvent, setVoices} from './common.js';
 import {FakeReadingMode} from './fake_reading_mode.js';
-import {FakeSpeechSynthesis} from './fake_speech_synthesis.js';
 import {TestColorUpdaterBrowserProxy} from './test_color_updater_browser_proxy.js';
+import {TestSpeechBrowserProxy} from './test_speech_browser_proxy.js';
 
 suite('UpdateVoicePack', () => {
   let app: AppElement;
-  let speechSynthesis: FakeSpeechSynthesis;
+  let speech: TestSpeechBrowserProxy;
 
   function setNaturalVoicesForLang(lang: string) {
-    createAndSetVoices(app, speechSynthesis, [
+    createAndSetVoices(app, speech, [
       {lang: lang, name: 'Wall-e (Natural)'},
       {lang: lang, name: 'Andy (Natural)'},
       {lang: lang, name: 'Buzz'},
     ]);
   }
 
-  setup(() => {
-    BrowserProxy.setInstance(new TestColorUpdaterBrowserProxy());
+  setup(async () => {
+    // Clearing the DOM should always be done first.
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+    BrowserProxy.setInstance(new TestColorUpdaterBrowserProxy());
     const readingMode = new FakeReadingMode();
     chrome.readingMode = readingMode as unknown as typeof chrome.readingMode;
-    app = document.createElement('read-anything-app');
-    document.body.appendChild(app);
-    speechSynthesis = new FakeSpeechSynthesis();
-    app.synth = speechSynthesis;
-    app.getSpeechSynthesisVoice();
+    speech = new TestSpeechBrowserProxy();
+    SpeechBrowserProxyImpl.setInstance(speech);
+    app = await createApp();
   });
 
   suite('setVoicePackLocalStatus', () => {
@@ -48,7 +47,7 @@ suite('UpdateVoicePack', () => {
     setup(() => {
       listenerNotified = false;
       listener = {
-        notify(_language: string, _type: NotificationType): void {
+        notify(_type: NotificationType, _language: string): void {
           listenerNotified = true;
         },
       };
@@ -108,7 +107,6 @@ suite('UpdateVoicePack', () => {
 
       test('request install if we need to', () => {
         const lang = 'it-it';
-        chrome.readingMode.isLanguagePackDownloadingEnabled = true;
         chrome.readingMode.baseLanguageForSpeech = lang;
         app.$.toolbar.updateFonts = () => {};
         app.languageChanged();
@@ -130,75 +128,94 @@ suite('UpdateVoicePack', () => {
 
       setup(() => {
         app.enabledLangs.push(lang);
-        return microtasksFinished();
       });
 
-      test('and no other voices for language, disables language', async () => {
-        createAndSetVoices(app, speechSynthesis, []);
+      test('and no other voices for language, disables language', () => {
+        createAndSetVoices(app, speech, []);
         app.updateVoicePackStatus(lang, 'kOther');
-        await microtasksFinished();
 
         assertFalse(app.enabledLangs.includes(lang));
+        assertFalse(
+            chrome.readingMode.getLanguagesEnabledInPref().includes(lang));
       });
 
       test(
-          'and only eSpeak voices for language, disables language',
-          async () => {
-            createAndSetVoices(app, speechSynthesis, [
+          'and only eSpeak voices for language, disables language on ChromeOS',
+          () => {
+            chrome.readingMode.isChromeOsAsh = true;
+            createAndSetVoices(app, speech, [
               {lang: lang, name: 'eSpeak Portuguese'},
             ]);
 
             app.updateVoicePackStatus(lang, 'kOther');
-            await microtasksFinished();
 
             assertFalse(app.enabledLangs.includes(lang));
+            assertFalse(
+                chrome.readingMode.getLanguagesEnabledInPref().includes(lang));
+          });
+
+      test(
+          'and only system voices for language, keeps language for desktop',
+          () => {
+            chrome.readingMode.isChromeOsAsh = false;
+            createAndSetVoices(app, speech, [
+              {lang: lang, name: 'System Portuguese'},
+            ]);
+
+            app.updateVoicePackStatus(lang, 'kOther');
+
+            assertTrue(app.enabledLangs.includes(lang));
+            assertTrue(
+                chrome.readingMode.getLanguagesEnabledInPref().includes(lang));
           });
 
       test(
           'and when language-pack lang does not match voice lang, ' +
               'still disables language',
-          async () => {
+          () => {
             app.enabledLangs.push('it-it');
-            createAndSetVoices(app, speechSynthesis, []);
+            createAndSetVoices(app, speech, []);
 
             app.updateVoicePackStatus('it', 'kOther');
-            await microtasksFinished();
 
             assertFalse(app.enabledLangs.includes('it-it'));
+            assertFalse(chrome.readingMode.getLanguagesEnabledInPref().includes(
+                'it-it'));
           });
 
       test(
           'and when language-pack lang does not match voice lang, with ' +
               'e-speak voices, still disables language',
-          async () => {
+          () => {
             app.enabledLangs.push('it-it');
-            createAndSetVoices(app, speechSynthesis, [
+            createAndSetVoices(app, speech, [
               {lang: 'it', name: 'eSpeak Italian '},
             ]);
 
             app.updateVoicePackStatus('it', 'kOther');
-            await microtasksFinished();
 
             assertFalse(app.enabledLangs.includes('it-it'));
+            assertFalse(chrome.readingMode.getLanguagesEnabledInPref().includes(
+                'it-it'));
           });
 
       test(
           'and has other Google voices for language, keeps language enabled',
-          async () => {
-            createAndSetVoices(app, speechSynthesis, [
-              {lang: lang, name: 'ChromeOS Portuguese 1'},
-              {lang: lang, name: 'ChromeOS Portuguese 2'},
+          () => {
+            createAndSetVoices(app, speech, [
+              {lang: lang, name: 'Google Portuguese 1'},
+              {lang: lang, name: 'Google Portuguese 2'},
             ]);
-            app.onVoicesChanged();
             app.updateVoicePackStatus(lang, 'kOther');
-            await microtasksFinished();
 
             assertTrue(app.enabledLangs.includes(lang));
+            assertTrue(
+                chrome.readingMode.getLanguagesEnabledInPref().includes(lang));
           });
     });
   });
 
-  // <if expr="chromeos_ash">
+  // <if expr="is_chromeos">
   suite('download notification', () => {
     const lang = 'en-us';
     let toast: LanguageToastElement;
@@ -218,7 +235,6 @@ suite('UpdateVoicePack', () => {
 
     setup(() => {
       toast = app.$.languageToast;
-      app.getSpeechSynthesisVoice();
     });
 
     test('does not show if already installed', async () => {
@@ -276,12 +292,11 @@ suite('UpdateVoicePack', () => {
 
   test(
       'unavailable even if natural voices are in the list for a different lang',
-      async () => {
+      () => {
         const lang = 'fr';
         setNaturalVoicesForLang('it');
 
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const status = app.getVoicePackStatusForTesting(lang);
         assertEquals(
@@ -293,13 +308,12 @@ suite('UpdateVoicePack', () => {
 
   test(
       'unavailable if non-natural voices are in the list for a different lang',
-      async () => {
+      () => {
         const lang = 'de';
 
         // Installed 'de' language pack, but the fake available voice list
         // only has english voices.
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const status = app.getVoicePackStatusForTesting(lang);
         assertEquals(
@@ -310,11 +324,10 @@ suite('UpdateVoicePack', () => {
 
   test(
       'unavailable if only non-natural voices are in the list for this lang',
-      async () => {
+      () => {
         const lang = 'en';
 
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const status = app.getVoicePackStatusForTesting(lang);
         assertEquals(
@@ -325,15 +338,15 @@ suite('UpdateVoicePack', () => {
       });
 
   test(
-      'available if natural voices are unsupported for this lang and voices are available',
-      async () => {
+      'available if natural voices are unsupported for this lang and voices' +
+          ' are available',
+      () => {
         const lang = 'yue';
-        createAndSetVoices(app, speechSynthesis, [
+        createAndSetVoices(app, speech, [
           {lang: 'yue-hk', name: 'Cantonese'},
         ]);
 
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const status = app.getVoicePackStatusForTesting(lang);
         assertEquals(
@@ -343,12 +356,12 @@ suite('UpdateVoicePack', () => {
       });
 
   test(
-      'unavailable if natural voices are unsupported for this lang and voices unavailable',
-      async () => {
+      'unavailable if natural voices are unsupported for this lang and voices' +
+          ' unavailable',
+      () => {
         const lang = 'yue';
 
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const status = app.getVoicePackStatusForTesting(lang);
         assertEquals(
@@ -358,18 +371,17 @@ suite('UpdateVoicePack', () => {
             status.client, VoiceClientSideStatusCode.INSTALLED_AND_UNAVAILABLE);
       });
 
-  test('available if natural voices are installed for this lang', async () => {
+  test('available if natural voices are installed for this lang', () => {
     const lang = 'en-us';
     // set installing status so that the old status is not empty.
     app.updateVoicePackStatus(lang, 'kInstalling');
     // set the voices on speech synthesis without triggering on voices
     // changed, so we can verify that updateVoicePackStatus calls it.
-    speechSynthesis.setVoices([
-      createSpeechSynthesisVoice({lang: lang, name: 'Wall-e (Natural)'}),
-      createSpeechSynthesisVoice({lang: lang, name: 'Andy (Natural)'}),
+    createAndSetVoices(app, speech, [
+      {lang: lang, name: 'Wall-e (Natural)'},
+      {lang: lang, name: 'Andy (Natural)'},
     ]);
     app.updateVoicePackStatus(lang, 'kInstalled');
-    await microtasksFinished();
 
     const status = app.getVoicePackStatusForTesting(lang);
     assertEquals(
@@ -381,17 +393,14 @@ suite('UpdateVoicePack', () => {
   });
 
   test(
-      'with flag switches to newly available voices if it\'s for the current language',
-      async () => {
+      'switches to newly available voices if it\'s for the current language',
+      () => {
         const lang = 'en-us';
-        chrome.readingMode.isLanguagePackDownloadingEnabled = true;
-        chrome.readingMode.isAutoVoiceSwitchingEnabled = true;
         chrome.readingMode.baseLanguageForSpeech = lang;
         app.enabledLangs = [lang];
         chrome.readingMode.getStoredVoice = () => '';
         setNaturalVoicesForLang(lang);
         app.updateVoicePackStatus(lang, 'kInstalled');
-        await microtasksFinished();
 
         const selectedVoice = app.getSpeechSynthesisVoice();
         assertTrue(!!selectedVoice);
@@ -400,11 +409,10 @@ suite('UpdateVoicePack', () => {
       });
 
   test(
-      'with flag does not switch to newly available voices if it\'s not for the current language',
+      'does not switch to newly available voices if it\'s not for the ' +
+          'current language',
       () => {
         const installedLang = 'en-us';
-        chrome.readingMode.isLanguagePackDownloadingEnabled = true;
-        chrome.readingMode.isAutoVoiceSwitchingEnabled = true;
         chrome.readingMode.baseLanguageForSpeech = 'pt-br';
         app.enabledLangs = [chrome.readingMode.baseLanguageForSpeech];
         const currentVoice = createSpeechSynthesisVoice({
@@ -414,7 +422,7 @@ suite('UpdateVoicePack', () => {
         emitEvent(
             app, ToolbarEvent.VOICE, {detail: {selectedVoice: currentVoice}});
         chrome.readingMode.getStoredVoice = () => '';
-        setVoices(app, speechSynthesis, [currentVoice]);
+        setVoices(app, speech, [currentVoice]);
 
         app.updateVoicePackStatus(installedLang, 'kInstalled');
 

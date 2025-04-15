@@ -36,7 +36,7 @@ class OnDeviceTranslationServiceTest : public testing::Test {
   // needs to be kept alive for the duration of the test.
   std::unique_ptr<FakeFileOperationProxy, base::OnTaskRunnerDeleter> SendConfig(
       const std::vector<std::pair<std::string, std::string>>& packages,
-      const std::vector<FakeFileOperationProxy::TestFile>& files) {
+      const std::vector<TestFile>& files) {
     auto config = mojom::OnDeviceTranslationServiceConfig::New();
 
     for (const auto& pair : packages) {
@@ -74,8 +74,8 @@ class OnDeviceTranslationServiceTest : public testing::Test {
     service_remote_->CreateTranslator(
         source_lang, target_lang,
         translator_remote.BindNewPipeAndPassReceiver(),
-        base::BindLambdaForTesting([&](bool result) {
-          succeeded = result;
+        base::BindLambdaForTesting([&](mojom::CreateTranslatorResult result) {
+          succeeded = result == mojom::CreateTranslatorResult::kSuccess;
           run_loop.Quit();
         }));
     run_loop.Run();
@@ -123,7 +123,8 @@ TEST_F(OnDeviceTranslationServiceTest, CreateTranslatorSuccess) {
 
   base::RunLoop run_loop;
   translator_remote->Translate(
-      "test", base::BindLambdaForTesting([&](const std::string& output) {
+      "test",
+      base::BindLambdaForTesting([&](const std::optional<std::string>& output) {
         EXPECT_EQ(output, "En to Ja - test");
         run_loop.Quit();
       }));
@@ -154,8 +155,8 @@ TEST_F(OnDeviceTranslationServiceTest, TranslateFailure) {
   base::RunLoop run_loop;
   translator_remote->Translate(
       "SIMULATE_ERROR",
-      base::BindLambdaForTesting([&](const std::string& output) {
-        EXPECT_EQ(output, "");
+      base::BindLambdaForTesting([&](const std::optional<std::string>& output) {
+        EXPECT_FALSE(output.has_value());
         run_loop.Quit();
       }));
   run_loop.Run();

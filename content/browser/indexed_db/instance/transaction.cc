@@ -4,28 +4,50 @@
 
 #include "content/browser/indexed_db/instance/transaction.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
-#include "content/browser/indexed_db/instance/backing_store.h"
+#include "base/unguessable_token.h"
+#include "components/services/storage/indexed_db/locks/partitioned_lock_manager.h"
+#include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom-shared.h"
+#include "components/services/storage/privileged/mojom/indexed_db_internals_types.mojom-forward.h"
+#include "components/services/storage/privileged/mojom/indexed_db_internals_types.mojom-shared.h"
+#include "components/services/storage/privileged/mojom/indexed_db_internals_types.mojom.h"
+#include "components/services/storage/public/mojom/blob_storage_context.mojom-shared.h"
+#include "content/browser/indexed_db/indexed_db_external_object.h"
+#include "content/browser/indexed_db/indexed_db_external_object_storage.h"
+#include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/instance/bucket_context.h"
 #include "content/browser/indexed_db/instance/bucket_context_handle.h"
 #include "content/browser/indexed_db/instance/callback_helpers.h"
+#include "content/browser/indexed_db/instance/connection.h"
 #include "content/browser/indexed_db/instance/cursor.h"
 #include "content/browser/indexed_db/instance/database.h"
 #include "content/browser/indexed_db/instance/database_callbacks.h"
 #include "content/browser/indexed_db/instance/lock_request_data.h"
-#include "storage/browser/blob/blob_storage_context.h"
+#include "content/browser/indexed_db/status.h"
+#include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
 #include "third_party/leveldatabase/env_chromium.h"
 
@@ -49,8 +71,7 @@ std::string WriteBlobToFileResultToString(
     case storage::mojom::WriteBlobToFileResult::kSuccess:
       return "Success";
   }
-  NOTREACHED_IN_MIGRATION();
-  return "";
+  NOTREACHED();
 }
 
 // Disabled in some tests.
@@ -86,9 +107,8 @@ UmaIDBException ExceptionCodeToUmaEnum(blink::mojom::IDBException code) {
     case blink::mojom::IDBException::kTimeoutError:
       return UmaIDBExceptionTimeoutError;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  return UmaIDBExceptionUnknownError;
 }
 
 }  // namespace
@@ -125,18 +145,21 @@ Transaction::AbortOperation Transaction::TaskStack::pop() {
   return task;
 }
 
-Transaction::Transaction(int64_t id,
-                         Connection* connection,
-                         const std::set<int64_t>& object_store_ids,
-                         blink::mojom::IDBTransactionMode mode,
-                         BucketContextHandle bucket_context,
-                         BackingStore::Transaction* backing_store_transaction)
+Transaction::Transaction(
+    int64_t id,
+    Connection* connection,
+    const std::set<int64_t>& object_store_ids,
+    blink::mojom::IDBTransactionMode mode,
+    blink::mojom::IDBTransactionDurability durability,
+    BucketContextHandle bucket_context,
+    std::unique_ptr<BackingStore::Transaction> backing_store_transaction)
     : id_(id),
       object_store_ids_(object_store_ids),
       mode_(mode),
+      durability_(durability),
       connection_(connection->GetWeakPtr()),
       bucket_context_(std::move(bucket_context)),
-      backing_store_transaction_(backing_store_transaction),
+      backing_store_transaction_(std::move(backing_store_transaction)),
       receiver_(this) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("IndexedDB", "Transaction::lifetime", this);
 
@@ -259,7 +282,7 @@ Status Transaction::Abort(const DatabaseError& error) {
   locks_receiver_.locks.clear();
   locks_receiver_.CancelLockRequest();
 
-  callbacks()->OnAbort(*this, error);
+  connection()->callbacks()->OnAbort(*this, error);
 
   bucket_context_->QueueRunTasks();
   bucket_context_.Release();
@@ -297,28 +320,51 @@ void Transaction::DontAllowInactiveClientToBlockOthers(
 bool Transaction::IsTransactionBlockingOtherClients(
     bool consider_priority) const {
   CHECK_EQ(state_, STARTED);
-  std::set<PartitionedLockHolder*> blocked_requests =
-      bucket_context_->lock_manager().GetBlockedRequests(lock_ids());
-  return std::any_of(
-      blocked_requests.begin(), blocked_requests.end(),
-      [&](PartitionedLockHolder* blocked_lock_holder) {
-        auto* lock_request_data = static_cast<LockRequestData*>(
-            blocked_lock_holder->GetUserData(LockRequestData::kKey));
-        if (!lock_request_data) {
-          return true;
-        }
-        // If `this`
-        //   * comes from a background client (priority > 0), and
-        //   * is equal or higher priority than the blocked transaction's client
-        //     (aka equally or less severely throttled)
-        // then don't worry about blocking it.
-        const int this_priority = connection_->scheduling_priority();
-        if (consider_priority && (this_priority > 0) &&
-            (this_priority <= lock_request_data->scheduling_priority)) {
-          return false;
-        }
-        return lock_request_data->client_token != connection_->client_token();
-      });
+
+  if (database_->OnlyHasOneClient()) {
+    return false;
+  }
+
+  base::TimeTicks start = base::TimeTicks::Now();
+  std::optional<int> scheduling_priority;
+  if (consider_priority) {
+    scheduling_priority = connection_->scheduling_priority();
+  }
+  const bool is_blocking_others =
+      bucket_context_->lock_manager().IsBlockingAnyRequest(
+          lock_ids(),
+          base::BindRepeating(
+              [](std::optional<int> this_priority,
+                 const base::UnguessableToken& this_token,
+                 PartitionedLockHolder* blocked_lock_holder) {
+                auto* lock_request_data = static_cast<LockRequestData*>(
+                    blocked_lock_holder->GetUserData(LockRequestData::kKey));
+                if (!lock_request_data) {
+                  return true;
+                }
+                // If `this`
+                //   * comes from a background client (priority > 0), and
+                //   * is equal or higher priority than the blocked
+                //   transaction's client
+                //     (aka equally or less severely throttled)
+                // then don't worry about blocking it.
+                if (this_priority && (*this_priority > 0) &&
+                    (*this_priority <=
+                     lock_request_data->scheduling_priority)) {
+                  return false;
+                }
+                return lock_request_data->client_token != this_token;
+              },
+              scheduling_priority, connection_->client_token()));
+  base::TimeDelta duration = base::TimeTicks::Now() - start;
+  if (duration > base::Milliseconds(2)) {
+    base::UmaHistogramTimes("IndexedDB.CalculateBlockingStatusLongTimes",
+                            duration);
+    base::UmaHistogramCounts100000(
+        "IndexedDB.CalculateBlockingStatusRequestQueueSize",
+        bucket_context_->lock_manager().RequestsWaitingForMetrics());
+  }
+  return is_blocking_others;
 }
 
 void Transaction::Start() {
@@ -329,6 +375,8 @@ void Transaction::Start() {
     return;
   }
   DCHECK_EQ(CREATED, state_);
+  std::optional scheduling_priority_at_last_state_change =
+      scheduling_priority_at_last_state_change_;
   SetState(STARTED);
   DCHECK(!locks_receiver_.locks.empty());
   diagnostics_.start_time = base::Time::Now();
@@ -345,15 +393,30 @@ void Transaction::Start() {
     case blink::mojom::IDBTransactionMode::ReadOnly:
       base::UmaHistogramMediumTimes(
           "WebCore.IndexedDB.Transaction.ReadOnly.TimeQueued", time_queued);
+      if (scheduling_priority_at_last_state_change == 0) {
+        base::UmaHistogramMediumTimes(
+            "WebCore.IndexedDB.Transaction.ReadOnly.TimeQueued.Foreground",
+            time_queued);
+      }
       break;
     case blink::mojom::IDBTransactionMode::ReadWrite:
       base::UmaHistogramMediumTimes(
           "WebCore.IndexedDB.Transaction.ReadWrite.TimeQueued", time_queued);
+      if (scheduling_priority_at_last_state_change == 0) {
+        base::UmaHistogramMediumTimes(
+            "WebCore.IndexedDB.Transaction.ReadWrite.TimeQueued.Foreground",
+            time_queued);
+      }
       break;
     case blink::mojom::IDBTransactionMode::VersionChange:
       base::UmaHistogramMediumTimes(
           "WebCore.IndexedDB.Transaction.VersionChange.TimeQueued",
           time_queued);
+      if (scheduling_priority_at_last_state_change == 0) {
+        base::UmaHistogramMediumTimes(
+            "WebCore.IndexedDB.Transaction.VersionChange.TimeQueued.Foreground",
+            time_queued);
+      }
       break;
   }
 
@@ -555,7 +618,7 @@ Status Transaction::BlobWriteComplete(
       return CommitPhaseTwo();
     }
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 Status Transaction::DoPendingCommit() {
@@ -626,6 +689,8 @@ Status Transaction::CommitPhaseTwo() {
 
   DCHECK_EQ(state_, COMMITTING);
 
+  std::optional scheduling_priority_at_last_state_change =
+      scheduling_priority_at_last_state_change_;
   SetState(FINISHED);
 
   Status s;
@@ -633,41 +698,45 @@ Status Transaction::CommitPhaseTwo() {
   if (!used_) {
     committed = true;
   } else {
-    const base::TimeDelta active_time =
-        base::Time::Now() - diagnostics_.start_time;
-
     s = backing_store_transaction_->CommitPhaseTwo();
 
     // This measurement includes the time it takes to commit to the backing
-    // store (i.e. LevelDB), not just the blobs. It should replace the
-    // `active_time` measurement.
-    const base::TimeDelta active_time2 =
+    // store (i.e. LevelDB), not just the blobs.
+    const base::TimeDelta active_time =
         base::Time::Now() - diagnostics_.start_time;
 
     switch (mode_) {
       case blink::mojom::IDBTransactionMode::ReadOnly:
-        DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
-            "WebCore.IndexedDB.Transaction.ReadOnly.TimeActive", active_time);
         base::UmaHistogramMediumTimes(
-            "WebCore.IndexedDB.Transaction.ReadOnly.TimeActive2", active_time2);
+            "WebCore.IndexedDB.Transaction.ReadOnly.TimeActive2", active_time);
+        if (scheduling_priority_at_last_state_change == 0) {
+          base::UmaHistogramMediumTimes(
+              "WebCore.IndexedDB.Transaction.ReadOnly.TimeActive2.Foreground",
+              active_time);
+        }
         break;
       case blink::mojom::IDBTransactionMode::ReadWrite:
-        DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
-            "WebCore.IndexedDB.Transaction.ReadWrite.TimeActive", active_time);
         base::UmaHistogramMediumTimes(
-            "WebCore.IndexedDB.Transaction.ReadWrite.TimeActive2",
-            active_time2);
+            "WebCore.IndexedDB.Transaction.ReadWrite.TimeActive2", active_time);
+        if (scheduling_priority_at_last_state_change == 0) {
+          base::UmaHistogramMediumTimes(
+              "WebCore.IndexedDB.Transaction.ReadWrite.TimeActive2.Foreground",
+              active_time);
+        }
         break;
       case blink::mojom::IDBTransactionMode::VersionChange:
-        DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES(
-            "WebCore.IndexedDB.Transaction.VersionChange.TimeActive",
-            active_time);
         base::UmaHistogramMediumTimes(
             "WebCore.IndexedDB.Transaction.VersionChange.TimeActive2",
-            active_time2);
+            active_time);
+        if (scheduling_priority_at_last_state_change == 0) {
+          base::UmaHistogramMediumTimes(
+              "WebCore.IndexedDB.Transaction.VersionChange.TimeActive2."
+              "Foreground",
+              active_time);
+        }
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
 
     committed = s.ok();
@@ -692,14 +761,13 @@ Status Transaction::CommitPhaseTwo() {
       TRACE_EVENT1("IndexedDB",
                    "Transaction::CommitPhaseTwo.TransactionCompleteCallbacks",
                    "txn.id", id());
-      callbacks()->OnComplete(*this);
+      connection()->callbacks()->OnComplete(*this);
     }
 
     if (mode() != blink::mojom::IDBTransactionMode::ReadOnly) {
       const bool did_sync =
           mode() == blink::mojom::IDBTransactionMode::VersionChange ||
-          backing_store_transaction_->durability() ==
-              blink::mojom::IDBTransactionDurability::Strict;
+          durability_ == blink::mojom::IDBTransactionDurability::Strict;
       bucket_context_->delegate().on_files_written.Run(did_sync);
     }
     return s;
@@ -718,7 +786,7 @@ Status Transaction::CommitPhaseTwo() {
     error = DatabaseError(blink::mojom::IDBException::kUnknownError,
                           "Internal error committing transaction.");
   }
-  callbacks()->OnAbort(*this, error);
+  connection()->callbacks()->OnAbort(*this, error);
   return s;
 }
 
@@ -873,6 +941,12 @@ void Transaction::ResetTimeoutTimer() {
 
 void Transaction::SetState(State state) {
   state_ = state;
+  if (connection_) {
+    scheduling_priority_at_last_state_change_ =
+        connection_->scheduling_priority();
+  } else {
+    scheduling_priority_at_last_state_change_ = std::nullopt;
+  }
   NotifyOfIdbInternalsRelevantChange();
 }
 

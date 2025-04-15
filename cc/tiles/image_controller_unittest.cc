@@ -8,6 +8,7 @@
 #include <optional>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
@@ -17,6 +18,7 @@
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread_checker_impl.h"
 #include "base/threading/thread_restrictions.h"
+#include "cc/base/features.h"
 #include "cc/paint/paint_image_builder.h"
 #include "cc/test/cc_test_suite.h"
 #include "cc/test/skia_common.h"
@@ -495,6 +497,22 @@ TEST_F(ImageControllerTest, QueueImageDecodeLockedImageControllerChange) {
   EXPECT_EQ(0, cache()->number_of_refs());
 }
 
+TEST_F(ImageControllerTest, DecodeRequestedBeforeCacheIsSet) {
+  scoped_refptr<SimpleTask> task(new SimpleTask);
+  cache()->SetTaskToUse(task);
+  controller()->SetImageDecodeCache(nullptr);
+  base::RunLoop run_loop;
+  DecodeClient decode_client;
+  controller()->QueueImageDecode(
+      image(),
+      base::BindOnce(&DecodeClient::Callback, base::Unretained(&decode_client),
+                     run_loop.QuitClosure()));
+  controller()->SetImageDecodeCache(cache());
+  RunOrTimeout(&run_loop);
+  EXPECT_EQ(ImageController::ImageDecodeResult::SUCCESS,
+            decode_client.result());
+}
+
 TEST_F(ImageControllerTest, DispatchesDecodeCallbacksAfterCacheReset) {
   scoped_refptr<SimpleTask> task(new SimpleTask);
   cache()->SetTaskToUse(task);
@@ -660,6 +678,9 @@ TEST_F(ImageControllerTest, QueueImageDecodeNonLazyCancelImmediately) {
 }
 
 TEST_F(ImageControllerTest, ExternalDependency) {
+  if (!base::FeatureList::IsEnabled(features::kPreventDuplicateImageDecodes)) {
+    return;
+  }
   // Set up a stand-alone image decode task in a dependency sandwich with two
   // external (i.e. raster) tasks.
   scoped_refptr<SimpleTask> dependency(new SimpleTask);

@@ -10,12 +10,11 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "chrome/browser/signin/signin_promo.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "components/grit/components_resources.h"
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
 #include "components/security_interstitials/core/common_string_util.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/supervised_user/core/common/features.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
@@ -45,6 +44,22 @@ bool SupervisedUserVerificationPage::ShouldShowPage(
       // In the transient case, an update to AUTHENTICATED state may shortly
       // follow, which will trigger this interstitial to be refreshed.
       return true;
+  }
+}
+
+// static
+FamilyLinkUserReauthenticationInterstitialState
+SupervisedUserVerificationPage::GetReauthenticationInterstitialStateFromStatus(
+    Status status) {
+  switch (status) {
+    case Status::SHOWN:
+      return FamilyLinkUserReauthenticationInterstitialState::kInterstitialShown;
+    case Status::REAUTH_STARTED:
+      return FamilyLinkUserReauthenticationInterstitialState::kReauthenticationStarted;
+    case Status::REAUTH_COMPLETED:
+      return FamilyLinkUserReauthenticationInterstitialState::kReauthenticationCompleted;
+    default:
+      NOTREACHED();
   }
 }
 
@@ -80,18 +95,16 @@ SupervisedUserVerificationPage::SupervisedUserVerificationPage(
 SupervisedUserVerificationPage::~SupervisedUserVerificationPage() = default;
 
 void SupervisedUserVerificationPage::CloseSignInTabs() {
-  if (signin_tabs_handle_id_list_.empty()) {
+  if (signin_tabs_handle_list_.empty()) {
     return;
   }
 
-  int closed_tab_count = 0;
-  int skipped_tab_count = 0;
-  while (!signin_tabs_handle_id_list_.empty()) {
-    auto tab_handle_id = signin_tabs_handle_id_list_.front();
-    signin_tabs_handle_id_list_.pop_front();
+  while (!signin_tabs_handle_list_.empty()) {
+    const tabs::TabHandle tab_handle = signin_tabs_handle_list_.front();
+    signin_tabs_handle_list_.pop_front();
     // Obtains the tab associated with the unique tab handle id. A tab pointer
     // is only returned if the tab is still valid.
-    auto* tab_interface = tabs::TabInterface::MaybeGetFromHandle(tab_handle_id);
+    tabs::TabInterface* const tab_interface = tab_handle.Get();
     if (!tab_interface) {
       continue;
     }
@@ -102,16 +115,10 @@ void SupervisedUserVerificationPage::CloseSignInTabs() {
     // the rest will be left open as the user might have navigated elsewhere.
     if (!IsSignInUrl(tab_interface->GetContents()->GetLastCommittedURL()) &&
         !IsSignInUrl(tab_interface->GetContents()->GetVisibleURL())) {
-      skipped_tab_count++;
       continue;
     }
     tab_interface->Close();
-    closed_tab_count++;
   }
-  RecordSignInTabUmaMetrics(closed_tab_count, skipped_tab_count);
-
-  // TODO(b/364546097): Ideally focus the last visited tab (before the sign-in
-  // page), before closing the sign-in tabs.
 }
 
 bool SupervisedUserVerificationPage::IsSignInUrl(const GURL& url) {
@@ -135,10 +142,7 @@ void SupervisedUserVerificationPage::OnGoogleAuthStateUpdate() {
   // Re-authentication metrics will be recorded in the destructor, since this
   // method could be invoked more than once.
   is_reauth_completed_ = true;
-  if (base::FeatureList::IsEnabled(
-          supervised_user::kCloseSignTabsFromReauthenticationInterstitial)) {
-    CloseSignInTabs();
-  }
+  CloseSignInTabs();
   controller()->Reload();
 }
 
@@ -152,9 +156,6 @@ void SupervisedUserVerificationPage::PopulateCommonStrings(
     base::Value::Dict& load_time_data) {
   load_time_data.Set("overridable", false);
   load_time_data.Set("hide_primary_button", false);
-  load_time_data.Set("show_recurrent_error_paragraph", false);
-
-  load_time_data.Set("recurrentErrorParagraph", "");
   load_time_data.Set("openDetails", "");
   load_time_data.Set("explanationParagraph", "");
   load_time_data.Set("finalParagraph", "");
@@ -189,13 +190,10 @@ void SupervisedUserVerificationPage::CommandReceived(
       auto* signin_web_contents =
           SecurityInterstitialPage::web_contents()->OpenURL(
               params, /*navigation_handle_callback=*/{});
-      if (base::FeatureList::IsEnabled(
-              supervised_user::
-                  kCloseSignTabsFromReauthenticationInterstitial) &&
-          signin_web_contents) {
+      if (signin_web_contents) {
         tabs::TabInterface* tab_interface =
             tabs::TabInterface::GetFromContents(signin_web_contents);
-        signin_tabs_handle_id_list_.emplace_back(tab_interface->GetTabHandle());
+        signin_tabs_handle_list_.emplace_back(tab_interface->GetHandle());
       }
       break;
     }
@@ -212,8 +210,7 @@ void SupervisedUserVerificationPage::CommandReceived(
     case security_interstitials::CMD_OPEN_DIAGNOSTIC:
     case security_interstitials::CMD_REPORT_PHISHING_ERROR:
       // Not supported by the verification page.
-      NOTREACHED_IN_MIGRATION() << "Unsupported command: " << command;
-      break;
+      NOTREACHED() << "Unsupported command: " << command;
     case security_interstitials::CMD_ERROR:
     case security_interstitials::CMD_TEXT_FOUND:
     case security_interstitials::CMD_TEXT_NOT_FOUND:

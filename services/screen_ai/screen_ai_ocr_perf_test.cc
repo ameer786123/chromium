@@ -10,6 +10,7 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/map_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -63,9 +64,7 @@ constexpr base::FilePath::CharType kFilePathsFileName[] =
 SkBitmap GetBitmap(const base::FilePath& path) {
   auto data = base::ReadFileToBytes(path);
   CHECK(data);
-  std::unique_ptr<SkBitmap> bitmap =
-      gfx::JPEGCodec::Decode(data->data(), data->size());
-  return std::move(*bitmap);
+  return gfx::JPEGCodec::Decode(data.value());
 }
 
 class OcrTestEnvironment : public ::testing::Environment {
@@ -91,7 +90,7 @@ class OcrTestEnvironment : public ::testing::Environment {
         base::FindOrNull(OcrTestEnvironment::data_, relative_file_path);
     CHECK(data);
     CHECK_GE(buffer_size, data->size());
-    memcpy(buffer, data->data(), data->size());
+    UNSAFE_TODO(memcpy(buffer, data->data(), data->size()));
   }
 
   OcrTestEnvironment(const std::string& output_path,

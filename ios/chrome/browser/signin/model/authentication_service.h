@@ -120,28 +120,16 @@ class AuthenticationService : public KeyedService,
       signin::ConsentLevel consent_level) const;
 
   // Grants signin::ConsentLevel::kSignin to `identity` and records the signin
-  // at `access_point`. This method does not set up Sync-the-feature for the
-  // identity. Virtual for testing.
+  // at `access_point`. Virtual for testing.
   virtual void SignIn(id<SystemIdentity> identity,
                       signin_metrics::AccessPoint access_point);
 
-  // Grants signin::ConsentLevel::kSync to `identity` and records the event at
-  // `access_point`. This starts setting up Sync-the-feature, but the setup will
-  // only complete once SyncUserSettings::SetInitialSyncFeatureSetupComplete()
-  // is called. This method is used for testing. Virtual for testing.
-  // TODO(crbug.com/40067025): Delete this method after Phase 2 on iOS is
-  // launched. See ConsentLevel::kSync documentation for details.
-  virtual void GrantSyncConsent(id<SystemIdentity> identity,
-                                signin_metrics::AccessPoint access_point);
-
   // Signs the authenticated user out of Chrome and clears the browsing
-  // data if the account is managed. If `force_clear_browsing_data` is true,
-  // clears the browsing data unconditionally.
+  // data if the account is managed.
   // Sync consent is automatically removed from all signed-out accounts.
   // `completion` is then executed asynchronously.
   // Virtual for testing.
   virtual void SignOut(signin_metrics::ProfileSignout signout_source,
-                       bool force_clear_browsing_data,
                        ProceduralBlock completion);
 
   // Returns whether there is a cached associated MDM error for `identity`.
@@ -158,17 +146,14 @@ class AuthenticationService : public KeyedService,
   // sync the accounts between the IdentityManager and the SSO library.
   void OnApplicationWillEnterForeground();
 
-  // Returns whether an account switch is in progress.
-  bool IsAccountSwitchInProgress();
-
-  // The account switch is considered to be in progress while the returned
-  // object exists. Can only be called when no switch is in progress. The
-  // returned object must be destroyed before this service is shut down.
-  base::ScopedClosureRunner DeclareAccountSwitchInProgress();
-
  private:
-  friend class AuthenticationServiceTest;
+  friend class AuthenticationServiceTestBase;
   friend class FakeAuthenticationService;
+
+  // If the current profile is being opened for the first time, this performs
+  // any necessary first-time setup (notably, signing in the assigned managed
+  // account to a managed profile), and then marks the profile as initialized.
+  void PerformFirstTimeProfileInitializationIfNecessary();
 
   // Returns the cached MDM errors associated with `identity`. If the cache
   // is stale for `identity`, the entry might be removed.
@@ -207,7 +192,8 @@ class AuthenticationService : public KeyedService,
       const signin::PrimaryAccountChangeEvent& event_details) override;
 
   // ChromeAccountManagerService::Observer implementation.
-  void OnIdentityListChanged() override;
+  void OnIdentitiesInProfileChanged() override;
+  void OnRefreshTokenUpdated(id<SystemIdentity> identity) override;
   void OnAccessTokenRefreshFailed(id<SystemIdentity> identity,
                                   id<RefreshAccessTokenError> error) override;
 
@@ -216,6 +202,9 @@ class AuthenticationService : public KeyedService,
 
   // Notification for prefs::kSigninAllowed.
   void OnSigninAllowedChanged(const std::string& name);
+
+  // Notification for prefs::kSigninAllowedOnDevice.
+  void OnSigninAllowedOnDeviceChanged(const std::string& name);
 
   // Notification for prefs::kBrowserSigninPolicy.
   void OnBrowserSigninPolicyChanged(const std::string& name);
@@ -243,9 +232,6 @@ class AuthenticationService : public KeyedService,
   // Whether Initialize() has been called.
   bool initialized_ = false;
 
-  // Whether an account is currently switching.
-  bool account_switch_in_progress_ = false;
-
   // Whether the AuthenticationService is currently reloading credentials, used
   // to avoid an infinite reloading loop.
   bool is_reloading_credentials_ = false;
@@ -267,7 +253,7 @@ class AuthenticationService : public KeyedService,
 
   // Registrar for prefs::kSigninAllowed.
   PrefChangeRegistrar pref_change_registrar_;
-  // Registrar for prefs::kBrowserSigninPolicy.
+  // Registrar for prefs::kBrowserSigninPolicy and kSigninAllowedOnDevice.
   PrefChangeRegistrar local_pref_change_registrar_;
 
   base::WeakPtrFactory<AuthenticationService> weak_pointer_factory_;

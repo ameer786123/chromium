@@ -13,7 +13,6 @@ import android.os.Build.VERSION_CODES;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -30,8 +29,8 @@ import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.transit.BlankCTATabInitialStatePublicTransitRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.edge_to_edge.EdgeToEdgeBottomChinFacility;
 import org.chromium.chrome.test.transit.edge_to_edge.ViewportFitCoverPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
@@ -43,33 +42,31 @@ import org.chromium.ui.test.util.DeviceRestriction;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-    ChromeSwitches.DISABLE_MINIMUM_SHOW_DURATION,
-    "enable-features="
-            + ChromeFeatureList.BOTTOM_BROWSER_CONTROLS_REFACTOR
-            + "<Study,DynamicSafeAreaInsets,DynamicSafeAreaInsetsOnScroll,DrawCutoutEdgeToEdge,"
-            + ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-    "force-fieldtrials=Study/Group",
-    "force-fieldtrial-params=Study.Group:disable_bottom_controls_stacker_y_offset/false"
+    ChromeSwitches.DISABLE_MINIMUM_SHOW_DURATION
+})
+@EnableFeatures({
+    ChromeFeatureList.BOTTOM_BROWSER_CONTROLS_REFACTOR
+            + ":disable_bottom_controls_stacker_y_offset/false",
+    "DynamicSafeAreaInsets",
+    "DynamicSafeAreaInsetsOnScroll",
+    "DrawCutoutEdgeToEdge",
+    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN
 })
 @Batch(Batch.PER_CLASS)
 // Bots <= VERSION_CODES.S use 3-bottom nav bar. See crbug.com/352402600
 @MinAndroidSdkLevel(VERSION_CODES.S_V2)
 @Restriction({DeviceFormFactor.PHONE, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
 public class EdgeToEdgePTTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStatePublicTransitRule mInitialStateRule =
-            new BlankCTATabInitialStatePublicTransitRule(sActivityTestRule);
+    public AutoResetCtaTransitTestRule mCtaTestRule =
+            ChromeTransitTestRules.autoResetCtaActivityRule();
 
     @Test
     @SmallTest
     public void loadViewportFitCover() {
-        WebPageStation blankPage = mInitialStateRule.startOnBlankPage();
+        WebPageStation blankPage = mCtaTestRule.startOnBlankPage();
         ViewportFitCoverPageStation e2ePage =
-                loadViewportFitCoverPage(sActivityTestRule, blankPage);
+                loadViewportFitCoverPage(mCtaTestRule.getActivityTestRule(), blankPage);
         TransitAsserts.assertFinalDestination(e2ePage);
     }
 
@@ -78,9 +75,9 @@ public class EdgeToEdgePTTest {
     @MediumTest
     public void openNewTabInGroupAtPageBottom() {
         ThreadUtils.runOnUiThread(() -> FirstRunStatus.setFirstRunFlowComplete(true));
-        WebPageStation blankPage = mInitialStateRule.startOnBlankPage();
+        WebPageStation blankPage = mCtaTestRule.startOnBlankPage();
         var topBottomLinkPageAndTop =
-                TopBottomLinksPageStation.loadPage(sActivityTestRule, blankPage);
+                TopBottomLinksPageStation.loadPage(mCtaTestRule.getActivityTestRule(), blankPage);
         TopBottomLinksPageStation topBottomLinkPage = topBottomLinkPageAndTop.first;
         TopBottomLinksPageStation.TopFacility topFacility = topBottomLinkPageAndTop.second;
 
@@ -96,7 +93,7 @@ public class EdgeToEdgePTTest {
     @EnableFeatures({ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE})
     public void fromNtpToRegularPage() {
         // Start the page on NTP, chin is not visible.
-        var newTabPage = mInitialStateRule.startOnNtp();
+        var newTabPage = mCtaTestRule.startOnNtp();
         var chinOnNtp =
                 newTabPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(true), /* trigger= */ null);
@@ -106,7 +103,8 @@ public class EdgeToEdgePTTest {
                 chinOnNtp.getBottomChin().getLayerVisibility());
 
         // Navigate the page to another web page, ensure the page has the chin visible.
-        var pair = TopBottomLinksPageStation.loadPage(sActivityTestRule, newTabPage);
+        var pair =
+                TopBottomLinksPageStation.loadPage(mCtaTestRule.getActivityTestRule(), newTabPage);
         TopBottomLinksPageStation regularPage = pair.first;
         var chinOnWebPage =
                 regularPage.enterFacilitySync(
@@ -124,7 +122,7 @@ public class EdgeToEdgePTTest {
     @EnableFeatures({ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE})
     public void fromNtpToTabSwitcher() {
         // Start the page on NTP, chin is not visible.
-        var newTabPage = mInitialStateRule.startOnNtp();
+        var newTabPage = mCtaTestRule.startOnNtp();
         var chinOnNtp =
                 newTabPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(true), /* trigger= */ null);
@@ -155,7 +153,7 @@ public class EdgeToEdgePTTest {
     })
     public void fromNtpToOptInPage() {
         // Start the page on NTP, chin is not visible.
-        var newTabPage = mInitialStateRule.startOnNtp();
+        var newTabPage = mCtaTestRule.startOnNtp();
         var chinOnNtp =
                 newTabPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(true), /* trigger= */ null);
@@ -166,7 +164,8 @@ public class EdgeToEdgePTTest {
 
         // Navigate the page to another web page, ensure the page has the chin visible.
         var optInPage =
-                ViewportFitCoverPageStation.loadViewportFitCoverPage(sActivityTestRule, newTabPage);
+                ViewportFitCoverPageStation.loadViewportFitCoverPage(
+                        mCtaTestRule.getActivityTestRule(), newTabPage);
         var chinOnOptInPage =
                 optInPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(true), /* trigger= */ null);
@@ -183,7 +182,7 @@ public class EdgeToEdgePTTest {
     @EnableFeatures({ChromeFeatureList.EDGE_TO_EDGE_WEB_OPT_IN})
     public void fromBlankPageToOptInPage() {
         // Start the page on NTP, chin is not visible.
-        var blankPage = mInitialStateRule.startOnBlankPage();
+        var blankPage = mCtaTestRule.startOnBlankPage();
         var chinOnBlankPage =
                 blankPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(false), /* trigger= */ null);
@@ -194,7 +193,8 @@ public class EdgeToEdgePTTest {
 
         // Navigate the page to another web page, ensure the page has the chin visible.
         var optInPage =
-                ViewportFitCoverPageStation.loadViewportFitCoverPage(sActivityTestRule, blankPage);
+                ViewportFitCoverPageStation.loadViewportFitCoverPage(
+                        mCtaTestRule.getActivityTestRule(), blankPage);
         var chinOnOptInPage =
                 optInPage.enterFacilitySync(
                         new EdgeToEdgeBottomChinFacility<>(true), /* trigger= */ null);

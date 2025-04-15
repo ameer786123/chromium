@@ -8,12 +8,15 @@
 #include <optional>
 
 #include "base/json/json_reader.h"
+#include "base/json/values_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_environment_variable_override.h"
 #include "base/test/bind.h"
 #include "base/test/icu_test_util.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "chromeos/ash/components/login/login_state/login_state.h"
 #include "chromeos/ash/components/policy/weekly_time/test_support.h"
 #include "chromeos/ash/components/policy/weekly_time/weekly_time_interval_checked.h"
 #include "chromeos/constants/pref_names.h"
@@ -112,13 +115,22 @@ class DeviceRestrictionScheduleControllerTest : public testing::Test {
   DeviceRestrictionScheduleControllerTest() {
     DeviceRestrictionScheduleController::RegisterLocalStatePrefs(
         local_state_.registry());
-    controller_ = std::make_unique<DeviceRestrictionScheduleController>(
-        delegate_, local_state_);
+    delegate_owned_ = std::make_unique<NiceMock<MockDelegate>>();
+    delegate_ = delegate_owned_.get();
+  }
+
+  void SetUp() override {
+    ash::LoginState::Initialize();
+    controller_ = DeviceRestrictionScheduleController::CreateWithDelegate(
+        std::move(delegate_owned_), local_state_);
     controller_->AddObserver(&observer_);
   }
 
-  ~DeviceRestrictionScheduleControllerTest() override {
+  void TearDown() override {
     controller_->RemoveObserver(&observer_);
+    delegate_ = nullptr;  // Points to delegate which is owned by controller.
+    controller_.reset();
+    ash::LoginState::Shutdown();
   }
 
   void UpdatePolicyPref(const char* policy_json) {
@@ -152,7 +164,8 @@ class DeviceRestrictionScheduleControllerTest : public testing::Test {
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   TestingPrefServiceSimple local_state_;
-  NiceMock<MockDelegate> delegate_;
+  std::unique_ptr<NiceMock<MockDelegate>> delegate_owned_;
+  raw_ptr<NiceMock<MockDelegate>> delegate_;
   NiceMock<MockObserver> observer_;
   std::unique_ptr<DeviceRestrictionScheduleController> controller_;
 };
@@ -184,9 +197,9 @@ TEST_F(DeviceRestrictionScheduleControllerTest, NonEmptyRegularToEmptyPolicy) {
 
   // Advance for a full week. Nothing should be called anymore since the policy
   // isn't active.
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(0);
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
-  EXPECT_CALL(delegate_, ShowPostLogoutNotification()).Times(0);
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(0);
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
+  EXPECT_CALL(*delegate_, ShowPostLogoutNotification()).Times(0);
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(_)).Times(0);
 
   AdvanceTime(base::Days(7));
@@ -200,7 +213,7 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
   // Make sure all EXPECT_CALLs are in sequence.
   InSequence seq;
 
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
   UpdatePolicyPref(kPolicyJson);
 
@@ -209,9 +222,9 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
 
   // Advance for a full week. Nothing should be called anymore since the policy
   // isn't active.
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(0);
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
-  EXPECT_CALL(delegate_, ShowPostLogoutNotification()).Times(0);
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(0);
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
+  EXPECT_CALL(*delegate_, ShowPostLogoutNotification()).Times(0);
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(_)).Times(0);
 
   AdvanceTime(base::Days(7));
@@ -228,15 +241,15 @@ TEST_F(DeviceRestrictionScheduleControllerTest, SamplePolicyRegularStart) {
   UpdatePolicyPref(kPolicyJson);
 
   // Upcoming logout notification should be shown at Wed 11:30.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kWednesday, 11, 30), Return(true)));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_))
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_))
       .Times(1)
       .WillOnce(EXPECT_TIME(Day::kWednesday, 11, 30));
 
   // Next restricted period should start at Wed 12:00.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kWednesday, 12, 0), Return(true)));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true))
@@ -250,13 +263,13 @@ TEST_F(DeviceRestrictionScheduleControllerTest, SamplePolicyRegularStart) {
 
   // Upcoming logout notification would normally be shown at Fri 17:30, but it
   // is not shown since a user session wasn't in progress.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kFriday, 17, 30), Return(false)));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
 
   // Next restricted period should start at Fri 18:00.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kFriday, 18, 0), Return(true)));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true))
@@ -279,7 +292,7 @@ TEST_F(DeviceRestrictionScheduleControllerTest, SamplePolicyRestrictedStart) {
   // Make sure all EXPECT_CALLs are in sequence.
   InSequence seq;
 
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1);
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1);
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
   UpdatePolicyPref(kPolicyJson);
 
@@ -289,15 +302,15 @@ TEST_F(DeviceRestrictionScheduleControllerTest, SamplePolicyRestrictedStart) {
       .WillOnce(EXPECT_TIME(Day::kMonday, 6, 0));
 
   // Upcoming logout notification should be shown at Wed 11:30.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kWednesday, 11, 30), Return(true)));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_))
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_))
       .Times(1)
       .WillOnce(EXPECT_TIME(Day::kWednesday, 11, 30));
 
   // Next restricted period should start at Wed 12:00.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kWednesday, 12, 0), Return(true)));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true))
@@ -310,15 +323,15 @@ TEST_F(DeviceRestrictionScheduleControllerTest, SamplePolicyRestrictedStart) {
       .WillOnce(EXPECT_TIME(Day::kWednesday, 21, 0));
 
   // Upcoming logout notification should be shown at Fri 17:30.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kFriday, 17, 30), Return(true)));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_))
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_))
       .Times(1)
       .WillOnce(EXPECT_TIME(Day::kFriday, 17, 30));
 
   // Next restricted period should start at Fri 18:00.
-  EXPECT_CALL(delegate_, IsUserLoggedIn())
+  EXPECT_CALL(*delegate_, IsUserLoggedIn())
       .Times(1)
       .WillOnce(DoAll(EXPECT_TIME(Day::kFriday, 18, 0), Return(true)));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true))
@@ -338,7 +351,7 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
   // Make sure all EXPECT_CALLs are in sequence.
   InSequence seq;
 
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(true));
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(true));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
   UpdatePolicyPref(kPolicyJson);
 
@@ -356,7 +369,7 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
   // Make sure all EXPECT_CALLs are in sequence.
   InSequence seq;
 
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
   UpdatePolicyPref(kPolicyJson);
 
@@ -375,8 +388,8 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
   InSequence seq;
 
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(false)).Times(1);
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(true));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_)).Times(1);
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(true));
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(1);
   UpdatePolicyPref(kPolicyJson);
 
   // Run any pending timers.
@@ -393,67 +406,97 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
   InSequence seq;
 
   EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(false)).Times(1);
-  EXPECT_CALL(delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
-  EXPECT_CALL(delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
   UpdatePolicyPref(kPolicyJson);
 
   // Run any pending timers.
   AdvanceTime(base::TimeDelta());
 }
 
+// Verify that `ShowUpcomingLogoutNotification` is called after login if there's
+// less than 30 minutes until restricted schedule begins.
+TEST_F(DeviceRestrictionScheduleControllerTest,
+       ShowUpcomingLogoutNotification_CalledAfterLogin) {
+  // Set time 20 minutes before restricted schedule.
+  SetTime(Day::kWednesday, 11, 40);
+
+  // Not logged in, notification doesn't show.
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(false));
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(0);
+  UpdatePolicyPref(kPolicyJson);
+
+  // Run any pending timers.
+  AdvanceTime(base::TimeDelta());
+  Mock::VerifyAndClearExpectations(&observer_);
+
+  // Logged in, notification shows.
+  EXPECT_CALL(*delegate_, IsUserLoggedIn()).Times(1).WillOnce(Return(true));
+  EXPECT_CALL(*delegate_, ShowUpcomingLogoutNotification(_)).Times(1);
+
+  // Perform login.
+  ash::LoginState::Get()->SetLoggedInState(
+      ash::LoginState::LOGGED_IN_ACTIVE,
+      ash::LoginState::LOGGED_IN_USER_REGULAR);
+
+  // Run any pending timers.
+  AdvanceTime(base::TimeDelta());
+  Mock::VerifyAndClearExpectations(&observer_);
+}
+
+class DeviceRestrictionScheduleControllerTestShowPostLogoutNotification
+    : public DeviceRestrictionScheduleControllerTest {
+ public:
+  // Manually driven inside the tests to allow custom pre-setup.
+  void SetUp() override {}
+};
+
 // Verify that `ShowPostLogoutNotification` is called during startup if the
 // `chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification` pref
 // was set to true.
-TEST(DeviceRestrictionScheduleController_ShowPostLogoutNotification,
-     PrefTrue_Shown) {
-  TestingPrefServiceSimple local_state;
-  DeviceRestrictionScheduleController::RegisterLocalStatePrefs(
-      local_state.registry());
-  local_state.SetBoolean(
+TEST_F(DeviceRestrictionScheduleControllerTestShowPostLogoutNotification,
+       PrefTrue_Shown) {
+  local_state_.SetBoolean(
       chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification,
       true);
-  MockDelegate delegate;
 
   // Notification is shown.
-  EXPECT_CALL(delegate, ShowPostLogoutNotification()).Times(1);
-  DeviceRestrictionScheduleController controller{delegate, local_state};
+  EXPECT_CALL(*delegate_, ShowPostLogoutNotification()).Times(1);
+
+  // This call creates the controller which then does some startup time logic.
+  DeviceRestrictionScheduleControllerTest::SetUp();
 
   // Pref was reset.
-  EXPECT_FALSE(local_state.GetBoolean(
+  EXPECT_FALSE(local_state_.GetBoolean(
       chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification));
 }
 
 // Verify that `ShowPostLogoutNotification` is not called during startup if the
 // `chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification` pref
 // was set to false.
-TEST(DeviceRestrictionScheduleController_ShowPostLogoutNotification,
-     PrefFalse_NotShown) {
-  TestingPrefServiceSimple local_state;
-  DeviceRestrictionScheduleController::RegisterLocalStatePrefs(
-      local_state.registry());
-  local_state.SetBoolean(
+TEST_F(DeviceRestrictionScheduleControllerTestShowPostLogoutNotification,
+       PrefFalse_NotShown) {
+  local_state_.SetBoolean(
       chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification,
       false);
-  MockDelegate delegate;
 
   // Notification is not shown.
-  EXPECT_CALL(delegate, ShowPostLogoutNotification()).Times(0);
-  DeviceRestrictionScheduleController controller{delegate, local_state};
+  EXPECT_CALL(*delegate_, ShowPostLogoutNotification()).Times(0);
+
+  // This call creates the controller which then does some startup time logic.
+  DeviceRestrictionScheduleControllerTest::SetUp();
 }
 
 // Verify that `ShowPostLogoutNotification` is not called during startup if the
 // `chromeos::prefs::kDeviceRestrictionScheduleShowPostLogoutNotification` pref
 // was not set.
-TEST(DeviceRestrictionScheduleController_ShowPostLogoutNotification,
-     PrefUnset_NotShown) {
-  TestingPrefServiceSimple local_state;
-  DeviceRestrictionScheduleController::RegisterLocalStatePrefs(
-      local_state.registry());
-  MockDelegate delegate;
-
+TEST_F(DeviceRestrictionScheduleControllerTestShowPostLogoutNotification,
+       PrefUnset_NotShown) {
   // Notification is not shown.
-  EXPECT_CALL(delegate, ShowPostLogoutNotification()).Times(0);
-  DeviceRestrictionScheduleController controller{delegate, local_state};
+  EXPECT_CALL(*delegate_, ShowPostLogoutNotification()).Times(0);
+
+  // This call creates the controller which then does some startup time logic.
+  DeviceRestrictionScheduleControllerTest::SetUp();
 }
 
 // Verify `RestrictionScheduleEndDay` & `RestrictionScheduleEndTime` functions.
@@ -467,11 +510,11 @@ TEST_F(DeviceRestrictionScheduleControllerTest, RestrictionScheduleEndDayTime) {
     std::u16string expected_time;
   } kTestData[] = {
     // Inside restriction schedule, verify end time.
-    {Day::kWednesday, 15, 0, u"Today",       u"9:00\u202fPM"},
+    {Day::kWednesday, 15, 0, u"today",       u"9:00\u202fPM"},
     {Day::kFriday,    19, 0, u"on Monday",   u"6:00\u202fAM"},
     {Day::kSaturday,  19, 0, u"on Monday",   u"6:00\u202fAM"},
-    {Day::kSunday,    19, 0, u"Tomorrow",    u"6:00\u202fAM"},
-    {Day::kMonday,     1, 0, u"Today",       u"6:00\u202fAM"},
+    {Day::kSunday,    19, 0, u"tomorrow",    u"6:00\u202fAM"},
+    {Day::kMonday,     1, 0, u"today",       u"6:00\u202fAM"},
     // Inside regular schedule, verify that empty strings are returned.
     {Day::kWednesday, 10, 0, u"", u""},
     {Day::kTuesday,   10, 0, u"", u""},
@@ -545,7 +588,7 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
         .WillOnce(EXPECT_TIME_STR(t.sunday_midnight_utc));
     AdvanceTime(base::Hours(9));  // Sunday 04:00
     Mock::VerifyAndClearExpectations(&observer_);
-    EXPECT_EQ(u"Tomorrow", controller_->RestrictionScheduleEndDay());
+    EXPECT_EQ(u"tomorrow", controller_->RestrictionScheduleEndDay());
 
     // Monday midnight the text changes to "Today".
     EXPECT_CALL(observer_, OnRestrictionScheduleMessageChanged())
@@ -553,8 +596,61 @@ TEST_F(DeviceRestrictionScheduleControllerTest,
         .WillOnce(EXPECT_TIME_STR(t.monday_midnight_utc));
     AdvanceTime(base::Days(1));  // Monday 04:00
     Mock::VerifyAndClearExpectations(&observer_);
-    EXPECT_EQ(u"Today", controller_->RestrictionScheduleEndDay());
+    EXPECT_EQ(u"today", controller_->RestrictionScheduleEndDay());
   }
+}
+
+// Verify that DST is handled properly (Winter -> Summer).
+TEST_F(DeviceRestrictionScheduleControllerTest, HandlingDST_WinterToSummer) {
+  // Override the local time zone to fix the DST transitions.
+  base::ScopedEnvironmentVariableOverride scoped_timezone(kTZ, "Europe/Berlin");
+  // DST starts on Sun, 31 Mar 2024 when the clock moves from 2:00 to 3:00.
+  SetTime("Sat 30 Mar 2024 12:00");
+
+  EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
+  UpdatePolicyPref(kPolicyJson);
+  Mock::VerifyAndClearExpectations(&observer_);
+
+  // Next regular period should start at Mon 06:00.
+  EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(false))
+      .Times(1)
+      .WillOnce(EXPECT_TIME_STR("Mon 1 Apr 2024 6:00"));
+
+  AdvanceTime(base::Days(2));
+  Mock::VerifyAndClearExpectations(&observer_);
+}
+
+// Verify that DST is handled properly (Summer -> Winter).
+TEST_F(DeviceRestrictionScheduleControllerTest, HandlingDST_SummerToWinter) {
+  // Override the local time zone to fix the DST transitions.
+  base::ScopedEnvironmentVariableOverride scoped_timezone(kTZ, "Europe/Berlin");
+  // DST ends on Sun, 27 Oct 2024 when the clock moves from 3:00 to 2:00.
+  SetTime("Sat 26 Oct 2024 12:00");
+
+  EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(true)).Times(1);
+  UpdatePolicyPref(kPolicyJson);
+  Mock::VerifyAndClearExpectations(&observer_);
+
+  // Next regular period should start at Mon 06:00.
+  EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(false))
+      .Times(1)
+      .WillOnce(EXPECT_TIME_STR("Mon 28 Oct 2024 6:00"));
+
+  AdvanceTime(base::Days(2));
+  Mock::VerifyAndClearExpectations(&observer_);
+}
+
+// Test that Run() is not called when the policy is not set and a login event
+// happens.
+TEST_F(DeviceRestrictionScheduleControllerTest, LoginEventDoesntTriggerRun) {
+  EXPECT_CALL(observer_, OnRestrictionScheduleStateChanged(_)).Times(0);
+
+  // Perform login.
+  ash::LoginState::Get()->SetLoggedInState(
+      ash::LoginState::LOGGED_IN_ACTIVE,
+      ash::LoginState::LOGGED_IN_USER_REGULAR);
+
+  Mock::VerifyAndClearExpectations(&observer_);
 }
 
 }  // namespace policy

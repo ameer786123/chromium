@@ -79,7 +79,8 @@ found in the LICENSE file.
         android:layout_height="wrap_content"
         android:layout_width="match_parent"
         android:layout_marginTop="@dimen/default_browser_bottom_sheet_steps_container_margin_top"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:focusable="true">
       <LinearLayout
           android:id="@+id/first_step"
           android:layout_width="wrap_content"
@@ -95,6 +96,7 @@ found in the LICENSE file.
             android:layout_height="@dimen/default_browser_bottom_sheet_step_number_width"
             android:background="@drawable/default_browser_promo_bottom_sheet_circle_background"
             android:gravity="center"
+            android:includeFontPadding="false"
             tools:ignore="HardcodedText"
             android:text="1"
             android:textAppearance="@style/TextAppearance.TextAccentMediumThick.Primary" />
@@ -123,6 +125,7 @@ found in the LICENSE file.
             android:layout_height="@dimen/default_browser_bottom_sheet_step_number_width"
             android:background="@drawable/default_browser_promo_bottom_sheet_circle_background"
             android:gravity="center"
+            android:includeFontPadding="false"
             tools:ignore="HardcodedText"
             android:text="2"
             android:textAppearance="@style/TextAppearance.TextAccentMediumThick.Primary" />
@@ -134,7 +137,8 @@ found in the LICENSE file.
             android:textAppearance="@style/TextAppearance.TextMedium.Primary"
             android:textAlignment="viewStart"
             android:focusable="false"
-            android:text="@string/educational_tip_default_browser_bottom_sheet_second_step"/>
+            android:text="@string/educational_tip_default_browser_bottom_sheet_second_step"
+            android:contentDescription="@string/educational_tip_default_browser_bottom_sheet_second_step_accessibility"/>
       </LinearLayout>
       <LinearLayout
           android:id="@+id/third_step"
@@ -151,6 +155,7 @@ found in the LICENSE file.
             android:layout_height="@dimen/default_browser_bottom_sheet_step_number_width"
             android:background="@drawable/default_browser_promo_bottom_sheet_circle_background"
             android:gravity="center"
+            android:includeFontPadding="false"
             tools:ignore="HardcodedText"
             android:text="3"
             android:textAppearance="@style/TextAppearance.TextAccentMediumThick.Primary" />
@@ -162,7 +167,8 @@ found in the LICENSE file.
             android:textAppearance="@style/TextAppearance.TextMedium.Primary"
             android:textAlignment="viewStart"
             android:focusable="false"
-            android:text="@string/educational_tip_default_browser_bottom_sheet_third_step"/>
+            android:text="@string/educational_tip_default_browser_bottom_sheet_third_step"
+            android:contentDescription="@string/educational_tip_default_browser_bottom_sheet_third_step_accessibility"/>
       </LinearLayout>
     </LinearLayout>
 

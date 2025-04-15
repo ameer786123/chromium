@@ -48,14 +48,16 @@ TEST(TrustStoreChromeTestNoFixture, ContainsCert) {
   std::unique_ptr<TrustStoreChrome> trust_store_chrome =
       TrustStoreChrome::CreateTrustStoreForTesting(
           base::span<const ChromeRootCertInfo>(kChromeRootCertList),
+          base::span(kEutlRootCertList),
           /*version=*/1);
 
   // Check every certificate in test_store.certs is included.
   CertificateList certs = CreateCertificateListFromFile(
       GetTestNetDataDirectory().AppendASCII("ssl/chrome_root_store"),
       "test_store.certs", X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
-  ASSERT_EQ(certs.size(), 2u);
+  ASSERT_EQ(certs.size(), 3u);
 
+  size_t eutl_certs = 0;
   for (const auto& cert : certs) {
     std::shared_ptr<const bssl::ParsedCertificate> parsed =
         ToParsedCertificate(*cert);
@@ -63,7 +65,15 @@ TEST(TrustStoreChromeTestNoFixture, ContainsCert) {
     bssl::CertificateTrust trust = trust_store_chrome->GetTrust(parsed.get());
     EXPECT_EQ(bssl::CertificateTrust::ForTrustAnchor().ToDebugString(),
               trust.ToDebugString());
+    // Count how many certs are on the EUTL.
+    bssl::CertificateTrust eutl_trust =
+        trust_store_chrome->eutl_trust_store()->GetTrust(parsed.get());
+    if (eutl_trust.type == bssl::CertificateTrustType::TRUSTED_ANCHOR) {
+      eutl_certs++;
+    }
   }
+  // There should be one cert from test_store.certs on the EUTL.
+  EXPECT_EQ(eutl_certs, 1);
 
   // Other certificates should not be included. Which test cert used here isn't
   // important as long as it isn't one of the certificates in the
@@ -80,10 +90,51 @@ TEST(TrustStoreChromeTestNoFixture, ContainsCert) {
             trust.ToDebugString());
 }
 
+TEST(TrustStoreChromeTestNoFixture, ContainsEutlCert) {
+  std::unique_ptr<TrustStoreChrome> trust_store_chrome =
+      TrustStoreChrome::CreateTrustStoreForTesting(
+          base::span<const ChromeRootCertInfo>(kChromeRootCertList),
+          base::span(kEutlRootCertList),
+          /*version=*/1);
+
+  // Check that the single certificate in test_additional.certs is included in
+  // the EUTL trust store, but not trusted for TLS connection establishment.
+  CertificateList certs = CreateCertificateListFromFile(
+      GetTestNetDataDirectory().AppendASCII("ssl/chrome_root_store"),
+      "test_additional.certs", X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
+  ASSERT_EQ(certs.size(), 1u);
+  std::shared_ptr<const bssl::ParsedCertificate> parsed =
+      ToParsedCertificate(*certs[0]);
+
+  bssl::CertificateTrust eutl_trust =
+      trust_store_chrome->eutl_trust_store()->GetTrust(parsed.get());
+  EXPECT_EQ(bssl::CertificateTrust::ForTrustAnchor().ToDebugString(),
+            eutl_trust.ToDebugString());
+
+  EXPECT_FALSE(trust_store_chrome->Contains(parsed.get()));
+  bssl::CertificateTrust trust = trust_store_chrome->GetTrust(parsed.get());
+  EXPECT_EQ(bssl::CertificateTrust::ForUnspecified().ToDebugString(),
+            trust.ToDebugString());
+
+  // Other certificates should not be included. Which test cert used here isn't
+  // important as long as it isn't one of the certificates in the
+  // chrome_root_store/test_store.certs.
+  scoped_refptr<X509Certificate> other_cert =
+      ImportCertFromFile(GetTestCertsDirectory(), "root_ca_cert.pem");
+  ASSERT_TRUE(other_cert);
+  std::shared_ptr<const bssl::ParsedCertificate> other_parsed =
+      ToParsedCertificate(*other_cert);
+  eutl_trust =
+      trust_store_chrome->eutl_trust_store()->GetTrust(other_parsed.get());
+  EXPECT_EQ(bssl::CertificateTrust::ForUnspecified().ToDebugString(),
+            eutl_trust.ToDebugString());
+}
+
 TEST(TrustStoreChromeTestNoFixture, Constraints) {
   std::unique_ptr<TrustStoreChrome> trust_store_chrome =
       TrustStoreChrome::CreateTrustStoreForTesting(
           base::span<const ChromeRootCertInfo>(kChromeRootCertList),
+          base::span(kEutlRootCertList),
           /*version=*/1);
 
   const std::string kUnconstrainedCertHash =
@@ -97,7 +148,7 @@ TEST(TrustStoreChromeTestNoFixture, Constraints) {
   CertificateList certs = CreateCertificateListFromFile(
       GetTestNetDataDirectory().AppendASCII("ssl/chrome_root_store"),
       "test_store.certs", X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
-  ASSERT_EQ(certs.size(), 2u);
+  ASSERT_EQ(certs.size(), 3u);
   for (const auto& cert : certs) {
     std::shared_ptr<const bssl::ParsedCertificate> parsed =
         ToParsedCertificate(*cert);
@@ -213,6 +264,7 @@ TEST(TrustStoreChromeTestNoFixture, OverrideConstraints) {
   std::unique_ptr<TrustStoreChrome> trust_store_chrome =
       TrustStoreChrome::CreateTrustStoreForTesting(
           std::move(root_cert_info),
+          /*eutl_certs=*/{},
           /*version=*/1, std::move(override_constraints));
 
   {
@@ -333,7 +385,7 @@ TEST(TrustStoreChromeTestNoFixture, ParseCommandLineConstraintsErrorHandling) {
                                 0x4b, 0xca, 0x05, 0x2b, 0xa3, 0xe4, 0xd1, 0xf4,
                                 0xd7, 0xa8, 0xd9, 0xc8, 0x8c, 0x55, 0xa1, 0xa9,
                                 0xab, 0x7c, 0xa0, 0xfa, 0xe2, 0xdc, 0x54, 0x73};
-    auto it = constraints.find(base::make_span(hash));
+    auto it = constraints.find(base::span(hash));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 1U);
     const auto& constraint1 = it->second[0];
@@ -348,7 +400,7 @@ TEST(TrustStoreChromeTestNoFixture, ParseCommandLineConstraintsErrorHandling) {
                                 0xf2, 0x6a, 0x6a, 0xc1, 0xf7, 0xb0, 0xa8, 0x6a,
                                 0x48, 0x2e, 0x2f, 0x3d, 0x32, 0x6b, 0xc9, 0x11,
                                 0xc9, 0x5d, 0x56, 0xff, 0x3d, 0x49, 0x06, 0xd5};
-    auto it = constraints.find(base::make_span(hash));
+    auto it = constraints.find(base::span(hash));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 1U);
 
@@ -368,7 +420,7 @@ TEST(TrustStoreChromeTestNoFixture, ParseCommandLineConstraintsErrorHandling) {
                             0x70, 0xec, 0x5e, 0x10, 0x6e, 0x27, 0x25, 0x92,
                             0xc2, 0xfb, 0xcb, 0xad, 0xf8, 0xdc, 0x57, 0x63};
 
-    auto it = constraints.find(base::make_span(hash));
+    auto it = constraints.find(base::span(hash));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 1U);
     const auto& constraint = it->second[0];
@@ -393,7 +445,7 @@ TEST(TrustStoreChromeTestNoFixture,
                           0x70, 0xec, 0x5e, 0x10, 0x6e, 0x27, 0x25, 0x92,
                           0xc2, 0xfb, 0xcb, 0xad, 0xf8, 0xdc, 0x57, 0x63};
 
-  auto it = constraints.find(base::make_span(hash));
+  auto it = constraints.find(base::span(hash));
   ASSERT_NE(it, constraints.end());
   ASSERT_EQ(it->second.size(), 1U);
   const auto& constraint = it->second[0];
@@ -423,7 +475,7 @@ TEST(TrustStoreChromeTestNoFixture,
         0x78, 0x4e, 0xca, 0xa8, 0xb9, 0xdf, 0xcc, 0x82, 0x65, 0x47, 0xf8,
         0x06, 0xf7, 0x59, 0xab, 0xd6, 0xb4, 0x48, 0x15, 0x82, 0xfc, 0x7e,
         0x37, 0x7d, 0xc3, 0xe6, 0xa0, 0xa9, 0x59, 0x02, 0x51, 0x26};
-    auto it = constraints.find(base::make_span(hash1));
+    auto it = constraints.find(base::span(hash1));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 1U);
     const auto& constraint1 = it->second[0];
@@ -444,7 +496,7 @@ TEST(TrustStoreChromeTestNoFixture,
         0xa7, 0xe0, 0xc7, 0x5d, 0x7f, 0x77, 0x2f, 0xcc, 0xf2, 0x6a, 0x6a,
         0xc1, 0xf7, 0xb0, 0xa8, 0x6a, 0x48, 0x2e, 0x2f, 0x3d, 0x32, 0x6b,
         0xc9, 0x11, 0xc9, 0x5d, 0x56, 0xff, 0x3d, 0x49, 0x06, 0xd5};
-    auto it = constraints.find(base::make_span(hash2));
+    auto it = constraints.find(base::span(hash2));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 2U);
 
@@ -477,7 +529,7 @@ TEST(TrustStoreChromeTestNoFixture,
         0x56, 0x8c, 0x8e, 0xf6, 0xb5, 0x26, 0xd1, 0x39, 0x4b, 0xca, 0x05,
         0x2b, 0xa3, 0xe4, 0xd1, 0xf4, 0xd7, 0xa8, 0xd9, 0xc8, 0x8c, 0x55,
         0xa1, 0xa9, 0xab, 0x7c, 0xa0, 0xfa, 0xe2, 0xdc, 0x54, 0x73};
-    auto it = constraints.find(base::make_span(hash3));
+    auto it = constraints.find(base::span(hash3));
     ASSERT_NE(it, constraints.end());
     ASSERT_EQ(it->second.size(), 1U);
     const auto& constraint1 = it->second[0];

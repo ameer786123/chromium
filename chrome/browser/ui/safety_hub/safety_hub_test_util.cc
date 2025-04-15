@@ -167,8 +167,7 @@ void AddExtension(const std::string& name,
           .SetID(kId)
           .Build();
   extensions::ExtensionPrefs::Get(profile)->OnExtensionInstalled(
-      extension.get(), extensions::Extension::State::ENABLED,
-      syncer::StringOrdinal(), "");
+      extension.get(), /*disable_reasons=*/{}, syncer::StringOrdinal(), "");
   extensions::ExtensionRegistry::Get(profile)->AddEnabled(extension);
 }
 
@@ -291,8 +290,7 @@ void UpdateSafetyHubServiceAsync(SafetyHubService* service) {
   service->RemoveObserver(test_observer.get());
 }
 
-void UpdateUnusedSitePermissionsServiceAsync(
-    UnusedSitePermissionsService* service) {
+void UpdateRevokedPermissionsServiceAsync(RevokedPermissionsService* service) {
   // Run until the checks complete for unused site permission revocation.
   UpdateSafetyHubServiceAsync(service);
 

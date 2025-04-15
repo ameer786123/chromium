@@ -13,7 +13,6 @@
 #include "base/syslog_logging.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #include "components/enterprise/browser/reporting/common_pref_names.h"
 #include "components/enterprise/browser/reporting/reporting_delegate_factory.h"
@@ -82,6 +81,8 @@ ReportScheduler::ReportScheduler(CreateParams params)
       base::BindRepeating(&ReportScheduler::GenerateAndUploadReport,
                           weak_ptr_factory_.GetWeakPtr()));
   RegisterPrefObserver();
+
+  delegate_->OnInitializationCompleted();
 }
 
 ReportScheduler::~ReportScheduler() = default;
@@ -150,7 +151,7 @@ void ReportScheduler::OnReportEnabledPrefChanged() {
   // For Chrome OS, it needn't register the cloud policy client here. The
   // |dm_token| and |client_id| should have already existed after the client is
   // initialized, and will keep valid during whole life-cycle.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   if (!SetupBrowserPolicyClientRegistration()) {
     Stop();
     return;
@@ -202,11 +203,10 @@ bool ReportScheduler::SetupBrowserPolicyClientRegistration() {
     client_id = delegate_->GetProfileClientId();
   } else {
     // Get token for browser reporting
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     client_id = policy::BrowserDMTokenStorage::Get()->RetrieveClientId();
 #else
-    NOTREACHED_IN_MIGRATION();
-    return true;
+    NOTREACHED();
 #endif
   }
   if (!dm_token.is_valid() || client_id.empty()) {
@@ -277,6 +277,7 @@ void ReportScheduler::OnReportGenerated(ReportRequestQueue requests) {
         std::make_unique<ReportUploader>(cloud_policy_client_, kMaximumRetry);
   }
   RecordUploadTrigger(active_trigger_);
+  // TODO(crbug.com/399164647): Add cookie to upload request for signals reports
   report_uploader_->SetRequestAndUpload(
       TriggerToReportType(active_trigger_), std::move(requests),
       base::BindOnce(&ReportScheduler::OnReportUploaded,
@@ -325,6 +326,15 @@ void ReportScheduler::OnReportUploaded(ReportUploader::ReportStatus status) {
     if (pending_triggers_ & kTriggerManual)
       pending_triggers_ -= kTriggerManual;
   }
+
+  // TODO(crbug.com/402486791): Add Security signals report trigger to this
+  // check. Full report from timer and manual trigger contain security signals
+  // as well (if required and allowed), in form delegate to refresh the signals
+  // report timer as well.
+  if ((active_trigger_ == kTriggerManual || active_trigger_ == kTriggerTimer)) {
+    delegate_->OnSecuritySignalsUploaded();
+  }
+
   active_trigger_ = kTriggerNone;
   RunPendingTriggers();
 }
@@ -393,8 +403,7 @@ ReportType ReportScheduler::TriggerToReportType(
     ReportScheduler::ReportTrigger trigger) {
   switch (trigger) {
     case ReportScheduler::kTriggerNone:
-      NOTREACHED_IN_MIGRATION();
-      [[fallthrough]];
+      NOTREACHED();
     case ReportScheduler::kTriggerTimer:
     case ReportScheduler::kTriggerManual:
       return full_report_type_;
@@ -406,7 +415,7 @@ ReportType ReportScheduler::TriggerToReportType(
 }
 
 policy::DMToken ReportScheduler::GetDMToken() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   return policy::DMToken::CreateValidToken(cloud_policy_client_->dm_token());
 #else
   if (profile_request_generator_) {

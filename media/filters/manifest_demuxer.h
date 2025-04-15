@@ -90,7 +90,7 @@ class MEDIA_EXPORT ManifestDemuxerEngineHost {
   // Reset the parser state in chunk demuxer.
   virtual void ResetParserState(std::string_view role,
                                 base::TimeDelta end,
-                                base::TimeDelta* offset);
+                                base::TimeDelta* offset) = 0;
 
   // Allow seeking from within an implementation.
   virtual void RequestSeek(base::TimeDelta time) = 0;
@@ -167,6 +167,11 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
 
     // Stop demuxing and clean up pending CBs.
     virtual void Stop() = 0;
+
+    // Handle track changes. Only one audio or video track is allowed to be
+    // enabled at once.
+    virtual void SelectVideoVariant(const MediaTrack::Id&) = 0;
+    virtual void SelectAudioRendition(const MediaTrack::Id&) = 0;
   };
 
   // ManifestDemuxer takes and keeps ownership of `impl` for the lifetime of
@@ -269,6 +274,12 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
     raw_ptr<DemuxerStream> stream_;
   };
 
+  void OnChunkDemuxerTracksChangeComplete(
+      DemuxerStream::Type type,
+      std::optional<MediaTrack::Id> track_id,
+      TrackChangeCB change_completed_cb,
+      const std::vector<DemuxerStream*>& streams);
+
   void OnChunkDemuxerInitialized(PipelineStatus init_status);
   void OnChunkDemuxerOpened();
   void OnProgress();
@@ -282,13 +293,6 @@ class MEDIA_EXPORT ManifestDemuxer : public Demuxer, ManifestDemuxerEngineHost {
   void OnDemuxerStreamRead(DemuxerStream::ReadCB wrapped_read_cb,
                            DemuxerStream::Status status,
                            DemuxerStream::DecoderBufferVector buffers);
-
-  // Maps ChunkDemuxerStream instances to our internal ones for track changes.
-  void MapDemuxerStreams(TrackChangeCB cb,
-                         const std::vector<DemuxerStream*>&);
-
-  std::vector<MediaTrack::Id> MapTrackIds(
-      const std::vector<MediaTrack::Id>& track_ids);
 
   // Helper for the `Seek` call, so that returning from an event when a seek
   // is pending can continue the seek process.

@@ -14,7 +14,6 @@
 #include "third_party/blink/public/common/cache_storage/cache_storage_utils.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/cache_storage/cache_storage.mojom-blink.h"
-#include "third_party/blink/renderer/bindings/core/v8/callback_promise_adapter.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
@@ -173,7 +172,6 @@ class Cache::BarrierCallbackForPutResponse final
         cache_(cache),
         method_name_(method_name),
         request_list_(request_list),
-        exception_context_(exception_context),
         trace_id_(trace_id),
         response_list_(request_list_.size()),
         blob_list_(request_list_.size()) {
@@ -204,11 +202,9 @@ class Cache::BarrierCallbackForPutResponse final
     num_complete_ += 1;
 
     if (num_complete_ == request_list_.size()) {
-      ScriptState* script_state = resolver_->GetScriptState();
-      ExceptionState exception_state(script_state->GetIsolate(),
-                                     exception_context_);
+      v8::Isolate* isolate = resolver_->GetScriptState()->GetIsolate();
       cache_->PutImpl(resolver_, method_name_, request_list_, response_list_,
-                      blob_list_, exception_state, trace_id_);
+                      blob_list_, PassThroughException(isolate), trace_id_);
       blob_list_.clear();
       stopped_ = true;
     }
@@ -271,7 +267,6 @@ class Cache::BarrierCallbackForPutResponse final
   Member<Cache> cache_;
   const String method_name_;
   const HeapVector<Member<Request>> request_list_;
-  const ExceptionContext exception_context_;
   const int64_t trace_id_;
   HeapVector<Member<Response>> response_list_;
   WTF::Vector<scoped_refptr<BlobDataHandle>> blob_list_;
@@ -466,7 +461,7 @@ class Cache::BarrierCallbackForPutComplete final
                                       method_name_ + " was aborted");
   }
 
-  virtual void Trace(Visitor* visitor) const {
+  void Trace(Visitor* visitor) const {
     visitor->Trace(cache_);
     visitor->Trace(resolver_);
   }
@@ -1094,7 +1089,7 @@ ScriptPromise<IDLUndefined> Cache::AddAllImpl(
     auto* on_reject =
         MakeGarbageCollected<FetchRejectHandler>(barrier_callback);
     scoped_fetcher_->Fetch(script_state, info, init, exception_state)
-        .ThenTyped(script_state, on_resolve, on_reject);
+        .Then(script_state, on_resolve, on_reject);
   }
 
   return promise;

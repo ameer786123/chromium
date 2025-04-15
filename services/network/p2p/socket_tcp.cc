@@ -30,18 +30,19 @@
 #include "services/network/proxy_resolving_client_socket_factory.h"
 #include "services/network/public/cpp/p2p_param_traits.h"
 #include "third_party/webrtc/media/base/rtp_utils.h"
+#include "third_party/webrtc/rtc_base/time_utils.h"
 #include "url/gurl.h"
 
 namespace network {
 namespace {
 
-typedef uint16_t PacketLength;
-const int kPacketHeaderSize = sizeof(PacketLength);
-const int kTcpReadBufferSize = 4096;
-const int kPacketLengthOffset = 2;
-const int kTurnChannelDataHeaderSize = 4;
-const int kTcpRecvSocketBufferSize = 128 * 1024;
-const int kTcpSendSocketBufferSize = 128 * 1024;
+using PacketLength = uint16_t;
+constexpr size_t kPacketHeaderSize = sizeof(PacketLength);
+constexpr int kTcpReadBufferSize = 4096;
+constexpr int kPacketLengthOffset = 2;
+constexpr int kTurnChannelDataHeaderSize = 4;
+constexpr int kTcpRecvSocketBufferSize = 128 * 1024;
+constexpr int kTcpSendSocketBufferSize = 128 * 1024;
 
 bool IsTlsClientSocket(P2PSocketType type) {
   return (type == P2P_SOCKET_STUN_TLS_CLIENT || type == P2P_SOCKET_TLS_CLIENT);
@@ -252,8 +253,8 @@ bool P2PSocketTcpBase::OnPacket(base::span<const uint8_t> data) {
 
   auto packet = mojom::P2PReceivedPacket::New(
       data, remote_address_.ip_address,
-      base::TimeTicks() + base::Nanoseconds(rtc::TimeNanos()),
-      rtc::EcnMarking::kNotEct);
+      base::TimeTicks() + base::Nanoseconds(webrtc::TimeNanos()),
+      webrtc::EcnMarking::kNotEct);
 
   std::vector<mojom::P2PReceivedPacketPtr> received_packets;
   received_packets.push_back(std::move(packet));
@@ -304,8 +305,6 @@ bool P2PSocketTcpBase::HandleWriteResult(int result) {
   DCHECK(write_buffer_.buffer.get());
 
   if (result < 0) {
-    ReportSocketError(result, "WebRTC.ICE.TcpSocketWriteErrorCode");
-
     LOG(ERROR) << "Error when sending data in TCP socket: " << result;
     OnError();
     return false;
@@ -313,7 +312,7 @@ bool P2PSocketTcpBase::HandleWriteResult(int result) {
 
   write_buffer_.buffer->DidConsume(result);
   if (write_buffer_.buffer->BytesRemaining() == 0) {
-    int64_t send_time_ms = rtc::TimeMillis();
+    int64_t send_time_ms = webrtc::TimeMillis();
     client_->SendComplete(
         P2PSendPacketMetrics(0, write_buffer_.rtc_packet_id, send_time_ms));
     if (write_queue_.empty()) {
@@ -451,7 +450,7 @@ bool P2PSocketTcp::ProcessInput(base::span<const uint8_t> input,
 
 void P2PSocketTcp::DoSend(const net::IPEndPoint& to,
                           base::span<const uint8_t> data,
-                          const rtc::PacketOptions& options) {
+                          const webrtc::AsyncSocketPacketOptions& options) {
   const size_t buffer_size = kPacketHeaderSize + data.size();
   SendBuffer send_buffer(
       options.packet_id,
@@ -467,10 +466,10 @@ void P2PSocketTcp::DoSend(const net::IPEndPoint& to,
     CHECK_EQ(writer.remaining(), 0u);
   }
 
-  cricket::ApplyPacketOptions(
+  webrtc::ApplyPacketOptions(
       send_buffer.buffer->bytes() + kPacketHeaderSize,
       send_buffer.buffer->BytesRemaining() - kPacketHeaderSize,
-      options.packet_time_params, rtc::TimeMicros());
+      options.packet_time_params, webrtc::TimeMicros());
 
   WriteOrQueue(send_buffer);
 }
@@ -515,20 +514,16 @@ bool P2PSocketStunTcp::ProcessInput(base::span<const uint8_t> input,
 
 void P2PSocketStunTcp::DoSend(const net::IPEndPoint& to,
                               base::span<const uint8_t> data,
-                              const rtc::PacketOptions& options) {
+                              const webrtc::AsyncSocketPacketOptions& options) {
   // Each packet is expected to have header (STUN/TURN ChannelData), where
   // header contains message type and and length of message.
-  if (data.size() < kPacketHeaderSize + kPacketLengthOffset) {
-    NOTREACHED();
-  }
+  CHECK_GE(data.size(), kPacketHeaderSize + kPacketLengthOffset);
 
   int pad_bytes;
   size_t expected_len = GetExpectedPacketSize(data, &pad_bytes);
 
   // Accepts only complete STUN/TURN packets.
-  if (data.size() != expected_len) {
-    NOTREACHED();
-  }
+  CHECK_EQ(data.size(), expected_len);
 
   // Add any pad bytes to the total size.
   int buffer_size = data.size() + pad_bytes;
@@ -540,20 +535,20 @@ void P2PSocketStunTcp::DoSend(const net::IPEndPoint& to,
           buffer_size));
   memcpy(send_buffer.buffer->data(), data.data(), data.size());
 
-  cricket::ApplyPacketOptions(send_buffer.buffer->bytes(), data.size(),
-                              options.packet_time_params, rtc::TimeMicros());
+  webrtc::ApplyPacketOptions(send_buffer.buffer->bytes(), data.size(),
+                             options.packet_time_params, webrtc::TimeMicros());
 
   if (pad_bytes) {
-    char padding[4] = {0};
+    char padding[4] = {};
     DCHECK_LE(pad_bytes, 4);
     memcpy(send_buffer.buffer->data() + data.size(), padding, pad_bytes);
   }
 
   // WriteOrQueue may free the memory, so dump it first.
-  delegate_->DumpPacket(base::make_span(reinterpret_cast<const uint8_t*>(
-                                            send_buffer.buffer->data()),
-                                        data.size()),
-                        false);
+  delegate_->DumpPacket(
+      base::span(reinterpret_cast<const uint8_t*>(send_buffer.buffer->data()),
+                 data.size()),
+      false);
 
   WriteOrQueue(send_buffer);
 }

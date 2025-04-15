@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.searchwidget;
 
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -12,25 +13,25 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.Instrumentation.ActivityMonitor;
 import android.app.PendingIntent;
 import android.view.KeyEvent;
 
+import androidx.core.content.ContextCompat;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.hamcrest.Matchers;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
@@ -42,18 +43,16 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.CriteriaNotSatisfiedException;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.app.metrics.LaunchCauseMetrics;
 import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.locale.LocaleManagerDelegate;
+import org.chromium.chrome.browser.night_mode.ChromeNightModeTestUtils;
 import org.chromium.chrome.browser.omnibox.LocationBarCoordinator;
 import org.chromium.chrome.browser.omnibox.UrlBar;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteController;
@@ -65,13 +64,17 @@ import org.chromium.chrome.browser.search_engines.SearchEnginePromoType;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.searchwidget.SearchActivity.SearchActivityDelegate;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.IntentOrigin;
+import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.ResolutionType;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
+import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
+import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
@@ -172,7 +175,6 @@ public class SearchActivityTest {
     // Needed for CT connection cleanup.
     public @Rule CustomTabActivityTestRule mCustomTabActivityTestRule =
             new CustomTabActivityTestRule();
-    public @Rule JniMocker mJniMocker = new JniMocker();
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     private @Mock AutocompleteController.Natives mAutocompleteControllerJniMock;
@@ -185,10 +187,9 @@ public class SearchActivityTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         doReturn(true).when(mHandler).isVoiceSearchEnabled();
 
-        mJniMocker.mock(AutocompleteControllerJni.TEST_HOOKS, mAutocompleteControllerJniMock);
+        AutocompleteControllerJni.setInstanceForTesting(mAutocompleteControllerJniMock);
         doReturn(mAutocompleteController).when(mAutocompleteControllerJniMock).getForProfile(any());
 
         doAnswer(
@@ -205,6 +206,13 @@ public class SearchActivityTest {
 
         mTestDelegate = new TestDelegate();
         SearchActivity.setDelegateForTests(mTestDelegate);
+    }
+
+    @After
+    public void tearDown() {
+        AutocompleteControllerJni.setInstanceForTesting(null);
+        ThreadUtils.runOnUiThreadBlocking(
+                ChromeNightModeTestUtils::tearDownNightModeAfterChromeActivityDestroyed);
     }
 
     private AutocompleteMatch buildSimpleAutocompleteMatch(String url) {
@@ -270,7 +278,7 @@ public class SearchActivityTest {
         mOmnibox.checkSuggestionsShown();
 
         // Type in anything.
-        mOmnibox.typeText("text", /* commit= */ false);
+        mOmnibox.typeText("text", /* execute= */ false);
         mOmnibox.checkText(Matchers.equalTo("text"), null);
 
         // Clear omnibox focus. This should always clear uncommitted text and hide suggestions.
@@ -366,12 +374,6 @@ public class SearchActivityTest {
         verify(mHandler)
                 .startVoiceRecognition(
                         VoiceRecognitionHandler.VoiceInteractionSource.SEARCH_WIDGET);
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return WarmupManager.getInstance().hasSpareWebContents()
-                            || WarmupManager.getInstance()
-                                    .hasSpareTab(ProfileManager.getLastUsedRegularProfile());
-                });
     }
 
     @Test
@@ -530,15 +532,116 @@ public class SearchActivityTest {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     locationBarCoordinator.onUrlChangedForTesting();
-                    Assert.assertTrue(urlBar.getText().toString().isEmpty());
+                    assertTrue(urlBar.getText().toString().isEmpty());
                 });
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     locationBarCoordinator.clearOmniboxFocus();
                     locationBarCoordinator.onUrlChangedForTesting();
-                    Assert.assertTrue(urlBar.getText().toString().isEmpty());
+                    assertTrue(urlBar.getText().toString().isEmpty());
                 });
+    }
+
+    @Test
+    @MediumTest
+    public void testLaunchIncognitoSearchActivity() {
+        mActivityTestRule.startMainActivityOnBlankPage();
+        SearchActivity searchActivity =
+                ActivityTestUtils.waitForActivity(
+                        InstrumentationRegistry.getInstrumentation(),
+                        SearchActivity.class,
+                        () -> {
+                            SearchActivityClientImpl client =
+                                    new SearchActivityClientImpl(
+                                            mActivityTestRule.getActivity(), IntentOrigin.HUB);
+                            client.requestOmniboxForResult(
+                                    client.newIntentBuilder()
+                                            .setPageUrl(new GURL(UrlConstants.NTP_NON_NATIVE_URL))
+                                            .setIncognito(true)
+                                            .setResolutionType(ResolutionType.SEND_TO_CALLER)
+                                            .build());
+                        });
+        assertTrue(searchActivity.getProfileSupplierForTesting().get().isOffTheRecord());
+    }
+
+    @Test
+    @SmallTest
+    public void statusAndNavigationBarColor_lightMode() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> ChromeNightModeTestUtils.setUpNightModeForChromeActivity(false));
+        SearchActivity searchActivity = startSearchActivity();
+        assertStatusAndNavigationBarColors(
+                searchActivity, getExpectedOmniboxBackgroundColor(searchActivity));
+    }
+
+    @Test
+    @SmallTest
+    public void statusAndNavigationBarColor_darkMode() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> ChromeNightModeTestUtils.setUpNightModeForChromeActivity(true));
+        SearchActivity searchActivity = startSearchActivity();
+        assertStatusAndNavigationBarColors(
+                searchActivity, getExpectedOmniboxBackgroundColor(searchActivity));
+    }
+
+    @Test
+    @SmallTest
+    public void statusAndNavigationBarColor_incognito() {
+        mActivityTestRule.startMainActivityOnBlankPage();
+        SearchActivity searchActivity =
+                ActivityTestUtils.waitForActivity(
+                        InstrumentationRegistry.getInstrumentation(),
+                        SearchActivity.class,
+                        () -> {
+                            SearchActivityClientImpl client =
+                                    new SearchActivityClientImpl(
+                                            mActivityTestRule.getActivity(), IntentOrigin.HUB);
+                            client.requestOmniboxForResult(
+                                    client.newIntentBuilder()
+                                            .setPageUrl(new GURL(UrlConstants.NTP_NON_NATIVE_URL))
+                                            .setIncognito(true)
+                                            .setResolutionType(ResolutionType.SEND_TO_CALLER)
+                                            .build());
+                        });
+        assertStatusAndNavigationBarColors(
+                searchActivity, searchActivity.getColor(R.color.omnibox_dropdown_bg_incognito));
+    }
+
+    private void assertStatusAndNavigationBarColors(
+            SearchActivity searchActivity, int expectedColor) {
+        EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper =
+                searchActivity.getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper();
+
+        // Assert status bar color.
+        if (EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled()) {
+            assertColorsEqual(expectedColor, edgeToEdgeSystemBarColorHelper.getStatusBarColor());
+        } else {
+            assertColorsEqual(expectedColor, searchActivity.getWindow().getStatusBarColor());
+        }
+
+        // Assert navigation bar color.
+        assertColorsEqual(expectedColor, edgeToEdgeSystemBarColorHelper.getNavigationBarColor());
+    }
+
+    /**
+     * Returns the expected background color for the omnibox in {@code searchActivity}.
+     *
+     * @param searchActivity The {@link SearchActivity} to use as the context.
+     * @return The expected background color for the omnibox in {@code searchActivity}.
+     */
+    private int getExpectedOmniboxBackgroundColor(SearchActivity searchActivity) {
+        return ContextCompat.getColor(searchActivity, R.color.omnibox_suggestion_dropdown_bg);
+    }
+
+    private void assertColorsEqual(int expected, int actual) {
+        String message =
+                String.format("Expected %s but got %s", intToHex(expected), intToHex(actual));
+        Assert.assertEquals(message, expected, actual);
+    }
+
+    private String intToHex(int color) {
+        return String.format("#%06X", (0xFFFFFF & color));
     }
 
     private SearchActivity startSearchActivity() {
@@ -566,13 +669,13 @@ public class SearchActivityTest {
         try {
             SearchWidgetProvider.createIntent(instrumentation.getContext(), isVoiceSearch).send();
         } catch (PendingIntent.CanceledException e) {
-            Assert.assertTrue("Intent canceled", false);
+            assertTrue("Intent canceled", false);
         }
         Activity searchActivity =
                 instrumentation.waitForMonitorWithTimeout(
                         searchMonitor, CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL);
         Assert.assertNotNull("Activity didn't start", searchActivity);
-        Assert.assertTrue("Wrong activity started", searchActivity instanceof SearchActivity);
+        assertTrue("Wrong activity started", searchActivity instanceof SearchActivity);
         instrumentation.removeMonitor(searchMonitor);
         mOmnibox = new OmniboxTestUtils(searchActivity);
         return (SearchActivity) searchActivity;
@@ -593,27 +696,5 @@ public class SearchActivityTest {
                     Criteria.checkThat(tab.getUrl().getSpec(), Matchers.is(expectedUrl));
                 });
         mActivityTestRule.setActivity(cta);
-    }
-
-    @SuppressLint("SetTextI18n")
-    private void setUrlBarText(final Activity activity, final String url) {
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    UrlBar urlBar = activity.findViewById(R.id.url_bar);
-                    try {
-                        Criteria.checkThat(
-                                "UrlBar not focusable", urlBar.isFocusable(), Matchers.is(true));
-                        Criteria.checkThat(
-                                "UrlBar does not have focus", urlBar.hasFocus(), Matchers.is(true));
-                    } catch (CriteriaNotSatisfiedException ex) {
-                        urlBar.requestFocus();
-                        throw ex;
-                    }
-                });
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    UrlBar urlBar = activity.findViewById(R.id.url_bar);
-                    urlBar.setText(url);
-                });
     }
 }

@@ -76,8 +76,9 @@ IN_PROC_BROWSER_TEST_F(LocalFilesMigrationDialogTest, ShowDialog_Dismiss) {
   base::MockCallback<StartMigrationCallback> mock_cb;
   EXPECT_CALL(mock_cb, Run).Times(0);
   const base::TimeDelta delay = base::Hours(1);
-  ASSERT_TRUE(LocalFilesMigrationDialog::Show(
-      CloudProvider::kOneDrive, base::Time::Now() + delay, mock_cb.Get()));
+  ASSERT_TRUE(LocalFilesMigrationDialog::Show(MigrationDestination::kOneDrive,
+                                              base::Time::Now() + delay,
+                                              mock_cb.Get()));
 
   // Wait for chrome://local-files-migration to load.
   navigation_observer_dialog.Wait();
@@ -100,23 +101,41 @@ IN_PROC_BROWSER_TEST_F(LocalFilesMigrationDialogTest, ShowDialog_Dismiss) {
   views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window);
   ASSERT_TRUE(widget->IsStackedAbove(dialog->GetDialogWindowForTesting()));
 
-  // Show dialog again - the same instance should just be shown on top.
-  ASSERT_FALSE(LocalFilesMigrationDialog::Show(
-      CloudProvider::kOneDrive, base::Time::Now() + delay, base::DoNothing()));
-  ASSERT_FALSE(widget->IsStackedAbove(dialog->GetDialogWindowForTesting()));
+  content::TestNavigationObserver navigation_observer_dialog_2(
+      (GURL(chrome::kChromeUILocalFilesMigrationURL)));
+  navigation_observer_dialog_2.StartWatchingNewWebContents();
+
+  // Show dialog again - should be shown on top.
+  ASSERT_TRUE(LocalFilesMigrationDialog::Show(MigrationDestination::kOneDrive,
+                                              base::Time::Now() + delay,
+                                              base::DoNothing()));
+
+  // Wait for chrome://local-files-migration to load.
+  navigation_observer_dialog_2.Wait();
+  ASSERT_TRUE(navigation_observer_dialog_2.last_navigation_succeeded());
+  content::WebContents* web_contents_2 = GetDialogWebContents();
+  EXPECT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(
+               web_contents_2,
+               "!!document.querySelector('local-files-migration-dialog')")
+        .ExtractBool();
+  }));
+
+  auto* dialog_2 = LocalFilesMigrationDialog::GetDialog();
+  EXPECT_TRUE(dialog_2);
+
+  ASSERT_FALSE(widget->IsStackedAbove(dialog_2->GetDialogWindowForTesting()));
 
   // Click the OK button and wait for the dialog to close.
-  content::WebContentsDestroyedWatcher watcher(web_contents);
+  content::WebContentsDestroyedWatcher watcher(web_contents_2);
   EXPECT_TRUE(
-      content::ExecJs(web_contents,
+      content::ExecJs(web_contents_2,
                       "document.querySelector('local-files-migration-dialog')"
                       ".$('#dismiss-button').click()"));
   watcher.Wait();
 
   histogram_tester_.ExpectBucketCount(
-      "Enterprise.SkyVault.Migration.OneDrive.DialogShown", true, 1);
-  histogram_tester_.ExpectBucketCount(
-      "Enterprise.SkyVault.Migration.OneDrive.DialogShown", false, 1);
+      "Enterprise.SkyVault.Migration.OneDrive.DialogShown", true, 2);
   histogram_tester_.ExpectUniqueSample(
       "Enterprise.SkyVault.Migration.OneDrive.DialogAction",
       DialogAction::kUploadLater, 1);
@@ -135,7 +154,7 @@ IN_PROC_BROWSER_TEST_F(LocalFilesMigrationDialogTest, ShowDialog_UploadNow) {
   base::MockCallback<StartMigrationCallback> mock_cb;
   EXPECT_CALL(mock_cb, Run).Times(1);
   ASSERT_TRUE(LocalFilesMigrationDialog::Show(
-      CloudProvider::kGoogleDrive, base::Time::Now() + base::Hours(1),
+      MigrationDestination::kGoogleDrive, base::Time::Now() + base::Hours(1),
       mock_cb.Get()));
 
   // Wait for chrome://local-files-migration to load.
@@ -154,7 +173,7 @@ IN_PROC_BROWSER_TEST_F(LocalFilesMigrationDialogTest, ShowDialog_UploadNow) {
   EXPECT_TRUE(
       content::ExecJs(web_contents,
                       "document.querySelector('local-files-migration-dialog')"
-                      ".$('#upload-now-button').click()"));
+                      ".$('#upload-or-delete-now-button').click()"));
   watcher.Wait();
 
   histogram_tester_.ExpectBucketCount(

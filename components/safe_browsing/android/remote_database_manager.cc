@@ -165,15 +165,15 @@ bool RemoteSafeBrowsingDatabaseManager::CheckBrowseUrl(
 bool RemoteSafeBrowsingDatabaseManager::CheckDownloadUrl(
     const std::vector<GURL>& url_chain,
     Client* client) {
-  NOTREACHED_IN_MIGRATION();
+  // Omit this blocklist check on Android. The overhead for importing a new
+  // blocklist on Android makes this prohibitive.
   return true;
 }
 
 bool RemoteSafeBrowsingDatabaseManager::CheckExtensionIDs(
     const std::set<std::string>& extension_ids,
     Client* client) {
-  NOTREACHED_IN_MIGRATION();
-  return true;
+  NOTREACHED();
 }
 
 void RemoteSafeBrowsingDatabaseManager::CheckUrlForHighConfidenceAllowlist(
@@ -244,9 +244,12 @@ AsyncMatch RemoteSafeBrowsingDatabaseManager::CheckCsdAllowlistUrl(
 void RemoteSafeBrowsingDatabaseManager::MatchDownloadAllowlistUrl(
     const GURL& url,
     base::OnceCallback<void(bool)> callback) {
-  NOTREACHED_IN_MIGRATION();
+  DCHECK(ui_task_runner()->RunsTasksInCurrentSequence());
+  // The allowlist check is not yet implemented.
+  // TODO(crbug.com/397407934): Implement checking UrlCsdDownloadAllowlist.
   ui_task_runner()->PostTask(FROM_HERE,
-                             base::BindOnce(std::move(callback), true));
+                             base::BindOnce(std::move(callback),
+                                            /*is_allowlisted=*/false));
 }
 
 safe_browsing::ThreatSource

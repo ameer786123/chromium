@@ -13,34 +13,34 @@ cargo_crate("lib") {
   epoch = "0.8"
   crate_type = "rlib"
   crate_root =
-      "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/lib.rs"
+      "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/lib.rs"
   sources = [
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/bernoulli.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/distribution.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/float.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/integer.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/mod.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/other.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/slice.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/uniform.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/utils.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/weighted.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/distributions/weighted_index.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/lib.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/prelude.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rng.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/adapter/mod.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/adapter/read.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/adapter/reseeding.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/mock.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/mod.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/small.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/std.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/thread.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/xoshiro128plusplus.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/rngs/xoshiro256plusplus.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/seq/index.rs",
-    "//third_party/rust/chromium_crates_io/vendor/rand-0.8.5/src/seq/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/bernoulli.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/distribution.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/float.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/integer.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/other.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/slice.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/uniform.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/utils.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/weighted.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/distributions/weighted_index.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/lib.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/prelude.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rng.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/adapter/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/adapter/read.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/adapter/reseeding.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/mock.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/mod.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/small.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/std.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/thread.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/xoshiro128plusplus.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/rngs/xoshiro256plusplus.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/seq/index.rs",
+    "//third_party/rust/chromium_crates_io/vendor/rand-v0_8/src/seq/mod.rs",
   ]
   inputs = []
 
@@ -51,6 +51,7 @@ cargo_crate("lib") {
   cargo_pkg_name = "rand"
   cargo_pkg_description =
       "Random number generators and other randomness functionality."
+  library_configs -= [ "//build/config/coverage:default_coverage" ]
   library_configs -= [ "//build/config/compiler:chromium_code" ]
   library_configs += [ "//build/config/compiler:no_chromium_code" ]
   executable_configs -= [ "//build/config/compiler:chromium_code" ]
@@ -66,11 +67,15 @@ cargo_crate("lib") {
   }
   features = [
     "alloc",
+    "default",
     "getrandom",
     "libc",
     "rand_chacha",
     "std",
     "std_rng",
+  ]
+  rustflags = [
+    "--cap-lints=allow",  # Suppress all warnings in crates.io crates
   ]
 
   testonly = true

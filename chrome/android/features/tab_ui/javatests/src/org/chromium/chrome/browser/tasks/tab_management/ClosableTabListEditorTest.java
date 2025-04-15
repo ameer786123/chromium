@@ -18,7 +18,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
 import org.chromium.base.SysUtils;
@@ -31,6 +32,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_ui.RecyclerViewPosition;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -56,6 +58,8 @@ public class ClosableTabListEditorTest {
     public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
             new BlankCTATabInitialStateRule(sActivityTestRule, false);
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Mock private Callback<RecyclerViewPosition> mSetRecyclerViewPosition;
     @Mock private TabListEditorCoordinator.NavigationProvider mNavigationProvider;
     @Mock private ModalDialogManager mModalDialogManager;
@@ -74,7 +78,6 @@ public class ClosableTabListEditorTest {
 
     @Before
     public void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
         mTabModelSelector = sActivityTestRule.getActivity().getTabModelSelector();
         mParentView = (ViewGroup) sActivityTestRule.getActivity().findViewById(R.id.coordinator);
         mSnackbarManager = sActivityTestRule.getActivity().getSnackbarManager();
@@ -103,8 +106,9 @@ public class ClosableTabListEditorTest {
                                     TabProperties.TabActionState.CLOSABLE,
                                     /* gridCardOnClickListenerProvider= */ null,
                                     mModalDialogManager,
-                                    /* desktopWindowStateProvider= */ null,
-                                    mEdgeToEdgeSupplier);
+                                    /* desktopWindowStateManager= */ null,
+                                    mEdgeToEdgeSupplier,
+                                    CreationMode.FULL_SCREEN);
 
                     mTabListEditorController = mTabListEditorCoordinator.getController();
                     mTabListEditorLayout =

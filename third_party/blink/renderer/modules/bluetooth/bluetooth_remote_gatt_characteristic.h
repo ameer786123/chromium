@@ -32,11 +32,6 @@ class ScriptState;
 // BluetoothRemoteGATTCharacteristic represents a GATT Characteristic, which is
 // a basic data element that provides further information about a peripheral's
 // service.
-//
-// Callbacks providing WebBluetoothRemoteGATTCharacteristicInit objects are
-// handled by CallbackPromiseAdapter templatized with this class. See this
-// class's "Interface required by CallbackPromiseAdapter" section and the
-// CallbackPromiseAdapter class comments.
 class BluetoothRemoteGATTCharacteristic final
     : public EventTarget,
       public ActiveScriptWrappable<BluetoothRemoteGATTCharacteristic>,
@@ -50,9 +45,6 @@ class BluetoothRemoteGATTCharacteristic final
       mojom::blink::WebBluetoothRemoteGATTCharacteristicPtr,
       BluetoothRemoteGATTService*,
       BluetoothDevice*);
-
-  // Save value.
-  void SetValue(DOMDataView*);
 
   // mojom::blink::WebBluetoothCharacteristicClient:
   void RemoteCharacteristicValueChanged(
@@ -75,7 +67,7 @@ class BluetoothRemoteGATTCharacteristic final
   BluetoothRemoteGATTService* service() { return service_.Get(); }
   String uuid() { return characteristic_->uuid; }
   BluetoothCharacteristicProperties* properties() { return properties_.Get(); }
-  DOMDataView* value() const { return value_.Get(); }
+  NotShared<DOMDataView> value() const { return value_; }
   ScriptPromise<BluetoothRemoteGATTDescriptor> getDescriptor(
       ScriptState* script_state,
       const V8BluetoothDescriptorUUID* descriptor_uuid,
@@ -120,7 +112,7 @@ class BluetoothRemoteGATTCharacteristic final
 
   struct DeferredValueChange : public GarbageCollected<DeferredValueChange> {
     DeferredValueChange(Member<Event> event,
-                        Member<DOMDataView> dom_data_view,
+                        NotShared<DOMDataView> dom_data_view,
                         ScriptPromiseResolver<NotShared<DOMDataView>>* resolver)
         : event(event), dom_data_view(dom_data_view), resolver(resolver) {}
 
@@ -128,7 +120,7 @@ class BluetoothRemoteGATTCharacteristic final
     void Trace(Visitor*) const;
 
     Member<Event> event;  // Event to dispatch before resolving promise.
-    Member<DOMDataView> dom_data_view;
+    NotShared<DOMDataView> dom_data_view;
 
     // Possibly null.
     Member<ScriptPromiseResolver<NotShared<DOMDataView>>> resolver;
@@ -184,7 +176,7 @@ class BluetoothRemoteGATTCharacteristic final
   mojom::blink::WebBluetoothRemoteGATTCharacteristicPtr characteristic_;
   Member<BluetoothRemoteGATTService> service_;
   Member<BluetoothCharacteristicProperties> properties_;
-  Member<DOMDataView> value_;
+  NotShared<DOMDataView> value_;
   Member<BluetoothDevice> device_;
   HeapMojoAssociatedReceiverSet<mojom::blink::WebBluetoothCharacteristicClient,
                                 BluetoothRemoteGATTCharacteristic>

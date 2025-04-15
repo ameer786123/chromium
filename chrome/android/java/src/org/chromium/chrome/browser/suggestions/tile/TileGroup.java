@@ -14,11 +14,11 @@ import android.view.View.OnClickListener;
 import android.view.View.OnCreateContextMenuListener;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
+import org.chromium.base.CancelableRunnable;
 import org.chromium.base.TimeUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
@@ -33,7 +33,9 @@ import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
 import org.chromium.chrome.browser.suggestions.SuggestionsOfflineModelObserver;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
+import org.chromium.chrome.browser.suggestions.mostvisited.CustomLinkOperations;
 import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSites;
+import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditCoordinator;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 import org.chromium.url.GURL;
 
@@ -49,11 +51,11 @@ public class TileGroup implements MostVisitedSites.Observer {
     /**
      * Performs work in other parts of the system that the {@link TileGroup} should not know about.
      */
-    public interface Delegate {
+    public interface Delegate extends CustomLinkOperations {
         /**
          * @param tile The tile corresponding to the most visited item to remove.
          * @param removalUndoneCallback The callback to invoke if the removal is reverted. The
-         *                              callback's argument is the URL being restored.
+         *     callback's argument is the URL being restored.
          */
         void removeMostVisitedItem(Tile tile, Callback<GURL> removalUndoneCallback);
 
@@ -63,6 +65,7 @@ public class TileGroup implements MostVisitedSites.Observer {
 
         /**
          * Gets the list of most visited sites.
+         *
          * @param observer The observer to be notified with the list of sites.
          * @param maxResults The maximum number of sites to retrieve.
          */
@@ -78,6 +81,12 @@ public class TileGroup implements MostVisitedSites.Observer {
 
         /** Initialize AndroidPrerenderManager JNI interface. */
         void initAndroidPrerenderManager(AndroidPrerenderManager androidPrerenderManager);
+
+        /**
+         * @param originalTile The tile to edit, or null to add a new tile.
+         * @return A new CustomTileEditCoordinator instance.
+         */
+        CustomTileEditCoordinator createCustomTileEditCoordinator(@Nullable Tile originalTile);
 
         /**
          * To be called before this instance is abandoned to the garbage collector so it can do any
@@ -128,10 +137,12 @@ public class TileGroup implements MostVisitedSites.Observer {
     }
 
     /** Delegate for handling interactions with tiles. */
-    public interface TileInteractionDelegate extends OnClickListener, OnCreateContextMenuListener {
+    public interface TileInteractionDelegate
+            extends OnClickListener, OnCreateContextMenuListener, View.OnLongClickListener {
         /**
          * Set a runnable for click events on the tile. This is primarily used to track interaction
          * with the tile used by feature engagement purposes.
+         *
          * @param clickRunnable The {@link Runnable} to be executed when tile is clicked.
          */
         void setOnClickRunnable(Runnable clickRunnable);
@@ -218,6 +229,7 @@ public class TileGroup implements MostVisitedSites.Observer {
     @Nullable private GURL mPendingInsertionUrl;
 
     private boolean mHasReceivedData;
+    private boolean mHavePendingCustomLinkUpdate;
 
     // TODO(dgn): Attempt to avoid cycling dependencies with TileRenderer. Is there a better way?
     private final TileSetupDelegate mTileSetupDelegate =
@@ -300,7 +312,13 @@ public class TileGroup implements MostVisitedSites.Observer {
             expectedChangeCompleted = true;
         }
 
-        if (!mHasReceivedData || !mUiDelegate.isVisible() || expectedChangeCompleted) loadTiles();
+        if (!mHasReceivedData
+                || !mUiDelegate.isVisible()
+                || expectedChangeCompleted
+                || mHavePendingCustomLinkUpdate) {
+            mHavePendingCustomLinkUpdate = false;
+            loadTiles();
+        }
     }
 
     @Override
@@ -513,31 +531,6 @@ public class TileGroup implements MostVisitedSites.Observer {
 
     private class TileInteractionDelegateImpl
             implements TileInteractionDelegate, ContextMenuManager.Delegate, View.OnTouchListener {
-
-        /**
-         * CancelableRunnable is a Runnable class can be canceled. It is created here instead of
-         * making CallbackController.CancelableRunnable reusable is that this class is expected to
-         * be used on UI thread only, so locking mechanism is not required.
-         */
-        private static class CancelableRunnable implements Runnable {
-            private Runnable mRunnable;
-
-            private CancelableRunnable(@NonNull Runnable runnable) {
-                mRunnable = runnable;
-            }
-
-            public void cancel() {
-                mRunnable = null;
-            }
-
-            @Override
-            public void run() {
-                // This is run on UI thread only, so it is not necessary to guard this against
-                // another thread.
-                if (mRunnable != null) mRunnable.run();
-            }
-        }
-
         private final SiteSuggestion mSuggestion;
         private Runnable mOnClickRunnable;
         private Runnable mOnRemoveRunnable;
@@ -633,12 +626,7 @@ public class TileGroup implements MostVisitedSites.Observer {
 
                 if (mSuggestion == null) return false;
                 Tile tile = findTile(mSuggestion);
-                // Avoid prerendering the tile if it is search related, since parameters are not
-                // handled for prerendering cases. This will cause problems for default search
-                // engines.
-                // TODO(crbug.com/40282403): Move the logic to `PrerenderManager` if the issue
-                // is fixed by the check.
-                if (tile == null || mTileRenderer.isSearchTile(tile)) return false;
+                if (tile == null) return false;
                 maybePrerender(tile.getUrl());
             }
             if (event.getAction() == MotionEvent.ACTION_CANCEL) {
@@ -679,6 +667,43 @@ public class TileGroup implements MostVisitedSites.Observer {
         }
 
         @Override
+        public void pinItem() {
+            @Nullable Tile tile = findTile(mSuggestion);
+            if (tile == null) return;
+
+            GURL url = tile.getUrl();
+            assignCustomLinkAndUpdateOnSuccess(url, tile.getTitle(), url);
+        }
+
+        @Override
+        public void unpinItem() {
+            @Nullable Tile tile = findTile(mSuggestion);
+            if (tile == null) return;
+
+            // Unlike removeItem(), don't run {@link mOnRemoveRunnable}.
+
+            // On success, onSiteSuggestionsAvailable() triggers.
+            mHavePendingCustomLinkUpdate = true;
+            if (!mTileGroupDelegate.deleteCustomLink(tile.getUrl())) {
+                mHavePendingCustomLinkUpdate = false;
+            }
+        }
+
+        @Override
+        public void editItem() {
+            @Nullable Tile tile = findTile(mSuggestion);
+            if (tile == null) return;
+
+            CustomTileEditCoordinator customTileEditCoordinator =
+                    mTileGroupDelegate.createCustomTileEditCoordinator(tile);
+            customTileEditCoordinator.show(
+                    (String name, GURL url) -> {
+                        return assignCustomLinkAndUpdateOnSuccess(tile.getUrl(), name, url);
+                    },
+                    mTileGroupDelegate::hasCustomLink);
+        }
+
+        @Override
         public GURL getUrl() {
             return mSuggestion.url;
         }
@@ -691,9 +716,13 @@ public class TileGroup implements MostVisitedSites.Observer {
         @Override
         public boolean isItemSupported(@ContextMenuItemId int menuItemId) {
             switch (menuItemId) {
-                    // Personalized tiles are the only tiles that can be removed.
                 case ContextMenuItemId.REMOVE:
-                    return mSuggestion.sectionType == TileSectionType.PERSONALIZED;
+                    return !isCustomizationItemSupported(/* matchIsCustomLink= */ true);
+                case ContextMenuItemId.PIN_THIS_SHORTCUT:
+                    return isCustomizationItemSupported(/* matchIsCustomLink= */ false);
+                case ContextMenuItemId.EDIT_SHORTCUT: // Fall through.
+                case ContextMenuItemId.UNPIN:
+                    return isCustomizationItemSupported(/* matchIsCustomLink= */ true);
                 default:
                     return true;
             }
@@ -705,7 +734,17 @@ public class TileGroup implements MostVisitedSites.Observer {
         @Override
         public void onCreateContextMenu(
                 ContextMenu contextMenu, View view, ContextMenuInfo contextMenuInfo) {
+            if (ChromeFeatureList.isEnabled(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)) return;
+
             mContextMenuManager.createContextMenu(contextMenu, view, this);
+        }
+
+        @Override
+        public boolean onLongClick(View view) {
+            if (!ChromeFeatureList.isEnabled(ChromeFeatureList.TILE_CONTEXT_MENU_REFACTOR)) {
+                return false;
+            }
+            return mContextMenuManager.showListContextMenu(view, this);
         }
 
         @Override
@@ -716,6 +755,26 @@ public class TileGroup implements MostVisitedSites.Observer {
         @Override
         public void setOnRemoveRunnable(Runnable removeRunnable) {
             mOnRemoveRunnable = removeRunnable;
+        }
+
+        boolean isCustomizationItemSupported(boolean matchIsCustomLink) {
+            if (!ChromeFeatureList.sMostVisitedTilesCustomization.isEnabled()
+                    || mSuggestion.sectionType != TileSectionType.PERSONALIZED) {
+                return false;
+            }
+            boolean isCustomLink = (mSuggestion.source == TileSource.CUSTOM_LINKS);
+            return isCustomLink == matchIsCustomLink;
+        }
+
+        private boolean assignCustomLinkAndUpdateOnSuccess(
+                GURL keyUrl, String name, @Nullable GURL url) {
+            // On success, onSiteSuggestionsAvailable() triggers.
+            mHavePendingCustomLinkUpdate = true;
+            boolean success = mTileGroupDelegate.assignCustomLink(keyUrl, name, url);
+            if (!success) {
+                mHavePendingCustomLinkUpdate = false;
+            }
+            return success;
         }
     }
 

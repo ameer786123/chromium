@@ -10,11 +10,13 @@
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "components/country_codes/country_codes.h"
-#include "components/search_engines/eea_countries_ids.h"
-#include "components/search_engines/search_engines_switches.h"
+#include "components/regional_capabilities/regional_capabilities_switches.h"
+#include "components/regional_capabilities/regional_capabilities_test_utils.h"
 #include "components/search_engines/search_engines_test_environment.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using ::country_codes::CountryId;
 
 class IconUtilsTest : public ::testing::Test {
  public:
@@ -24,6 +26,9 @@ class IconUtilsTest : public ::testing::Test {
   }
   search_engines::SearchEngineChoiceService* search_engine_choice_service() {
     return &search_engines_test_environment_.search_engine_choice_service();
+  }
+  TemplateURLPrepopulateData::Resolver& prepopulate_data_resolver() {
+    return search_engines_test_environment_.prepopulate_data_resolver();
   }
 
  private:
@@ -35,12 +40,12 @@ TEST_F(IconUtilsTest, GetSearchEngineGeneratedIconPath) {
   ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kSearchEngineChoiceCountry));
 
-  for (int country_id : search_engines::kEeaChoiceCountriesIds) {
+  for (CountryId country_id : regional_capabilities::kEeaChoiceCountriesIds) {
     search_engine_choice_service()->ClearCountryIdCacheForTesting();
-    pref_service()->SetInteger(country_codes::kCountryIDAtInstall, country_id);
+    pref_service()->SetInteger(country_codes::kCountryIDAtInstall,
+                               country_id.Serialize());
     std::vector<std::unique_ptr<TemplateURLData>> urls =
-        TemplateURLPrepopulateData::GetPrepopulatedEngines(
-            pref_service(), search_engine_choice_service());
+        prepopulate_data_resolver().GetPrepopulatedEngines();
     for (const std::unique_ptr<TemplateURLData>& url : urls) {
       EXPECT_FALSE(GetSearchEngineGeneratedIconPath(url->keyword()).empty())
           << "Missing icon for " << url->keyword() << ". Try re-running "

@@ -44,6 +44,11 @@ TrackingProtectionSettings::TrackingProtectionSettings(
           &TrackingProtectionSettings::OnIpProtectionPrefChanged,
           base::Unretained(this)));
   pref_change_registrar_.Add(
+      prefs::kFingerprintingProtectionEnabled,
+      base::BindRepeating(
+          &TrackingProtectionSettings::OnFpProtectionPrefChanged,
+          base::Unretained(this)));
+  pref_change_registrar_.Add(
       prefs::kBlockAll3pcToggleEnabled,
       base::BindRepeating(
           &TrackingProtectionSettings::OnBlockAllThirdPartyCookiesPrefChanged,
@@ -65,24 +70,8 @@ TrackingProtectionSettings::TrackingProtectionSettings(
           &TrackingProtectionSettings::OnEnterpriseControlForPrefsChanged,
           base::Unretained(this)));
 
-  MaybeInitializeIppPref();
   // It's possible enterprise status changed while profile was shut down.
   OnEnterpriseControlForPrefsChanged();
-
-  // If feature status changed then we need to migrate content settings.
-  if (base::FeatureList::IsEnabled(kTrackingProtectionContentSettingFor3pcb) &&
-      !pref_service_->GetBoolean(prefs::kUserBypass3pcExceptionsMigrated)) {
-    MigrateUserBypassExceptions(ContentSettingsType::COOKIES,
-                                ContentSettingsType::TRACKING_PROTECTION);
-    pref_service_->SetBoolean(prefs::kUserBypass3pcExceptionsMigrated, true);
-  } else if (!base::FeatureList::IsEnabled(
-                 kTrackingProtectionContentSettingFor3pcb) &&
-             pref_service_->GetBoolean(
-                 prefs::kUserBypass3pcExceptionsMigrated)) {
-    MigrateUserBypassExceptions(ContentSettingsType::TRACKING_PROTECTION,
-                                ContentSettingsType::COOKIES);
-    pref_service_->SetBoolean(prefs::kUserBypass3pcExceptionsMigrated, false);
-  }
 }
 
 TrackingProtectionSettings::~TrackingProtectionSettings() = default;
@@ -109,7 +98,13 @@ bool TrackingProtectionSettings::AreAllThirdPartyCookiesBlocked() const {
 
 bool TrackingProtectionSettings::IsIpProtectionEnabled() const {
   return pref_service_->GetBoolean(prefs::kIpProtectionEnabled) &&
-         base::FeatureList::IsEnabled(kIpProtectionV1);
+         base::FeatureList::IsEnabled(kIpProtectionUx);
+}
+
+bool TrackingProtectionSettings::IsFpProtectionEnabled() const {
+  return pref_service_->GetBoolean(prefs::kFingerprintingProtectionEnabled) &&
+         base::FeatureList::IsEnabled(kFingerprintingProtectionUx) &&
+         is_incognito_;
 }
 
 bool TrackingProtectionSettings::IsDoNotTrackEnabled() const {
@@ -117,19 +112,11 @@ bool TrackingProtectionSettings::IsDoNotTrackEnabled() const {
 }
 
 void TrackingProtectionSettings::AddTrackingProtectionException(
-    const GURL& first_party_url,
-    bool is_user_bypass_exception) {
-  content_settings::ContentSettingConstraints constraints;
-  if (is_user_bypass_exception) {
-    constraints.set_lifetime(
-        content_settings::features::kUserBypassUIExceptionExpiration.Get());
-  }
-
+    const GURL& first_party_url) {
   host_content_settings_map_->SetContentSettingCustomScope(
       ContentSettingsPattern::Wildcard(),
       ContentSettingsPattern::FromURLToSchemefulSitePattern(first_party_url),
-      ContentSettingsType::TRACKING_PROTECTION, CONTENT_SETTING_ALLOW,
-      constraints);
+      ContentSettingsType::TRACKING_PROTECTION, CONTENT_SETTING_ALLOW);
 }
 
 void TrackingProtectionSettings::RemoveTrackingProtectionException(
@@ -149,20 +136,12 @@ void TrackingProtectionSettings::RemoveTrackingProtectionException(
       ContentSettingsType::TRACKING_PROTECTION, CONTENT_SETTING_DEFAULT);
 }
 
-ContentSetting TrackingProtectionSettings::GetTrackingProtectionSetting(
+bool TrackingProtectionSettings::HasTrackingProtectionException(
     const GURL& first_party_url,
     content_settings::SettingInfo* info) const {
   return host_content_settings_map_->GetContentSetting(
-      GURL(), first_party_url, ContentSettingsType::TRACKING_PROTECTION, info);
-}
-
-void TrackingProtectionSettings::MaybeInitializeIppPref() {
-  if (pref_service_->GetBoolean(prefs::kIpProtectionInitializedByDogfood) ||
-      !base::FeatureList::IsEnabled(kIpProtectionDogfoodDefaultOn)) {
-    return;
-  }
-  pref_service_->SetBoolean(prefs::kIpProtectionEnabled, true);
-  pref_service_->SetBoolean(prefs::kIpProtectionInitializedByDogfood, true);
+             GURL(), first_party_url, ContentSettingsType::TRACKING_PROTECTION,
+             info) == CONTENT_SETTING_ALLOW;
 }
 
 // TODO(https://b/333527273): Delete with Mode B cleanup
@@ -178,36 +157,6 @@ void TrackingProtectionSettings::OnEnterpriseControlForPrefsChanged() {
   }
 }
 
-void TrackingProtectionSettings::MigrateUserBypassExceptions(
-    ContentSettingsType from,
-    ContentSettingsType to) {
-  // Gives us a bit of padding and there's no need to migrate an exception
-  // expiring within the next 5 minutes.
-  const base::Time now = base::Time::Now() + base::Minutes(5);
-  ContentSettingsForOneType existing_exceptions =
-      host_content_settings_map_->GetSettingsForOneType(from);
-  for (auto exception : existing_exceptions) {
-    // Ensure the exception comes from user bypass.
-    if (exception.metadata.expiration() <= now ||
-        !exception.primary_pattern.MatchesAllHosts() ||
-        exception.secondary_pattern.MatchesAllHosts() ||
-        exception.setting_value != CONTENT_SETTING_ALLOW) {
-      continue;
-    }
-    // Add an exception for the type we're migrating to.
-    content_settings::ContentSettingConstraints constraints;
-    constraints.set_lifetime(exception.metadata.expiration() -
-                             base::Time::Now());
-    host_content_settings_map_->SetContentSettingCustomScope(
-        ContentSettingsPattern::Wildcard(), exception.secondary_pattern, to,
-        CONTENT_SETTING_ALLOW, constraints);
-    // Remove the exception for the type we're migrating from.
-    host_content_settings_map_->SetContentSettingCustomScope(
-        ContentSettingsPattern::Wildcard(), exception.secondary_pattern, from,
-        CONTENT_SETTING_DEFAULT);
-  }
-}
-
 void TrackingProtectionSettings::OnDoNotTrackEnabledPrefChanged() {
   for (auto& observer : observers_) {
     observer.OnDoNotTrackEnabledChanged();
@@ -217,6 +166,12 @@ void TrackingProtectionSettings::OnDoNotTrackEnabledPrefChanged() {
 void TrackingProtectionSettings::OnIpProtectionPrefChanged() {
   for (auto& observer : observers_) {
     observer.OnIpProtectionEnabledChanged();
+  }
+}
+
+void TrackingProtectionSettings::OnFpProtectionPrefChanged() {
+  for (auto& observer : observers_) {
+    observer.OnFpProtectionEnabledChanged();
   }
 }
 

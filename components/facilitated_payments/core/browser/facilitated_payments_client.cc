@@ -6,8 +6,9 @@
 
 #include "base/containers/span.h"
 #include "base/functional/callback.h"
-#include "components/autofill/core/browser/data_model/bank_account.h"
-#include "components/autofill/core/browser/data_model/ewallet.h"
+#include "components/autofill/core/browser/data_model/payments/bank_account.h"
+#include "components/autofill/core/browser/data_model/payments/ewallet.h"
+#include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
 
 namespace payments::facilitated {
 
@@ -15,15 +16,19 @@ FacilitatedPaymentsClient::~FacilitatedPaymentsClient() = default;
 
 void FacilitatedPaymentsClient::ShowPixPaymentPrompt(
     base::span<const autofill::BankAccount> bank_account_suggestions,
-    base::OnceCallback<void(bool, int64_t)> on_user_decision_callback) {}
+    base::OnceCallback<void(int64_t)> on_payment_account_selected) {}
 
 void FacilitatedPaymentsClient::ShowEwalletPaymentPrompt(
-    base::span<const autofill::Ewallet> ewallet_suggestions) {}
+    base::span<const autofill::Ewallet> ewallet_suggestions,
+    base::OnceCallback<void(int64_t)> on_payment_account_selected) {}
 
 void FacilitatedPaymentsClient::ShowProgressScreen() {}
 
 void FacilitatedPaymentsClient::ShowErrorScreen() {}
 
 void FacilitatedPaymentsClient::DismissPrompt() {}
+
+void FacilitatedPaymentsClient::SetUiEventListener(
+    base::RepeatingCallback<void(UiEvent)> ui_event_listener) {}
 
 }  // namespace payments::facilitated

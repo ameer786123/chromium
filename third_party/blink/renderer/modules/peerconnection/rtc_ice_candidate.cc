@@ -73,7 +73,7 @@ RTCIceCandidate* RTCIceCandidate::Create(
       MakeGarbageCollected<RTCIceCandidatePlatform>(
           candidate_init->candidate(), sdp_mid, std::move(sdp_m_line_index),
           candidate_init->usernameFragment(),
-          /*url can not be reconstruncted*/ std::nullopt));
+          /*url can not be reconstruncted*/ String()));
 }
 
 RTCIceCandidate* RTCIceCandidate::Create(
@@ -134,11 +134,11 @@ std::optional<V8RTCIceCandidateType> RTCIceCandidate::type() const {
 }
 
 std::optional<V8RTCIceTcpCandidateType> RTCIceCandidate::tcpType() const {
-  std::optional<String> tcp_type = platform_candidate_->TcpType();
-  if (!tcp_type.has_value()) {
+  String tcp_type = platform_candidate_->TcpType();
+  if (tcp_type.IsNull()) {
     return std::nullopt;
   }
-  return V8RTCIceTcpCandidateType::Create(tcp_type.value());
+  return V8RTCIceTcpCandidateType::Create(tcp_type);
 }
 
 String RTCIceCandidate::relatedAddress() const {
@@ -153,27 +153,27 @@ String RTCIceCandidate::usernameFragment() const {
   return platform_candidate_->UsernameFragment();
 }
 
-std::optional<String> RTCIceCandidate::url() const {
+String RTCIceCandidate::url() const {
   return platform_candidate_->Url();
 }
 
 std::optional<V8RTCIceServerTransportProtocol> RTCIceCandidate::relayProtocol()
     const {
-  std::optional<String> relay_protocol = platform_candidate_->RelayProtocol();
-  if (!relay_protocol.has_value()) {
+  String relay_protocol = platform_candidate_->RelayProtocol();
+  if (relay_protocol.IsNull()) {
     return std::nullopt;
   }
-  return V8RTCIceServerTransportProtocol::Create(relay_protocol.value());
+  return V8RTCIceServerTransportProtocol::Create(relay_protocol);
 }
 
-ScriptValue RTCIceCandidate::toJSONForBinding(ScriptState* script_state) {
+ScriptObject RTCIceCandidate::toJSONForBinding(ScriptState* script_state) {
   V8ObjectBuilder result(script_state);
   result.AddString("candidate", platform_candidate_->Candidate());
   result.AddString("sdpMid", platform_candidate_->SdpMid());
   if (platform_candidate_->SdpMLineIndex())
     result.AddNumber("sdpMLineIndex", *platform_candidate_->SdpMLineIndex());
   result.AddString("usernameFragment", platform_candidate_->UsernameFragment());
-  return result.GetScriptValue();
+  return result.ToScriptObject();
 }
 
 }  // namespace blink

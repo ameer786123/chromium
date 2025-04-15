@@ -12,7 +12,7 @@ import {assert} from 'chrome://resources/js/assert.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import type {CodeSectionElement} from './code_section.js';
+import type {ExtensionsCodeSectionElement} from './code_section.js';
 import {getCss} from './load_error.css.js';
 import {getHtml} from './load_error.html.js';
 
@@ -25,7 +25,7 @@ export interface LoadErrorDelegate {
 
 export interface LoadErrorElement {
   $: {
-    code: CodeSectionElement,
+    code: ExtensionsCodeSectionElement,
     dialog: CrDialogElement,
   };
 }
@@ -61,15 +61,15 @@ export class LoadErrorElement extends CrLitElement {
     ];
   }
 
-  delegate?: LoadErrorDelegate;
-  loadError?: Error|chrome.developerPrivate.LoadError;
+  accessor delegate: LoadErrorDelegate|undefined;
+  accessor loadError: Error|chrome.developerPrivate.LoadError|undefined;
 
-  protected codeSectionProperties_:
+  protected accessor codeSectionProperties_:
       chrome.developerPrivate.RequestFileSourceResponse|null = null;
-  protected file_?: string;
-  protected error_: string|null = null;
-  protected isCodeSectionActive_?: boolean;
-  protected retrying_: boolean = false;
+  protected accessor file_: string|undefined;
+  protected accessor error_: string|null = null;
+  protected accessor isCodeSectionActive_: boolean|undefined;
+  protected accessor retrying_: boolean = false;
 
   override willUpdate(changedProperties: PropertyValues<this>) {
     super.willUpdate(changedProperties);

@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/layout/inline/inline_text_auto_space.h"
 
 #include <unicode/uchar.h>
 #include <unicode/uscript.h>
 
 #include "base/check.h"
+#include "base/memory/stack_allocated.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_item.h"
 
 namespace blink {
@@ -39,11 +35,10 @@ inline bool MaybeIdeograph(UScriptCode script, StringView text) {
   // They will be, for example, `USCRIPT_LATIN` if the previous character is
   // `USCRIPT_LATIN`. Check if we have any such characters.
   CHECK(!text.Is8Bit());
-  return std::any_of(text.Characters16(), text.Characters16() + text.length(),
-                     [](const UChar ch) {
-                       return ch >= TextAutoSpace::kNonHanIdeographMin &&
-                              ch <= TextAutoSpace::kNonHanIdeographMax;
-                     });
+  return std::ranges::any_of(text.Span16(), [](const UChar ch) {
+    return ch >= TextAutoSpace::kNonHanIdeographMin &&
+           ch <= TextAutoSpace::kNonHanIdeographMax;
+  });
 }
 
 // `TextAutoSpace::ApplyIfNeeded` computes offsets to insert spacing *before*,
@@ -52,13 +47,15 @@ inline bool MaybeIdeograph(UScriptCode script, StringView text) {
 // should be added to the end of the previous item. This class keeps the
 // previous item's `shape_result_` for this purpose.
 class SpacingApplier {
+  STACK_ALLOCATED();
+
  public:
   void SetSpacing(const Vector<wtf_size_t, 16>& offsets,
                   const InlineItem* current_item,
                   const ComputedStyle& style) {
     DCHECK(current_item->TextShapeResult());
-    const float spacing = TextAutoSpace::GetSpacingWidth(&style.GetFont());
-    auto offset = offsets.begin();
+    const float spacing = TextAutoSpace::GetSpacingWidth(style.GetFont());
+    auto offset = base::span(offsets).begin();
     if (!offsets.empty() && *offset == current_item->StartOffset()) {
       DCHECK(last_item_);
       // If the previous item's direction is from the left to the right, it is
@@ -116,7 +113,7 @@ class SpacingApplier {
 }  // namespace
 
 void InlineTextAutoSpace::Initialize(const InlineItemsData& data) {
-  const HeapVector<InlineItem>& items = data.items;
+  const InlineItems& items = data.items;
   if (items.empty()) [[unlikely]] {
     return;
   }
@@ -126,7 +123,8 @@ void InlineTextAutoSpace::Initialize(const InlineItemsData& data) {
   // packed in `InlineItemSegments` to save memory.
   const String& text = data.text_content;
   if (!data.segments) {
-    for (const InlineItem& item : items) {
+    for (const Member<InlineItem>& item_ptr : items) {
+      const InlineItem& item = *item_ptr;
       if (item.Type() != InlineItem::kText) {
         // Only `kText` has the data, see `InlineItem::SetSegmentData`.
         continue;
@@ -161,14 +159,15 @@ void InlineTextAutoSpace::Apply(InlineItemsData& data,
 
   Vector<wtf_size_t, 16> offsets;
   CHECK(!ranges_.empty());
-  auto range = ranges_.begin();
+  auto range = base::span(ranges_).begin();
   std::optional<CharType> last_type = kOther;
 
   // The initial value does not matter, as the value is used for determine
   // whether to add spacing into the bound of two items.
   TextDirection last_direction = TextDirection::kLtr;
   SpacingApplier applier;
-  for (const InlineItem& item : data.items) {
+  for (const Member<InlineItem>& item_ptr : data.items) {
+    const InlineItem& item = *item_ptr;
     if (item.Type() != InlineItem::kText) {
       if (item.Length()) {
         // If `item` has a length, e.g., inline-block, set the `last_type`.
@@ -205,7 +204,7 @@ void InlineTextAutoSpace::Apply(InlineItemsData& data,
       // Find the `RunSegmenterRange` for `offset`.
       while (offset >= range->end) {
         ++range;
-        CHECK_NE(range, ranges_.end());
+        CHECK(range != base::span(ranges_).end());
       }
       DCHECK_GE(offset, range->start);
       DCHECK_LT(offset, range->end);

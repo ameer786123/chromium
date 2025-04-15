@@ -4,16 +4,18 @@
 
 package org.chromium.chrome.browser.ui.settings_promo_card;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup.LayoutParams;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.IntentUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ui.default_browser_promo.DefaultBrowserPromoUtils;
 import org.chromium.chrome.browser.ui.settings_promo_card.SettingsPromoCardProvider.State;
 import org.chromium.components.browser_ui.widget.promo.PromoCardCoordinator;
@@ -23,6 +25,7 @@ import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Controller for Default browser settings promo card when Chrome is not the default browser */
+@NullMarked
 public class DefaultBrowserPromoCard implements SettingsPromoCardProvider {
     private final Context mContext;
     private final DefaultBrowserPromoUtils mPromoUtils;
@@ -30,7 +33,7 @@ public class DefaultBrowserPromoCard implements SettingsPromoCardProvider {
     private final Runnable mOnDisplayStateChanged;
 
     private @State int mState = State.PROMO_HIDDEN;
-    @Nullable private PromoCardCoordinator mCardCoordinator;
+    private @Nullable PromoCardCoordinator mCardCoordinator;
 
     /**
      * Construct and initialize DefaultBrowserPromoCard view, to be added to the
@@ -47,8 +50,9 @@ public class DefaultBrowserPromoCard implements SettingsPromoCardProvider {
         mOnDisplayStateChanged = onDisplayStateChanged;
 
         if (mPromoUtils.shouldShowNonRoleManagerPromo(context)
-                && tracker.shouldTriggerHelpUI(
+                && tracker.shouldTriggerHelpUi(
                         FeatureConstants.DEFAULT_BROWSER_PROMO_SETTING_CARD)) {
+            mPromoUtils.notifyDefaultBrowserPromoVisible();
             mState = State.PROMO_SHOWING;
         }
     }
@@ -71,16 +75,13 @@ public class DefaultBrowserPromoCard implements SettingsPromoCardProvider {
                                 R.drawable.default_browser_promo_illustration))
                 .with(
                         PromoCardProperties.TITLE,
-                        mContext.getResources()
-                                .getString(R.string.default_browser_promo_card_title))
+                        mContext.getString(R.string.default_browser_promo_card_title))
                 .with(
                         PromoCardProperties.DESCRIPTION,
-                        mContext.getResources()
-                                .getString(R.string.default_browser_promo_card_description))
+                        mContext.getString(R.string.default_browser_promo_card_description))
                 .with(
                         PromoCardProperties.PRIMARY_BUTTON_TEXT,
-                        mContext.getResources()
-                                .getString(R.string.default_browser_promo_open_settings_label))
+                        mContext.getString(R.string.default_browser_promo_open_settings_label))
                 .with(PromoCardProperties.BUTTONS_WIDTH, LayoutParams.WRAP_CONTENT)
                 .with(PromoCardProperties.PRIMARY_BUTTON_CALLBACK, this::onPromoClicked)
                 .with(PromoCardProperties.HAS_CLOSE_BUTTON, true)
@@ -91,6 +92,7 @@ public class DefaultBrowserPromoCard implements SettingsPromoCardProvider {
 
     @Override
     public View getView() {
+        assumeNonNull(mCardCoordinator);
         return mCardCoordinator.getView();
     }
 

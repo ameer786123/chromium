@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/browser/signin/bound_session_credentials/bound_session_registration_fetcher_impl.h"
 
 #include <string_view>
@@ -141,6 +146,7 @@ void BoundSessionRegistrationFetcherImpl::OnURLLoaderComplete(
   params.set_wrapped_key(wrapped_key_str_);
   *params.mutable_creation_time() =
       bound_session_credentials::TimeToTimestamp(base::Time::Now());
+  params.set_is_wsbeta(registration_params_.is_wsbeta());
 
   if (!bound_session_credentials::AreParamsValid(params)) {
     RunCallbackAndRecordMetrics(

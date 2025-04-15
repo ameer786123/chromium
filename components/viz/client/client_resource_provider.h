@@ -22,9 +22,6 @@
 #include "third_party/khronos/GLES2/gl2.h"
 
 namespace gpu {
-namespace gles2 {
-class GLES2Interface;
-}
 namespace raster {
 class RasterInterface;
 }
@@ -72,14 +69,14 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
   ClientResourceProvider(
       scoped_refptr<base::SequencedTaskRunner> main_task_runner,
       scoped_refptr<base::SequencedTaskRunner> impl_task_runner,
-      ResourceFlushCallback resource_flush_callback);
+      ResourceFlushCallback resource_flush_callback,
+      bool use_imported_resource_id = false);
 
   ClientResourceProvider(const ClientResourceProvider&) = delete;
   ClientResourceProvider& operator=(const ClientResourceProvider&) = delete;
 
   ~ClientResourceProvider();
 
-  static gpu::SyncToken GenerateSyncTokenHelper(gpu::gles2::GLES2Interface* gl);
   static gpu::SyncToken GenerateSyncTokenHelper(
       gpu::raster::RasterInterface* ri);
 
@@ -208,6 +205,11 @@ class VIZ_CLIENT_EXPORT ClientResourceProvider {
   // have a single thread hop, rather than each callback performing it's own
   // separate hop.
   bool threaded_release_callbacks_supported_ = false;
+
+  // This flag indicates if TransferableResource being imported via
+  // ::ImportResource() already has a valid ResourceId and should be used
+  // instead of generating a new ResourceId.
+  const bool use_imported_resource_id_ = false;
 
   // While `true` resources being released will have their callbacks stored in
   // the vector below. To be released afterwards in `BatchResourceRelease`.

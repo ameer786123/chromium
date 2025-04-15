@@ -19,6 +19,7 @@ export class FakeReadingMode {
   backgroundColor: number = 0;
   lineSpacing: number = 0;
   letterSpacing: number = 0;
+  imagesEnabled: boolean = false;
 
   // The current color theme value.
   colorTheme: number = 0;
@@ -47,17 +48,26 @@ export class FakeReadingMode {
   sentenceHighlighting: number = 3;
   noHighlighting: number = 4;
 
+  // Enum values for speech stop sources.
+  pauseButtonStopSource: number = 30;
+  keyboardShortcutStopSource: number = 31;
+  engineInterruptStopSource: number = 32;
+  engineErrorStopSource: number = 33;
+  contentFinishedStopSource: number = 34;
+  unexpectedUpdateContentStopSource: number = 35;
+
   // Whether the WebUI toolbar feature flag is enabled.
   isWebUIToolbarVisible: boolean = true;
 
   // Whether the Read Aloud feature flag is enabled.
-  isReadAloudEnabled: boolean = false;
+  isReadAloudEnabled: boolean = true;
 
   // Returns true if the webpage corresponds to a Google Doc.
   isGoogleDocs: boolean = false;
 
   // Fonts supported by the browser's preferred language.
   supportedFonts: string[] = ['roboto'];
+  allFonts: string[] = [];
 
   // The base language code that should be used for speech synthesis voices.
   baseLanguageForSpeech: string = '';
@@ -188,6 +198,11 @@ export class FakeReadingMode {
     this.linksEnabled = !this.linksEnabled;
   }
 
+  // Called when a user toggles images via the webui toolbar.
+  onImagesEnabledToggled() {
+    this.imagesEnabled = !this.imagesEnabled;
+  }
+
   // Called when the letter spacing is changed via the webui toolbar.
   onLetterSpacingChange(value: number) {
     this.letterSpacing = value;
@@ -218,6 +233,9 @@ export class FakeReadingMode {
 
   // Called when a tracked count-based metric is incremented.
   incrementMetricCount(_metric: string) {}
+
+  // Log when speech stops and why.
+  logSpeechStop(_source: number) {}
 
   // Called when the highlight granularity is changed via the webui toolbar.
   turnedHighlightOn() {
@@ -257,6 +275,16 @@ export class FakeReadingMode {
   onCollapseSelection() {}
 
   sendGetVoicePackInfoRequest(_: string) {}
+
+  // Sends an async request to install a Natural voice pack for a
+  // specific language. The response is sent back to the UI via
+  // updateVoicePackStatus()
+  // TODO(crbug.com/377697173) Rename `VoicePack` to `Voice`
+  sendInstallVoicePackRequest(_language: string) {}
+
+  // Sends an async request to uninstall a Natural voice for a specific
+  // language.
+  sendUninstallVoiceRequest(_language: string) {}
 
   // Set the content. Used by tests only.
   // SnapshotLite is a data structure which resembles an AXTreeUpdate. E.g.:

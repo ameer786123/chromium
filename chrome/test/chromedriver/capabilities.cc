@@ -846,6 +846,11 @@ Status ParseChromeOptions(
   parser_map["devToolsEventsToLog"] =
       base::BindRepeating(&ParseDevToolsEventsLoggingPrefs);
   parser_map["windowTypes"] = base::BindRepeating(&ParseWindowTypes);
+
+  // Enable Chrome extension related targets
+  parser_map["enableExtensionTargets"] = base::BindRepeating(
+      &ParseBoolean, &capabilities->enable_extension_targets);
+
   // Compliance is read when session is initialized and correct response is
   // sent if not parsed correctly.
   parser_map["w3c"] = base::BindRepeating(&IgnoreCapability);
@@ -882,6 +887,8 @@ Status ParseChromeOptions(
         base::BindRepeating(&ParseFilePath, &capabilities->binary);
     parser_map["detach"] =
         base::BindRepeating(&ParseBoolean, &capabilities->detach);
+    parser_map["quitGracefully"] =
+        base::BindRepeating(&ParseBoolean, &capabilities->quit_gracefully);
     parser_map["excludeSwitches"] = base::BindRepeating(&ParseExcludeSwitches);
     parser_map["extensions"] = base::BindRepeating(&ParseExtensions);
     parser_map["extensionLoadTimeout"] = base::BindRepeating(
@@ -1101,6 +1108,19 @@ bool Capabilities::IsRemoteBrowser() const {
   return debugger_address.IsValid();
 }
 
+Status Capabilities::MigrateCapabilities() {
+  // Injecting "background_page" is deprecated. Throw a warning and migrate to
+  // the new dedicated switch for it.
+  if (window_types.contains(WebViewInfo::kBackgroundPage)) {
+    window_types.erase(WebViewInfo::kBackgroundPage);
+    enable_extension_targets = true;
+    LOG(WARNING) << "Injecting \"background_page\" windowType is deprecated. "
+                    "Use enableExtensionTargets option instead.";
+  }
+
+  return Status(kOk);
+}
+
 Status Capabilities::Parse(const base::Value::Dict& desired_caps,
                            bool w3c_compliant) {
   std::map<std::string, Parser> parser_map;
@@ -1149,6 +1169,7 @@ Status Capabilities::Parse(const base::Value::Dict& desired_caps,
     parser_map[kChromeDriverOptionsKey] =
         base::BindRepeating(&ParseChromeOptions);
   }
+
   // se:options.loggingPrefs and goog:loggingPrefs is spec-compliant name,
   // but loggingPrefs is still supported in legacy mode.
   const std::string prefixed_logging_prefs_key =
@@ -1214,5 +1235,5 @@ Status Capabilities::Parse(const base::Value::Dict& desired_caps,
                     "but devtools events logging was not enabled");
     }
   }
-  return Status(kOk);
+  return MigrateCapabilities();
 }

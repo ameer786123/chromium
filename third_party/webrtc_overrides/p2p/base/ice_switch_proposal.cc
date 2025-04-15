@@ -1,7 +1,10 @@
 #include "third_party/webrtc_overrides/p2p/base/ice_switch_proposal.h"
 
-#include "base/notreached.h"
+#include <optional>
+#include <string>
 
+#include "base/notreached.h"
+#include "third_party/webrtc/p2p/base/connection.h"
 #include "third_party/webrtc/p2p/base/ice_controller_interface.h"
 #include "third_party/webrtc/p2p/base/ice_switch_reason.h"
 #include "third_party/webrtc/rtc_base/strings/string_builder.h"
@@ -36,8 +39,7 @@ IceSwitchReason ConvertFromWebrtcIceSwitchReason(
     case cricket::IceSwitchReason::APPLICATION_REQUESTED:
       return IceSwitchReason::kApplicationRequested;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return IceSwitchReason::kUnknown;
+      NOTREACHED();
   }
 }
 
@@ -68,7 +70,7 @@ std::string IceSwitchReasonToString(IceSwitchReason reason) {
     case IceSwitchReason::kApplicationRequested:
       return "ApplicationRequested";
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -100,8 +102,7 @@ cricket::IceSwitchReason ConvertToWebrtcIceSwitchReason(
       return cricket::IceSwitchReason::APPLICATION_REQUESTED;
     case IceSwitchReason::kUnknown:
     default:
-      NOTREACHED_IN_MIGRATION();
-      return cricket::IceSwitchReason::UNKNOWN;
+      NOTREACHED();
   }
 }
 

@@ -117,7 +117,7 @@ class PLATFORM_EXPORT WebRtcVideoTrackSource
   void DeliverFrame(scoped_refptr<media::VideoFrame> frame,
                     std::optional<gfx::Rect> update_rect,
                     int64_t timestamp_us,
-                    std::optional<webrtc::Timestamp> capture_time_identifier,
+                    std::optional<webrtc::Timestamp> presentation_timestamp,
                     std::optional<webrtc::Timestamp> reference_time);
 
   // Receives result of asynchronous mapping of a frame.
@@ -164,8 +164,6 @@ class PLATFORM_EXPORT WebRtcVideoTrackSource
   scoped_refptr<CallbackProxy> callback_proxy_;
 
   int64_t next_frame_id_ = 0;
-
-  bool require_mapped_frame_for_testing_ = false;
 };
 
 }  // namespace blink

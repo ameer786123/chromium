@@ -23,6 +23,7 @@ extern const char kOnPause[];
 extern const char kOnResume[];
 extern const char kOnInstallLanguageRequest[];
 extern const char kOnLanguageStatusRequest[];
+extern const char kOnUninstallLanguageRequest[];
 
 // Specifying where events sent to the TTS Engine originated
 enum class TtsClientSource {
@@ -55,6 +56,11 @@ class TtsExtensionEngine : public content::TtsEngineDelegate {
   void Stop(content::TtsUtterance* utterance) override;
   void Pause(content::TtsUtterance* utterance) override;
   void Resume(content::TtsUtterance* utterance) override;
+  void UninstallLanguageRequest(content::BrowserContext* browser_context,
+                                const std::string& lang,
+                                const std::string& client_id,
+                                int source,
+                                bool uninstall_immediately) override;
   void InstallLanguageRequest(content::BrowserContext* browser_context,
                               const std::string& lang,
                               const std::string& client_id,
@@ -96,7 +102,7 @@ class TtsExtensionEngine : public content::TtsEngineDelegate {
 // runtime.
 class ExtensionTtsEngineUpdateVoicesFunction : public ExtensionFunction {
  private:
-  ~ExtensionTtsEngineUpdateVoicesFunction() override {}
+  ~ExtensionTtsEngineUpdateVoicesFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("ttsEngine.updateVoices", TTSENGINE_UPDATEVOICES)
 };
@@ -105,7 +111,7 @@ class ExtensionTtsEngineUpdateVoicesFunction : public ExtensionFunction {
 // to send events back to the client that's calling tts.speak().
 class ExtensionTtsEngineSendTtsEventFunction : public ExtensionFunction {
  private:
-  ~ExtensionTtsEngineSendTtsEventFunction() override {}
+  ~ExtensionTtsEngineSendTtsEventFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("ttsEngine.sendTtsEvent", TTSENGINE_SENDTTSEVENT)
 };

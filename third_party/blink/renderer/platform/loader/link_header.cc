@@ -116,13 +116,13 @@ LinkHeader::LinkHeader(Iterator begin, Iterator end) : is_valid_(true) {
   if (!is_valid_)
     return;
 
-  url_ = String(&url[0], url.length());
+  url_ = String(url);
   for (const auto& param : params) {
     LinkParameterName name = ParameterNameFromString(param.first);
     if (!IsExtensionParameter(name) && !param.second)
       is_valid_ = false;
     std::string value = param.second.value_or("");
-    SetValue(name, String(&value[0], value.length()));
+    SetValue(name, String(value));
   }
   // According to Section 5.2 of RFC 5988, "anchor" parameters in Link headers
   // must be either respected, or the entire header must be ignored:
@@ -138,8 +138,7 @@ LinkHeaderSet::LinkHeaderSet(const String& header) {
     return;
 
   DCHECK(header.Is8Bit()) << "Headers should always be 8 bit";
-  std::string header_string(reinterpret_cast<const char*>(header.Characters8()),
-                            header.length());
+  std::string header_string = header.Latin1();
   for (const auto& value : link_header_util::SplitLinkHeader(header_string))
     header_set_.push_back(LinkHeader(value.first, value.second));
 }

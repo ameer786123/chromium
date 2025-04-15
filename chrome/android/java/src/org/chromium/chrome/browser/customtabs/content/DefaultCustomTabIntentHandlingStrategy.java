@@ -7,33 +7,29 @@ package org.chromium.chrome.browser.customtabs.content;
 import android.text.TextUtils;
 
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.customtabs.BaseCustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabAuthUrlHeuristics;
 import org.chromium.chrome.browser.customtabs.CustomTabObserver;
-import org.chromium.chrome.browser.dependency_injection.ActivityScope;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.content_public.browser.LoadUrlParams;
-
-import javax.inject.Inject;
 
 /**
  * Default implementation of {@link CustomTabIntentHandlingStrategy}. Navigates the Custom Tab to
  * urls provided in intents.
  */
-@ActivityScope
 public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHandlingStrategy {
     private final CustomTabActivityTabProvider mTabProvider;
     private final CustomTabActivityNavigationController mNavigationController;
     private final CustomTabObserver mCustomTabObserver;
 
-    @Inject
     public DefaultCustomTabIntentHandlingStrategy(
+            CustomTabActivityTabProvider tabProvider,
             CustomTabActivityNavigationController navigationController,
-            BaseCustomTabActivity activity) {
-        mTabProvider = activity.getCustomTabActivityTabProvider();
+            CustomTabObserver customTabObserver) {
+        mTabProvider = tabProvider;
         mNavigationController = navigationController;
-        mCustomTabObserver = activity.getCustomTabObserver();
+        mCustomTabObserver = customTabObserver;
     }
 
     @Override
@@ -52,6 +48,10 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
 
         CustomTabAuthUrlHeuristics.recordUrlParamsHistogram(intentDataProvider.getUrlToLoad());
         CustomTabAuthUrlHeuristics.recordRedirectUriSchemeHistogram(intentDataProvider);
+
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)) {
+            handleLaunch(intentDataProvider, true);
+        }
     }
 
     // The hidden tab case needs a bit of special treatment.
@@ -84,8 +84,22 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         mNavigationController.navigate(params, intentDataProvider.getIntent());
     }
 
-    @Override
-    public void handleNewIntent(BrowserServicesIntentDataProvider intentDataProvider) {
+    private void handleLaunch(
+            BrowserServicesIntentDataProvider intentDataProvider, boolean isInitialIntent) {
+        WebAppLaunchHandler launchHandler =
+                new WebAppLaunchHandler(
+                        intentDataProvider.getLaunchHandlerClientMode(),
+                        intentDataProvider.getUrlToLoad(),
+                        intentDataProvider.getClientPackageName());
+
+        if (launchHandler.getStartNewNavigation() && !isInitialIntent) {
+            loadUrl(intentDataProvider);
+        }
+
+        launchHandler.notifyLaunchQueue(mTabProvider.getTab().getWebContents());
+    }
+
+    private void loadUrl(BrowserServicesIntentDataProvider intentDataProvider) {
         String url = intentDataProvider.getUrlToLoad();
         if (TextUtils.isEmpty(url)) return;
         LoadUrlParams params = new LoadUrlParams(url);
@@ -99,5 +113,14 @@ public class DefaultCustomTabIntentHandlingStrategy implements CustomTabIntentHa
         }
 
         mNavigationController.navigate(params, intentDataProvider.getIntent());
+    }
+
+    @Override
+    public void handleNewIntent(BrowserServicesIntentDataProvider intentDataProvider) {
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WEB_APP_LAUNCH_HANDLER)) {
+            handleLaunch(intentDataProvider, false);
+        } else {
+            loadUrl(intentDataProvider);
+        }
     }
 }

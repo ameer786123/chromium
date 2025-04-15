@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.ui.signin;
 
-import android.graphics.Color;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.FrameLayout;
@@ -18,7 +17,6 @@ import org.chromium.base.Callback;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma.SecondaryActivity;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetCoordinator;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetMediator;
@@ -32,13 +30,12 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
-import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.base.WindowAndroid;
-import org.chromium.ui.util.ColorUtils;
 import org.chromium.ui.widget.Toast;
 
 /** Responsible of showing the sign-in bottom sheet. */
@@ -55,7 +52,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
     private final @SigninAccessPoint int mSigninAccessPoint;
     private final @Nullable CoreAccountId mSelectedCoreAccountId;
 
-    private ScrimCoordinator mScrim;
+    private ScrimManager mScrimManager;
     private BottomSheetObserver mBottomSheetObserver;
     private BottomSheetController mBottomSheetController;
     private AccountPickerBottomSheetCoordinator mAccountPickerBottomSheetCoordinator;
@@ -74,8 +71,11 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
         /** Called when the bottom sheet is dismissed without completing sign-in. */
         void onSignInCancel();
 
-        /** Called when the bottom sheet scrim color is updated. */
-        void setScrimColor(@ColorInt int scrimColor);
+        /**
+         * Called when the bottom sheet scrim color is changed, and the hosting activity's status
+         * bar needs to be updated to the provided color.
+         */
+        void setStatusBarColor(@ColorInt int color);
     }
 
     /**
@@ -123,41 +123,18 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
         sheetContainer.setLayoutParams(
                 new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         mContainerView.addView(sheetContainer);
-        @ColorInt int scrimColor = mActivity.getColor(R.color.default_scrim_color);
-        mScrim =
-                new ScrimCoordinator(
-                        mActivity,
-                        new ScrimCoordinator.SystemUiScrimDelegate() {
-                            @Override
-                            public void setStatusBarScrimFraction(float scrimFraction) {
-                                // Update the status bar color to match the currently shown scrim
-                                // color when the latter is changed.
-                                float alpha = ((float) Color.alpha(scrimColor)) * scrimFraction;
-                                @ColorInt
-                                int color = ColorUtils.setAlphaComponent(scrimColor, (int) alpha);
-                                mDelegate.setScrimColor(color);
-                            }
-
-                            @Override
-                            public void setScrimColor(@ColorInt int scrimColor) {
-                                mDelegate.setScrimColor(scrimColor);
-                            }
-
-                            @Override
-                            public void setNavigationBarScrimFraction(float scrimFraction) {}
-                        },
-                        (ViewGroup) sheetContainer.getParent(),
-                        scrimColor);
+        mScrimManager = new ScrimManager(mActivity, (ViewGroup) sheetContainer.getParent());
+        mScrimManager.getStatusBarColorSupplier().addObserver(mDelegate::setStatusBarColor);
 
         mBottomSheetController =
                 BottomSheetControllerFactory.createBottomSheetController(
-                        () -> mScrim,
+                        () -> mScrimManager,
                         (sheet) -> {},
                         mActivity.getWindow(),
                         KeyboardVisibilityDelegate.getInstance(),
                         () -> sheetContainer,
                         () -> 0,
-                        /* desktopWindowStateProvider= */ null);
+                        /* desktopWindowStateManager= */ null);
 
         mBottomSheetObserver =
                 new EmptyBottomSheetObserver() {
@@ -172,10 +149,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
         BackPressHandler bottomSheetBackPressHandler =
                 mBottomSheetController.getBottomSheetBackPressHandler();
         BackPressHelper.create(
-                mActivity,
-                mActivity.getOnBackPressedDispatcher(),
-                bottomSheetBackPressHandler,
-                SecondaryActivity.SIGNIN_AND_HISTORY_SYNC);
+                mActivity, mActivity.getOnBackPressedDispatcher(), bottomSheetBackPressHandler);
 
         mAccountPickerBottomSheetCoordinator =
                 new AccountPickerBottomSheetCoordinator(
@@ -198,7 +172,7 @@ public class SigninAccountPickerCoordinator implements AccountPickerDelegate {
     /** Implements {@link AccountPickerDelegate}. */
     @Override
     public boolean canHandleAddAccount() {
-        return SigninUtils.shouldShowNewSigninFlow();
+        return true;
     }
 
     /** Implements {@link AccountPickerDelegate}. */

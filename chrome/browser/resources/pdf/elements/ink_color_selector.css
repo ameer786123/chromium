@@ -4,15 +4,16 @@
 
 /* #css_wrapper_metadata_start
  * #type=style-lit
+ * #import=./pdf_shared.css.js
+ * #import=./shared_vars.css.js
+ * #include=pdf-shared
  * #css_wrapper_metadata_end */
 
 :host {
   display: inline-block;
 }
 
-div {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
+cr-grid {
   justify-content: center;
 }
 
@@ -28,7 +29,7 @@ div {
 .color-chip {
   appearance: none;
   background: var(--item-color, magenta);
-  border: 1px solid rgb(143, 143, 143);
+  border: 1px solid var(--viewer-icon-ink-background-color);
   border-radius: 50%;
   cursor: pointer;
   margin: 0;
@@ -36,7 +37,16 @@ div {
   width: 24px;
 }
 
+.color-chip.blended {
+  background: color-mix(in srgb, var(--item-color) 40%, white);
+}
+
 .color-chip[checked] {
   height: 36px;
   width: 36px;
+}
+
+.color-chip:focus-visible:focus {
+  outline: var(--viewer-icon-focus-outline-color) solid 2px;
+  outline-offset: 2px;
 }

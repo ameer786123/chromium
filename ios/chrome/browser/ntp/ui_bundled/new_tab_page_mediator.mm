@@ -12,15 +12,29 @@
 #import "base/metrics/user_metrics_action.h"
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_change_registrar.h"
+#import "components/regional_capabilities/regional_capabilities_service.h"
 #import "components/search/search.h"
+#import "components/signin/public/base/signin_switches.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_mediator.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/user_account_image_update_delegate.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
 #import "ios/chrome/browser/metrics/model/new_tab_page_uma.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_state.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_util.h"
+#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
+#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
+#import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
+#import "ios/chrome/browser/ntp/ui_bundled/feed_wrapper_view_controller.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_consumer.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_content_delegate.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_constants.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_consumer.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_view_controller.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/search_engines/model/search_engine_observer_bridge.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -29,20 +43,7 @@
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
-#import "ios/chrome/browser/signin/model/chrome_account_manager_service_observer_bridge.h"
 #import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_mediator.h"
-#import "ios/chrome/browser/ui/content_suggestions/user_account_image_update_delegate.h"
-#import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
-#import "ios/chrome/browser/ntp/ui_bundled/feed_wrapper_view_controller.h"
-#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
-#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_consumer.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_content_delegate.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_constants.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_consumer.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_view_controller.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
 #import "ios/chrome/common/ui/favicon/favicon_attributes.h"
@@ -55,23 +56,7 @@
 #import "ui/base/l10n/l10n_util.h"
 #import "url/gurl.h"
 
-namespace {
-// URL for 'Manage Activity' item in the Discover feed menu.
-const char kFeedManageActivityURL[] =
-    "https://myactivity.google.com/myactivity?product=50";
-// URL for 'Manage Interests' item in the Discover feed menu.
-const char kFeedManageInterestsURL[] =
-    "https://google.com/preferences/interests/yourinterests";
-// URL for 'Manage Hidden' item in the Discover feed menu.
-const char kFeedManageHiddenURL[] =
-    "https://google.com/preferences/interests/hidden";
-// URL for 'Learn More' item in the Discover feed menu;
-const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
-                                 "?p=new_tab&co=GENIE.Platform%3DiOS&oco=1";
-}  // namespace
-
-@interface NewTabPageMediator () <ChromeAccountManagerServiceObserver,
-                                  IdentityManagerObserverBridgeDelegate,
+@interface NewTabPageMediator () <IdentityManagerObserverBridgeDelegate,
                                   PrefObserverDelegate,
                                   SearchEngineObserving,
                                   SyncObserverModelBridge>
@@ -91,8 +76,6 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
 @end
 
 @implementation NewTabPageMediator {
-  std::unique_ptr<ChromeAccountManagerServiceObserverBridge>
-      _accountManagerServiceObserver;
   // Listen for default search engine changes.
   std::unique_ptr<SearchEngineObserverBridge> _searchEngineObserver;
   // Observes changes in identity and updates the Identity Disc.
@@ -110,39 +93,47 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
   raw_ptr<const TemplateURL> _defaultSearchEngine;
   // Sync Service.
   raw_ptr<syncer::SyncService> _syncService;
+  // Used to check feed configuration based on the country.
+  raw_ptr<regional_capabilities::RegionalCapabilitiesService>
+      _regionalCapabilitiesService;
   // Observer to keep track of the syncing status.
   std::unique_ptr<SyncObserverBridge> _syncObserver;
+  raw_ptr<signin::IdentityManager> _identityManager;
+  id<SystemIdentity> _signedInIdentity;
 }
 
 // Synthesized from NewTabPageMutator.
 @synthesize scrollPositionToSave = _scrollPositionToSave;
 
 - (instancetype)
-    initWithTemplateURLService:(TemplateURLService*)templateURLService
-                     URLLoader:(UrlLoadingBrowserAgent*)URLLoader
-                   authService:(AuthenticationService*)authService
-               identityManager:(signin::IdentityManager*)identityManager
-         accountManagerService:
-             (ChromeAccountManagerService*)accountManagerService
-      identityDiscImageUpdater:(id<UserAccountImageUpdateDelegate>)imageUpdater
-                   isIncognito:(BOOL)isIncognito
-           discoverFeedService:(DiscoverFeedService*)discoverFeedService
-                   prefService:(PrefService*)prefService
-                   syncService:(syncer::SyncService*)syncService
-                    isSafeMode:(BOOL)isSafeMode {
+     initWithTemplateURLService:(TemplateURLService*)templateURLService
+                      URLLoader:(UrlLoadingBrowserAgent*)URLLoader
+                    authService:(AuthenticationService*)authService
+                identityManager:(signin::IdentityManager*)identityManager
+          accountManagerService:
+              (ChromeAccountManagerService*)accountManagerService
+       identityDiscImageUpdater:(id<UserAccountImageUpdateDelegate>)imageUpdater
+                    isIncognito:(BOOL)isIncognito
+            discoverFeedService:(DiscoverFeedService*)discoverFeedService
+                    prefService:(PrefService*)prefService
+                    syncService:(syncer::SyncService*)syncService
+    regionalCapabilitiesService:
+        (regional_capabilities::RegionalCapabilitiesService*)
+            regionalCapabilitiesService
+                     isSafeMode:(BOOL)isSafeMode {
   self = [super init];
   if (self) {
+    CHECK(identityManager);
     CHECK(accountManagerService);
     _templateURLService = templateURLService;
     _defaultSearchEngine = templateURLService->GetDefaultSearchProvider();
     _URLLoader = URLLoader;
     _authService = authService;
     _accountManagerService = accountManagerService;
-    _accountManagerServiceObserver =
-        std::make_unique<ChromeAccountManagerServiceObserverBridge>(
-            self, _accountManagerService);
-    _identityObserverBridge.reset(
-        new signin::IdentityManagerObserverBridge(identityManager, self));
+    _identityManager = identityManager;
+    _identityObserverBridge =
+        std::make_unique<signin::IdentityManagerObserverBridge>(identityManager,
+                                                                self);
     // Listen for default search engine changes.
     _searchEngineObserver = std::make_unique<SearchEngineObserverBridge>(
         self, self.templateURLService);
@@ -152,7 +143,10 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
     _isIncognito = isIncognito;
     _discoverFeedService = discoverFeedService;
     _prefService = prefService;
+    _regionalCapabilitiesService = regionalCapabilitiesService;
     _isSafeMode = isSafeMode;
+    _signedInIdentity =
+        _authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   }
   return self;
 }
@@ -173,7 +167,6 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
 - (void)shutdown {
   _searchEngineObserver.reset();
   _identityObserverBridge.reset();
-  _accountManagerServiceObserver.reset();
   self.accountManagerService = nil;
   self.discoverFeedService = nullptr;
   _prefChangeRegistrar.reset();
@@ -181,12 +174,9 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
   _prefService = nullptr;
   _syncObserver.reset();
   _syncService = nullptr;
+  _regionalCapabilitiesService = nullptr;
+  _identityManager = nullptr;
   self.feedControlDelegate = nil;
-}
-
-- (void)handleFeedLearnMoreTapped {
-  [self.feedMetricsRecorder recordHeaderMenuLearnMoreTapped];
-  [self openMenuItemWebPage:GURL(kFeedLearnMoreURL)];
 }
 
 - (void)saveNTPStateForWebState:(web::WebState*)webState {
@@ -216,35 +206,6 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
   }
 }
 
-#pragma mark - FeedManagementNavigationDelegate
-
-- (void)handleNavigateToActivity {
-  [self.feedMetricsRecorder recordHeaderMenuManageActivityTapped];
-  [self openMenuItemWebPage:GURL(kFeedManageActivityURL)];
-}
-
-- (void)handleNavigateToFollowing {
-  [self.feedMetricsRecorder recordHeaderMenuManageFollowingTapped];
-  [self openMenuItemWebPage:GURL(kFeedManageInterestsURL)];
-}
-
-- (void)handleNavigateToHidden {
-  [self.feedMetricsRecorder recordHeaderMenuManageHiddenTapped];
-  [self openMenuItemWebPage:GURL(kFeedManageHiddenURL)];
-}
-
-- (void)handleNavigateToFollowedURL:(const GURL&)url {
-  // TODO(crbug.com/40227407): Add metrics.
-  [self openMenuItemWebPage:url];
-}
-
-#pragma mark - ChromeAccountManagerServiceObserver
-
-- (void)identityUpdated:(id<SystemIdentity>)identity {
-  [self updateAccountImage];
-  [self updateAccountErrorBadge];
-}
-
 #pragma mark - SearchEngineObserving
 
 - (void)searchEngineChanged {
@@ -262,22 +223,21 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
 
 #pragma mark - IdentityManagerObserverBridgeDelegate
 
-- (void)onPrimaryAccountChanged:
-    (const signin::PrimaryAccountChangeEvent&)event {
-  switch (event.GetEventTypeFor(signin::ConsentLevel::kSignin)) {
-    case signin::PrimaryAccountChangeEvent::Type::kCleared:
-      if (self.authService->IsAccountSwitchInProgress()) {
-        break;
-      }
-      [[fallthrough]];
-    case signin::PrimaryAccountChangeEvent::Type::kSet:
-      [self updateAccountImage];
-      [self updateAccountErrorBadge];
-      break;
-    case signin::PrimaryAccountChangeEvent::Type::kNone:
-      break;
-  }
+- (void)onEndBatchOfPrimaryAccountChanges {
+  _signedInIdentity =
+      self.authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
+  [self updateAccountImage];
+  [self updateAccountErrorBadge];
 }
+
+- (void)onExtendedAccountInfoUpdated:(const AccountInfo&)info {
+  if (info.gaia != GaiaId(_signedInIdentity.gaiaID)) {
+    return;
+  }
+  [self updateAccountImage];
+  [self updateAccountErrorBadge];
+}
+
 #pragma mark - PrefObserverDelegate
 
 - (void)onPreferenceChanged:(const std::string&)preferenceName {
@@ -304,17 +264,18 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
 // not signed in.
 - (void)updateAccountImage {
   // Fetches user's identity from Authentication Service.
-  id<SystemIdentity> identity =
-      self.authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-  if (identity) {
+  if (_signedInIdentity) {
     // Only show an avatar if the user is signed in.
     UIImage* image = self.accountManagerService->GetIdentityAvatarWithIdentity(
-        identity, IdentityAvatarSize::SmallSize);
+        _signedInIdentity, IdentityAvatarSize::SmallSize);
     [self.imageUpdater updateAccountImage:image
-                                     name:identity.userFullName
-                                    email:identity.userEmail];
+                                     name:_signedInIdentity.userFullName
+                                    email:_signedInIdentity.userEmail];
   } else {
     [self.imageUpdater setSignedOutAccountImage];
+    signin_metrics::LogSignInOffered(
+        signin_metrics::AccessPoint::kNtpSignedOutIcon,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
   }
 }
 
@@ -331,7 +292,8 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
          !IsFeedAblationEnabled() &&
          IsContentSuggestionsForSupervisedUserEnabled(_prefService) &&
          !_isSafeMode &&
-         !ShouldHideFeedWithSearchChoice(self.templateURLService);
+         !ShouldHideFeedWithSearchChoice(self.templateURLService,
+                                         _regionalCapabilitiesService);
 }
 
 // Sets whether the feed header should be visible.
@@ -375,17 +337,17 @@ const char kFeedLearnMoreURL[] = "https://support.google.com/chrome/"
 }
 
 - (void)updateAccountErrorBadge {
-  if (!base::FeatureList::IsEnabled(kIdentityDiscAccountMenu)) {
+  if (!base::FeatureList::IsEnabled(
+          switches::kEnableErrorBadgeOnIdentityDisc)) {
     return;
   }
-  id<SystemIdentity> identity =
-      self.authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   BOOL primaryIdentityHasError =
-      identity && _syncService->GetUserActionableError() !=
-                      syncer::SyncService::UserActionableError::kNone;
-  [self.headerConsumer updateADPBadgeWithErrorFound:primaryIdentityHasError
-                                               name:identity.userFullName
-                                              email:identity.userEmail];
+      _signedInIdentity && _syncService->GetUserActionableError() !=
+                               syncer::SyncService::UserActionableError::kNone;
+  [self.headerConsumer
+      updateADPBadgeWithErrorFound:primaryIdentityHasError
+                              name:_signedInIdentity.userFullName
+                             email:_signedInIdentity.userEmail];
 }
 
 @end

@@ -6,11 +6,13 @@
 #define CHROME_BROWSER_KEYBOARD_ACCESSORY_ANDROID_PAYMENT_METHOD_ACCESSORY_CONTROLLER_IMPL_H_
 
 #include <optional>
+#include <variant>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "chrome/browser/keyboard_accessory/android/payment_method_accessory_controller.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "content/public/browser/web_contents_user_data.h"
 
 class ManualFillingController;
@@ -24,7 +26,9 @@ class BrowserAutofillManager;
 // class.
 class PaymentMethodAccessoryControllerImpl
     : public PaymentMethodAccessoryController,
-      public content::WebContentsUserData<PaymentMethodAccessoryControllerImpl> {
+      public PaymentsDataManager::Observer,
+      public content::WebContentsUserData<
+          PaymentMethodAccessoryControllerImpl> {
  public:
   ~PaymentMethodAccessoryControllerImpl() override;
 
@@ -41,13 +45,13 @@ class PaymentMethodAccessoryControllerImpl
   void RefreshSuggestions() override;
   base::WeakPtr<PaymentMethodAccessoryController> AsWeakPtr() override;
 
-  // PersonalDataManagerObserver:
-  void OnPersonalDataChanged() override;
+  // PaymentsDataManager::Observer:
+  void OnPaymentsDataChanged() override;
 
   static void CreateForWebContentsForTesting(
       content::WebContents* web_contents,
       base::WeakPtr<ManualFillingController> mf_controller,
-      PersonalDataManager* personal_data_manager,
+      PaymentsDataManager* payments_data_manager,
       BrowserAutofillManager* af_manager,
       AutofillDriver* af_driver);
 
@@ -55,7 +59,7 @@ class PaymentMethodAccessoryControllerImpl
   friend class content::WebContentsUserData<PaymentMethodAccessoryControllerImpl>;
 
   using CardOrVirtualCard =
-      absl::variant<const CreditCard*, std::unique_ptr<CreditCard>>;
+      std::variant<const CreditCard*, std::unique_ptr<CreditCard>>;
 
   // Required for construction via |CreateForWebContents|:
   explicit PaymentMethodAccessoryControllerImpl(content::WebContents* contents);
@@ -64,7 +68,7 @@ class PaymentMethodAccessoryControllerImpl
   PaymentMethodAccessoryControllerImpl(
       content::WebContents* web_contents,
       base::WeakPtr<ManualFillingController> mf_controller,
-      PersonalDataManager* personal_data_manager,
+      PaymentsDataManager* payments_data_manager,
       BrowserAutofillManager* af_manager,
       AutofillDriver* af_driver);
 
@@ -82,8 +86,7 @@ class PaymentMethodAccessoryControllerImpl
 
   // `OnFillingTriggered()` fetches the credit card and calls this function
   // once the `credit_card` is available. If successful, it fills it.
-  void OnCreditCardFetched(CreditCardFetchResult result,
-                           const CreditCard* credit_card);
+  void OnCreditCardFetched(const CreditCard& credit_card);
 
   // Applies the given `value` to the `last_focused_field_id_` if applicable.
   void ApplyToField(const std::u16string& value);
@@ -109,8 +112,11 @@ class PaymentMethodAccessoryControllerImpl
   // method also tries to fetch IBAN and fill the form field.
   bool FetchIfIban(const std::string& selection_id);
 
+  const PaymentsDataManager* paydm() const {
+    return paydm_observation_.GetSource();
+  }
+
   base::WeakPtr<ManualFillingController> mf_controller_;
-  const raw_ptr<PersonalDataManager> personal_data_manager_;
   raw_ptr<BrowserAutofillManager> af_manager_for_testing_ = nullptr;
   raw_ptr<AutofillDriver> af_driver_for_testing_ = nullptr;
 
@@ -120,6 +126,10 @@ class PaymentMethodAccessoryControllerImpl
   // OnFillingTriggered() sets this so that OnCreditCardFetched() can assert
   // that the focused frame has not changed and knows the field to be filled.
   FieldGlobalId last_focused_field_id_;
+
+  // Observes the `PaymentsDataManager` of the profile to react to updates.
+  base::ScopedObservation<PaymentsDataManager, PaymentsDataManager::Observer>
+      paydm_observation_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

@@ -11,21 +11,20 @@
 import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 import 'chrome://resources/ash/common/cr_elements/cr_action_menu/cr_action_menu.js';
 import 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
-import 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
 import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_indicator.js';
 import 'chrome://resources/ash/common/cr_elements/policy/cr_tooltip_icon.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import '../settings_shared.css.js';
 
-import {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
-import {CrDialogElement} from 'chrome://resources/ash/common/cr_elements/cr_dialog/cr_dialog.js';
+import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
 import {assertInstanceof} from 'chrome://resources/js/assert.js';
 import {getImage} from 'chrome://resources/js/icon.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {DomRepeatEvent, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {assertExists} from '../assert_extras.js';
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
@@ -33,19 +32,15 @@ import {isChild} from '../common/load_time_booleans.js';
 import {RouteObserverMixin} from '../common/route_observer_mixin.js';
 import {recordSettingChange} from '../metrics_recorder.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
-import {Route, routes} from '../router.js';
+import type {Route} from '../router.js';
+import {routes} from '../router.js';
 
-import {Account, AccountManagerBrowserProxy, AccountManagerBrowserProxyImpl} from './account_manager_browser_proxy.js';
+import type {Account, AccountManagerBrowserProxy} from './account_manager_browser_proxy.js';
+import {AccountManagerBrowserProxyImpl} from './account_manager_browser_proxy.js';
 import {getTemplate} from './additional_accounts_settings_card.html.js';
 
 const AdditionalAccountsSettingsCardElementBase = RouteObserverMixin(
     WebUiListenerMixin(I18nMixin(DeepLinkingMixin(PolymerElement))));
-
-export interface AdditionalAccountsSettingsCardElement {
-  $: {
-    removeConfirmationDialog: CrDialogElement,
-  };
-}
 
 export class AdditionalAccountsSettingsCardElement extends
     AdditionalAccountsSettingsCardElementBase {
@@ -98,38 +93,19 @@ export class AdditionalAccountsSettingsCardElement extends
         },
         readOnly: true,
       },
-
-      /**
-       * @return true if `kArcAccountRestrictionsEnabled` feature is
-       * enabled, false otherwise.
-       */
-      isArcAccountRestrictionsEnabled_: {
-        type: Boolean,
-        value() {
-          // TODO(b/349386750): Cleanup UI to toggle ARC access after Lacros is
-          // turned off.
-          return false;
-        },
-        readOnly: true,
-      },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kAddAccount,
-          Setting.kRemoveAccount,
-        ]),
-      },
     };
   }
 
   accounts: Account[];
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kAddAccount,
+    Setting.kRemoveAccount,
+  ]);
+
   private actionMenuAccount_: Account|null;
   private browserProxy_: AccountManagerBrowserProxy;
-  private isArcAccountRestrictionsEnabled_: boolean;
   private isChildUser_: boolean;
   private isDeviceAccountManaged_: boolean;
   private isSecondaryGoogleAccountSigninAllowed_: boolean;
@@ -253,45 +229,13 @@ export class AdditionalAccountsSettingsCardElement extends
   }
 
   /**
-   * If Lacros is not enabled, removes the account pointed to by
-   * |this.actionMenuAccount_|.
-   * If Lacros is enabled, shows a warning dialog that the user needs to
-   * confirm before removing the account.
+   * Removes the account pointed to by |this.actionMenuAccount_|.
    */
   private onRemoveAccountClick_(): void {
     this.shadowRoot!.querySelector('cr-action-menu')!.close();
     assertExists(this.actionMenuAccount_);
-    if (loadTimeData.getBoolean('lacrosEnabled') &&
-        this.actionMenuAccount_.isManaged) {
-      this.$.removeConfirmationDialog.showModal();
-    } else {
-      this.browserProxy_.removeAccount(this.actionMenuAccount_);
-      this.actionMenuAccount_ = null;
-      this.shadowRoot!.querySelector<CrButtonElement>(
-                          '#addAccountButton')!.focus();
-    }
-  }
-
-  /**
-   * The user chooses not to remove the account after seeing the warning
-   * dialog, and taps the cancel button.
-   */
-  private onRemoveAccountDialogCancelClick_(): void {
-    this.actionMenuAccount_ = null;
-    this.$.removeConfirmationDialog.cancel();
-    this.shadowRoot!.querySelector<CrButtonElement>(
-                        '#addAccountButton')!.focus();
-  }
-
-  /**
-   * After seeing the warning dialog, the user chooses to removes the account
-   * pointed to by |this.actionMenuAccount_|, and taps the remove button.
-   */
-  private onRemoveAccountDialogRemoveClick_(): void {
-    assertExists(this.actionMenuAccount_);
     this.browserProxy_.removeAccount(this.actionMenuAccount_);
     this.actionMenuAccount_ = null;
-    this.$.removeConfirmationDialog.close();
     this.shadowRoot!.querySelector<CrButtonElement>(
                         '#addAccountButton')!.focus();
   }

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/time/time.h"
 
 namespace compose {
@@ -104,6 +105,10 @@ struct Config {
   // nudge.
   int proactive_nudge_text_change_count = 10;
 
+  // List of countries where the proactive nudge is enabled. The default value
+  // is set in the constructor.
+  base::flat_set<std::string> proactive_nudge_countries;
+
   // Whether the nudge on selection should be enabled.
   bool selection_nudge_enabled = false;
 
@@ -120,6 +125,7 @@ struct Config {
   // once per field per focus.
   bool proactive_nudge_field_per_navigation = true;
 
+  // How many text change events to wait for before dismissing the nudge.
   unsigned int nudge_field_change_event_max = 3;
 
   // The duration that the saved state notification is shown before
@@ -144,11 +150,8 @@ struct Config {
   base::TimeDelta request_latency_timeout = base::Seconds(20);
 
   // Finch-controllable list of countries where Compose should be enabled. The
-  // default value contains countries where it was already fully launched.
-  std::vector<std::string> enabled_countries = {
-      "bd", "ca", "gh", "in", "ke", "my", "ng", "ph",
-      "pk", "sg", "tz", "ug", "us", "zm", "zw",
-  };
+  // default value is set in the constructor.
+  base::flat_set<std::string> enabled_countries;
 
   // The threshold for the lifetime of a Compose session. A session whose
   // lifetime has exceeded this threshold will be replaced with a new session

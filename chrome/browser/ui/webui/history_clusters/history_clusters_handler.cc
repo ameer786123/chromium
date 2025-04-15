@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/containers/contains.h"
@@ -14,7 +15,6 @@
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -30,7 +30,6 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -51,9 +50,9 @@
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/actions/actions.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/l10n/time_format.h"
@@ -75,11 +74,11 @@ void InvokeAction(actions::ActionId id, actions::ActionItem* scope) {
 // Returns the current browser window, regardless of whether this instance is
 // tab-scoped or window-scoped.
 BrowserWindowInterface* GetBrowserWindowInterface(
-    absl::variant<BrowserWindowInterface*, tabs::TabInterface*> interface) {
-  if (absl::holds_alternative<BrowserWindowInterface*>(interface)) {
-    return absl::get<BrowserWindowInterface*>(interface);
+    std::variant<BrowserWindowInterface*, tabs::TabInterface*> interface) {
+  if (std::holds_alternative<BrowserWindowInterface*>(interface)) {
+    return std::get<BrowserWindowInterface*>(interface);
   }
-  return absl::get<tabs::TabInterface*>(interface)->GetBrowserWindowInterface();
+  return std::get<tabs::TabInterface*>(interface)->GetBrowserWindowInterface();
 }
 
 class HistoryClustersSidePanelContextMenu
@@ -87,7 +86,7 @@ class HistoryClustersSidePanelContextMenu
       public ui::SimpleMenuModel::Delegate {
  public:
   HistoryClustersSidePanelContextMenu(
-      absl::variant<BrowserWindowInterface*, tabs::TabInterface*> interface,
+      std::variant<BrowserWindowInterface*, tabs::TabInterface*> interface,
       GURL url)
       : ui::SimpleMenuModel(this), interface_(interface), url_(std::move(url)) {
     AddItemWithStringId(IDC_CONTENT_CONTEXT_OPENLINKNEWTAB,
@@ -102,7 +101,7 @@ class HistoryClustersSidePanelContextMenu
                         IDS_HISTORY_CLUSTERS_COPY_LINK);
   }
   HistoryClustersSidePanelContextMenu(
-      absl::variant<BrowserWindowInterface*, tabs::TabInterface*> interface,
+      std::variant<BrowserWindowInterface*, tabs::TabInterface*> interface,
       std::string query)
       : ui::SimpleMenuModel(this), interface_(interface), query_(query) {
     AddItemWithStringId(IDC_CUT, IDS_HISTORY_CLUSTERS_CUT);
@@ -172,15 +171,14 @@ class HistoryClustersSidePanelContextMenu
                          ->root_action_item());
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 
  private:
   // Exactly one of `browser_window_interface_` and `tab_interface_` will be
   // non-nullptr.
-  absl::variant<BrowserWindowInterface*, tabs::TabInterface*> interface_;
+  std::variant<BrowserWindowInterface*, tabs::TabInterface*> interface_;
   std::string query_;
   GURL url_;
 };
@@ -354,7 +352,7 @@ void HistoryClustersHandler::HideVisits(std::vector<mojom::URLVisitPtr> visits,
   }
 
   std::vector<history::VisitID> visit_ids;
-  base::ranges::transform(
+  std::ranges::transform(
       visits, std::back_inserter(visit_ids),
       [](const auto& url_visit_ptr) { return url_visit_ptr->visit_id; });
 
@@ -392,14 +390,13 @@ void HistoryClustersHandler::RemoveVisits(
     {
       history::BrowsingHistoryService::HistoryEntry entry;
       entry.url = visit->raw_visit_data->url;
-      entry.all_timestamps.insert(
-          visit->raw_visit_data->visit_time.ToInternalValue());
+      entry.all_timestamps.insert(visit->raw_visit_data->visit_time);
       items_to_remove.push_back(std::move(entry));
     }
     for (const auto& duplicate : visit->duplicates) {
       history::BrowsingHistoryService::HistoryEntry entry;
       entry.url = duplicate->url;
-      entry.all_timestamps.insert(duplicate->visit_time.ToInternalValue());
+      entry.all_timestamps.insert(duplicate->visit_time);
       items_to_remove.push_back(std::move(entry));
     }
   }
@@ -434,8 +431,7 @@ void HistoryClustersHandler::RemoveVisitByUrlAndTime(
   history::BrowsingHistoryService::HistoryEntry entry;
   entry.url = url;
   base::Time visit_time = base::Time::FromMillisecondsSinceUnixEpoch(timestamp);
-  entry.all_timestamps.insert(
-      visit_time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  entry.all_timestamps.insert(visit_time);
   browsing_history_service_->RemoveVisits({entry});
 }
 

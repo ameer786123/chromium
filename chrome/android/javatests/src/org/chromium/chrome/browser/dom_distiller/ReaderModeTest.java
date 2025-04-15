@@ -30,7 +30,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ThreadUtils;
@@ -40,7 +41,6 @@ import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.ChromeActivity;
@@ -85,6 +85,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @DisableFeatures(ChromeFeatureList.BROWSER_CONTROLS_IN_VIZ)
 public class ReaderModeTest implements CustomMainActivityStart {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Rule public DownloadTestRule mDownloadTestRule = new DownloadTestRule(this);
 
     private static final String TEST_PAGE = "/chrome/test/data/dom_distiller/simple_article.html";
@@ -103,7 +104,6 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Override
     public void customMainActivityStart() {
-        MockitoAnnotations.initMocks(this);
         mTestServer =
                 EmbeddedTestServer.createAndStartServer(
                         ApplicationProvider.getApplicationContext());
@@ -120,7 +120,6 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
-    @EnableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     public void testReaderModeInCct() throws TimeoutException {
         Tab originalTab = mDownloadTestRule.getActivity().getActivityTab();
         String innerHtml = getInnerHtml(originalTab);
@@ -143,7 +142,6 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
-    @EnableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     public void testReaderModeInCct_Downloaded() throws TimeoutException {
         Tab originalTab = mDownloadTestRule.getActivity().getActivityTab();
         String innerHtml = getInnerHtml(originalTab);
@@ -168,14 +166,12 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
-    @EnableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     public void testReaderModeInCct_Incognito() throws TimeoutException {
         openReaderModeInIncognitoCct();
     }
 
     @Test
     @MediumTest
-    @EnableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     @DisabledTest(message = "https://crbug.com/1338273")
     public void testCloseAllIncognitoNotification_ClosesCct()
             throws PendingIntent.CanceledException, TimeoutException {
@@ -258,24 +254,6 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
-    @DisableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
-    public void testReaderModeInTab() throws TimeoutException {
-        Tab tab = mDownloadTestRule.getActivity().getActivityTab();
-        String innerHtml = getInnerHtml(tab);
-        assertThat(innerHtml).doesNotContain("article-header");
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    tab.getUserDataHost()
-                            .getUserData(ReaderModeManager.USER_DATA_KEY)
-                            .activateReaderMode();
-                });
-        waitForDistillation(PAGE_TITLE, mDownloadTestRule.getActivity().getActivityTab());
-    }
-
-    @Test
-    @MediumTest
-    @EnableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     public void testPreferenceInCct() throws TimeoutException {
         Tab originalTab = mDownloadTestRule.getActivity().getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
@@ -296,7 +274,6 @@ public class ReaderModeTest implements CustomMainActivityStart {
 
     @Test
     @MediumTest
-    @DisableFeatures(ChromeFeatureList.READER_MODE_IN_CCT)
     public void testPreferenceInTab() throws TimeoutException {
         mDownloadTestRule.loadUrl(
                 DomDistillerUrlUtils.getDistillerViewUrlFromUrl(

@@ -4,10 +4,11 @@
 
 #include "components/safe_browsing/core/common/utils.h"
 
+#include <algorithm>
+
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
@@ -137,7 +138,7 @@ bool CanGetReputationOfUrl(const GURL& url) {
   const std::string hostname = url.host();
   // There is no reason to send URLs with very short or single-label hosts.
   // The Safe Browsing server does not check them.
-  if (hostname.size() < 4 || base::ranges::count(hostname, '.') < 1) {
+  if (hostname.size() < 4 || std::ranges::count(hostname, '.') < 1) {
     return false;
   }
 
@@ -205,6 +206,22 @@ std::string GetExtraMetricsSuffix(
       break;
   }
   NOTREACHED();
+}
+
+std::string GetExtraExtraMetricsSuffix(
+    security_interstitials::UnsafeResource unsafe_resource) {
+  switch (unsafe_resource.threat_subtype) {
+    case safe_browsing::ThreatSubtype::SCAM_EXPERIMENT_VERDICT_1:
+      return "scam_experiment_verdict_1";
+    case safe_browsing::ThreatSubtype::SCAM_EXPERIMENT_VERDICT_2:
+      return "scam_experiment_verdict_2";
+    case safe_browsing::ThreatSubtype::SCAM_EXPERIMENT_CATCH_ALL_ENFORCEMENT:
+      return "scam_experiment_catch_all";
+    case safe_browsing::ThreatSubtype::UNKNOWN:
+      return "";
+  }
+  // Subtype is not always set.
+  return "";
 }
 
 }  // namespace safe_browsing

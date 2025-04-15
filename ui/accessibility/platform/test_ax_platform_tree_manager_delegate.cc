@@ -35,12 +35,12 @@ TestAXPlatformTreeManagerDelegate::AccessibilityGetAcceleratedWidget() {
 
 gfx::NativeViewAccessible
 TestAXPlatformTreeManagerDelegate::AccessibilityGetNativeViewAccessible() {
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 gfx::NativeViewAccessible TestAXPlatformTreeManagerDelegate::
     AccessibilityGetNativeViewAccessibleForWindow() {
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 void TestAXPlatformTreeManagerDelegate::AccessibilityHitTest(
@@ -69,6 +69,11 @@ bool TestAXPlatformTreeManagerDelegate::ShouldSuppressAXLoadComplete() {
 content::WebContentsAccessibility*
 TestAXPlatformTreeManagerDelegate::AccessibilityGetWebContentsAccessibility() {
   return nullptr;
+}
+
+bool TestAXPlatformTreeManagerDelegate::AccessibilityIsWebContentSource() {
+  // Currently only used in web content tests.
+  return true;
 }
 
 }  // namespace ui

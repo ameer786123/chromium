@@ -5,9 +5,9 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
-#include "chrome/browser/ui/views/user_education/browser_feature_promo_controller.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/user_education/interactive_feature_promo_test.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/user_education/common/feature_promo/feature_promo_result.h"
@@ -44,16 +44,17 @@ class BrowserUserEducationServiceUiTest : public InteractiveFeaturePromoTest {
   }
 
   auto DoSetup() {
-    return Steps(InstrumentTab(kMainContentsElementId),
-                 NavigateWebContents(kMainContentsElementId,
-                                     GURL("chrome://internals/user-education")),
-                 NameDescendantViewByType<ToolbarView>(kTopContainerElementId,
-                                                       kToolbarName),
-                 NameViewRelative(kBrowserViewElementId, kContentsPaneName,
-                                  [](BrowserView* browser_view) {
-                                    return browser_view->contents_web_view();
-                                  }),
-                 InAnyContext(WaitForShow(kWebUIIPHDemoElementIdentifier)));
+    return Steps(
+        InstrumentTab(kMainContentsElementId),
+        NavigateWebContents(kMainContentsElementId,
+                            GURL(chrome::kChromeUIUserEducationInternalsURL)),
+        NameDescendantViewByType<ToolbarView>(kTopContainerElementId,
+                                              kToolbarName),
+        NameViewRelative(kBrowserViewElementId, kContentsPaneName,
+                         [](BrowserView* browser_view) {
+                           return browser_view->contents_web_view();
+                         }),
+        InAnyContext(WaitForShow(kWebUIIPHDemoElementIdentifier)));
   }
 
   auto EnsureFocus(ElementSpecifier spec, bool focused) {

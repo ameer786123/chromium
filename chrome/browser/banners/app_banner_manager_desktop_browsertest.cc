@@ -16,7 +16,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/banners/app_banner_manager_browsertest_base.h"
 #include "chrome/browser/banners/test_app_banner_manager_desktop.h"
@@ -35,7 +35,6 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "chromeos/ash/components/standalone_browser/feature_refs.h"
 #include "components/password_manager/content/common/web_ui_constants.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/webapps/browser/banners/app_banner_metrics.h"
@@ -47,35 +46,16 @@
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/extension.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#endif
-
 namespace webapps {
-
-namespace {
-
-std::vector<base::test::FeatureRef> GetDisabledFeatures() {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  return ash::standalone_browser::GetFeatureRefs();
-#else
-  return {};
-#endif
-}
-
-}  // namespace
 
 using State = AppBannerManager::State;
 
 class AppBannerManagerDesktopBrowserTest
     : public AppBannerManagerBrowserTestBase {
  public:
-  AppBannerManagerDesktopBrowserTest()
-      : total_engagement_(
-            AppBannerSettingsHelper::ScopeTotalEngagementForTesting(0)) {}
+  AppBannerManagerDesktopBrowserTest() = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures({}, GetDisabledFeatures());
     TestAppBannerManagerDesktop::SetUp();
     AppBannerManagerBrowserTestBase::SetUp();
   }
@@ -94,11 +74,6 @@ class AppBannerManagerDesktopBrowserTest
       const AppBannerManagerDesktopBrowserTest&) = delete;
   AppBannerManagerDesktopBrowserTest& operator=(
       const AppBannerManagerDesktopBrowserTest&) = delete;
-
- protected:
-  base::test::ScopedFeatureList scoped_feature_list_;
-  // Scope engagement needed to trigger banners instantly.
-  base::AutoReset<double> total_engagement_;
 };
 
 IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
@@ -340,17 +315,25 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
   options.user_display_mode = web_app::mojom::UserDisplayMode::kBrowser;
   web_app::ExternallyManagedAppManagerInstall(profile, options);
 
-  // Uninstall web app by policy.
+  // Uninstall web app by policy by synchronizing with an empty
+  // `ExternalInstallOptions` vector.
   {
     base::RunLoop run_loop;
     web_app::WebAppProvider::GetForTest(profile)
         ->externally_managed_app_manager()
-        .UninstallApps(
-            {GetBannerURL()}, web_app::ExternalInstallSource::kExternalPolicy,
+        .SynchronizeInstalledApps(
+            {}, web_app::ExternalInstallSource::kExternalPolicy,
             base::BindLambdaForTesting(
-                [&run_loop](const GURL& app_url,
-                            webapps::UninstallResultCode code) {
-                  EXPECT_EQ(code, webapps::UninstallResultCode::kAppRemoved);
+                [&](std::map<GURL /*install_url*/,
+                             web_app::ExternallyManagedAppManagerInstallResult>
+                        install_results,
+                    std::map<GURL /*install_url*/, webapps::UninstallResultCode>
+                        uninstall_results) {
+                  EXPECT_TRUE(install_results.empty());
+                  ASSERT_TRUE(
+                      base::Contains(uninstall_results, GetBannerURL()));
+                  EXPECT_EQ(webapps::UninstallResultCode::kAppRemoved,
+                            uninstall_results[GetBannerURL()]);
                   run_loop.Quit();
                 }));
     run_loop.Run();
@@ -475,8 +458,6 @@ class AppBannerManagerDesktopBrowserTestForPasswordManagerPage
     : public AppBannerManagerDesktopBrowserTest {
  public:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{}, GetDisabledFeatures());
     TestAppBannerManagerDesktop::SetUp();
     AppBannerManagerBrowserTestBase::SetUp();
   }

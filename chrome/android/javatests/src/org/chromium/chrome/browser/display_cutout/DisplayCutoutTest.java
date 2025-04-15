@@ -20,9 +20,11 @@ import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.blink.mojom.ViewportFit;
 import org.chromium.chrome.browser.app.ChromeActivity;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -33,6 +35,12 @@ import java.util.concurrent.TimeoutException;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
+// The combination of these two features causes the first page load to layout correctly in this
+// test suite. TODO(crbug.com/377778493): To fix this test to work properly w/ EdgeToEdge.
+@Features.DisableFeatures({
+    ChromeFeatureList.DRAW_CUTOUT_EDGE_TO_EDGE,
+    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN
+})
 @MinAndroidSdkLevel(Build.VERSION_CODES.P)
 public class DisplayCutoutTest {
     @Rule
@@ -66,6 +74,7 @@ public class DisplayCutoutTest {
     /** Test that the safe area is applied when we have viewport fit cover. */
     @Test
     @LargeTest
+    @DisableIf.Build(supported_abis_includes = "arm64-v8a", message = "https://crbug.com/402051996")
     public void testViewportFitCover() throws TimeoutException {
         mTestRule.enterFullscreen();
         mTestRule.setViewportFit(DisplayCutoutTestRule.VIEWPORT_FIT_COVER);
@@ -125,6 +134,10 @@ public class DisplayCutoutTest {
     /** Test that no safe area is applied when we have no viewport fit. */
     @Test
     @LargeTest
+    @DisableIf.Build(
+            supported_abis_includes = "armeabi-v7a",
+            message = "https://crbug.com/402051996")
+    @DisableIf.Build(supported_abis_includes = "arm64-v8a", message = "https://crbug.com/402051996")
     public void testViewportFitDefault() throws TimeoutException {
         mTestRule.enterFullscreen();
         mTestRule.setViewportFit(DisplayCutoutTestRule.VIEWPORT_FIT_COVER);
@@ -142,6 +155,7 @@ public class DisplayCutoutTest {
     /** Test that the safe area is calculated correctly using the device's dip scale. */
     @Test
     @LargeTest
+    @DisableIf.Build(sdk_equals = 34, message = "crbug.com/403286999")
     public void testViewportFitDipScale() throws TimeoutException {
         mTestRule.enterFullscreen();
         mTestRule.setDipScale(DisplayCutoutTestRule.TEST_HIGH_DIP_SCALE);
@@ -169,6 +183,7 @@ public class DisplayCutoutTest {
     /** Test that we do not break if we have cover but no cutout. */
     @Test
     @LargeTest
+    @DisableIf.Build(supported_abis_includes = "arm64-v8a", message = "https://crbug.com/402051996")
     public void testViewportFitCoverNoCutout() throws TimeoutException {
         mTestRule.setDeviceHasCutout(false);
         mTestRule.enterFullscreen();

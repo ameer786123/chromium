@@ -453,8 +453,10 @@ void CloudPolicyInvalidator::PolicyInvalidationHandler::HandleInvalidation(
   const std::string payload = invalidation.payload();
 
   // Ignore the invalidation if it is expired.
-  const auto last_fetch_time = base::Time::FromMillisecondsSinceUnixEpoch(
-      core_->store()->policy()->timestamp());
+  const auto* policy = core_->store()->policy();
+  const auto last_fetch_time =
+      policy ? base::Time::FromMillisecondsSinceUnixEpoch(policy->timestamp())
+             : base::Time();
   const auto current_time = clock_->Now();
   const bool is_expired =
       IsInvalidationExpired(invalidation, last_fetch_time, current_time);
@@ -545,7 +547,7 @@ void CloudPolicyInvalidator::RegisterWithInvalidationService(
   // Update subscription with the invalidation service.
   const bool success =
       invalidation_service->UpdateInterestedTopics(this, /*topics=*/{topic});
-  CHECK(success) << "Could not subscribe to topic: " << topic;
+  LOG_IF(ERROR, !success) << "Could not subscribe to topic: " << topic;
 }
 
 void CloudPolicyInvalidator::UnregisterWithInvalidationService() {

@@ -26,6 +26,7 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.BuildConfig;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.tab_activity_glue.ReparentingTask;
 import org.chromium.chrome.browser.app.tabmodel.TabModelOrchestrator;
@@ -37,12 +38,20 @@ import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
 import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
 import org.chromium.chrome.browser.lifecycle.RecreateObserver;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils.InstanceAllocationType;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
+import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
+import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncUtils;
+import org.chromium.chrome.browser.tabmodel.TabGroupMetadata;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.util.AndroidTaskUtils;
-import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateProvider;
+import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 import org.chromium.components.browser_ui.widget.MenuOrKeyboardActionController;
+import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.ui.display.DisplayAndroidManager;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
@@ -112,8 +121,8 @@ public class MultiInstanceManager
      * @param modalDialogManagerSupplier A supplier for the {@link ModalDialogManager}.
      * @param menuOrKeyboardActionController The {@link MenuOrKeyboardActionController} for the
      *     associated activity.
-     * @param desktopWindowStateProviderSupplier A supplier for the {@link
-     *     DesktopWindowStateProvider} instance.
+     * @param desktopWindowStateManagerSupplier A supplier for the {@link DesktopWindowStateManager}
+     *     instance.
      * @return {@link MultiInstanceManager} object or {@code null} on the platform it is not needed.
      */
     public @Nullable static MultiInstanceManager create(
@@ -123,7 +132,7 @@ public class MultiInstanceManager
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier,
             MenuOrKeyboardActionController menuOrKeyboardActionController,
-            Supplier<DesktopWindowStateProvider> desktopWindowStateProviderSupplier) {
+            Supplier<DesktopWindowStateManager> desktopWindowStateManagerSupplier) {
         if (MultiWindowUtils.isMultiInstanceApi31Enabled()) {
             return new MultiInstanceManagerApi31(
                     activity,
@@ -132,7 +141,7 @@ public class MultiInstanceManager
                     activityLifecycleDispatcher,
                     modalDialogManagerSupplier,
                     menuOrKeyboardActionController,
-                    desktopWindowStateProviderSupplier);
+                    desktopWindowStateManagerSupplier);
         } else {
             return new MultiInstanceManager(
                     activity,
@@ -508,7 +517,26 @@ public class MultiInstanceManager
         // Not implemented
     }
 
-    protected void moveTabToOtherWindow(Tab tab) {
+    public void moveTabGroupToWindow(
+            Activity activity,
+            TabGroupMetadata tabGroupMetadata,
+            int atIndex,
+            @Nullable Runnable onFinishedRunnable) {
+        // Not implemented
+    }
+
+    /**
+     * If there's only one window currently, moves {@param tab} to a new window. Otherwise, opens a
+     * dialog to select which window to move {@param tab} to.
+     *
+     * @param tab The tab to move.
+     */
+    public void moveTabToOtherWindow(Tab tab) {
+        if (MultiWindowUtils.getInstanceCount() == 1) {
+            moveTabToNewWindow(tab);
+            return;
+        }
+
         Intent intent = mMultiWindowModeStateDispatcher.getOpenInOtherWindowIntent();
         if (intent == null) return;
 
@@ -517,8 +545,8 @@ public class MultiInstanceManager
                 .begin(
                         mActivity,
                         intent,
-                        mMultiWindowModeStateDispatcher.getOpenInOtherWindowActivityOptions(),
-                        null);
+                        /* startActivityOptions= */ null,
+                        /* finalizeCallback= */ null);
         RecordUserAction.record("MobileMenuMoveToOtherWindow");
     }
 
@@ -533,8 +561,7 @@ public class MultiInstanceManager
         intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
 
         onMultiInstanceModeStarted();
-        mActivity.startActivity(
-                intent, mMultiWindowModeStateDispatcher.getOpenInOtherWindowActivityOptions());
+        mActivity.startActivity(intent);
         RecordUserAction.record(umaAction);
     }
 
@@ -613,5 +640,38 @@ public class MultiInstanceManager
      */
     public boolean closeChromeWindowIfEmpty(int instanceId) {
         return false;
+    }
+
+    /**
+     * Intended to be called on initialization. If there's only one window at the moment that has
+     * tabs stored for it, we then know that any tabs and groups that sync knows of are not in other
+     * windows, and their local ids should be cleared out.
+     *
+     * @param selector The root entry point to tab model objects. Does not necessarily have to be
+     *     done initializing.
+     */
+    public void cleanupSyncedTabGroupsIfOnlyInstance(TabModelSelector selector) {
+        // Should only happen in tests.
+        if (BuildConfig.IS_FOR_TEST && selector == null) return;
+
+        assert selector != null;
+
+        TabModelUtils.runOnTabStateInitialized(
+                selector,
+                (TabModelSelector initializedSelector) -> {
+                    if (mMultiWindowModeStateDispatcher.isMultiInstanceRunning()) return;
+                    cleanupSyncedTabGroups(initializedSelector);
+                });
+    }
+
+    protected void cleanupSyncedTabGroups(TabModelSelector selector) {
+        TabGroupModelFilter filter =
+                selector.getTabGroupModelFilterProvider().getTabGroupModelFilter(false);
+
+        Profile profile = filter.getTabModel().getProfile();
+        if (!TabGroupSyncFeatures.isTabGroupSyncEnabled(profile)) return;
+
+        TabGroupSyncService tabGroupSyncService = TabGroupSyncServiceFactory.getForProfile(profile);
+        TabGroupSyncUtils.unmapLocalIdsNotInTabGroupModelFilter(tabGroupSyncService, filter);
     }
 }

@@ -11,6 +11,7 @@
 #include "ash/webui/boca_ui/url_constants.h"
 #include "ash/webui/common/chrome_os_webui_config.h"
 #include "ash/webui/system_apps/public/system_web_app_ui_config.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/webui_config.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -46,7 +47,9 @@ class BocaUIDelegate {
 class BocaUI : public ui::UntrustedWebUIController,
                public boca::mojom::BocaPageHandlerFactory {
  public:
-  BocaUI(content::WebUI* web_ui, std::unique_ptr<BocaUIDelegate> delegate);
+  BocaUI(content::WebUI* web_ui,
+         std::unique_ptr<BocaUIDelegate> delegate,
+         bool is_producer);
   BocaUI(const BocaUI&) = delete;
   BocaUI& operator=(const BocaUI&) = delete;
   ~BocaUI() override;
@@ -64,9 +67,10 @@ class BocaUI : public ui::UntrustedWebUIController,
               mojo::PendingRemote<boca::mojom::Page> page) override;
 
  private:
-  raw_ptr<content::WebUI> web_ui_;
+  const bool is_producer_;
   mojo::Receiver<boca::mojom::BocaPageHandlerFactory> receiver_{this};
   std::unique_ptr<BocaAppHandler> page_handler_impl_;
+  SpotlightService spotlight_service_;
 
   std::unique_ptr<ui::ColorChangeHandler> color_provider_handler_;
 

@@ -4,7 +4,10 @@
 
 #include "content/browser/interest_group/interest_group_auction_reporter.h"
 
+#include <algorithm>
+#include <concepts>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -42,6 +45,8 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "content/services/auction_worklet/public/cpp/private_model_training_reporting.h"
+#include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom-forward.h"
 #include "content/services/auction_worklet/public/mojom/private_aggregation_request.mojom.h"
 #include "content/services/auction_worklet/public/mojom/real_time_reporting.mojom-forward.h"
 #include "content/test/test_content_browser_client.h"
@@ -53,6 +58,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
 #include "third_party/blink/public/common/interest_group/auction_config.h"
 #include "third_party/blink/public/common/interest_group/interest_group.h"
@@ -64,6 +70,57 @@
 
 namespace content {
 namespace {
+
+// Helpers to make std::vectors from (Finalized)PrivateAggregationRequestPtrs.
+// Initializer lists for vectors can't have move-only types, so this works
+// around that and the type conversion.
+template <typename T>
+concept IsPrivateAggregationRequestPtr =
+    std::same_as<T, auction_worklet::mojom::PrivateAggregationRequestPtr> ||
+    std::same_as<T,
+                 auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr>;
+
+auction_worklet::mojom::PrivateAggregationRequestPtr ConvertFromFinalized(
+    auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr finalized) {
+  if (!finalized) {
+    return nullptr;
+  }
+
+  return auction_worklet::mojom::PrivateAggregationRequest::New(
+      auction_worklet::mojom::AggregatableReportContribution::
+          NewHistogramContribution(std::move(finalized->contribution)),
+      finalized->aggregation_mode, std::move(finalized->debug_mode_details));
+}
+
+template <typename T>
+  requires IsPrivateAggregationRequestPtr<T>
+auction_worklet::mojom::PrivateAggregationRequestPtr MaybeConvertFromFinalized(
+    T request);
+
+template <>
+auction_worklet::mojom::PrivateAggregationRequestPtr MaybeConvertFromFinalized(
+    auction_worklet::mojom::PrivateAggregationRequestPtr request) {
+  return request;
+}
+template <>
+auction_worklet::mojom::PrivateAggregationRequestPtr MaybeConvertFromFinalized(
+    auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr request) {
+  return ConvertFromFinalized(std::move(request));
+}
+
+template <typename T,
+          typename U = auction_worklet::mojom::PrivateAggregationRequestPtr>
+  requires IsPrivateAggregationRequestPtr<T> &&
+           IsPrivateAggregationRequestPtr<U>
+std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr>
+MakeRequestPtrVector(T request1, U request2 = nullptr) {
+  std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr> out;
+  out.emplace_back(MaybeConvertFromFinalized(std::move(request1)));
+  if (request2) {
+    out.emplace_back(MaybeConvertFromFinalized(std::move(request2)));
+  }
+  return out;
+}
 
 InterestGroupAuctionReporter::SellerWinningBidInfo CreateSellerWinningBidInfo(
     blink::AuctionConfig* auction_config) {
@@ -96,7 +153,8 @@ auto ElementsAreRequests(Ts&... requests) {
   static_assert(
       std::conjunction<std::is_same<
           std::remove_const_t<Ts>,
-          auction_worklet::mojom::PrivateAggregationRequestPtr>...>::value);
+          auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr>...>::
+          value);
   // Need to use `std::ref` as `mojo::StructPtr`s are move-only.
   return testing::UnorderedElementsAre(testing::Eq(std::ref(requests))...);
 }
@@ -135,13 +193,7 @@ class InterestGroupAuctionReporterTest
       : RenderViewHostTestHarness(
             base::test::TaskEnvironment::TimeSource::MOCK_TIME),
         winning_bid_info_(GetWinningBidInfo()) {
-    feature_list_.InitWithFeaturesAndParameters(
-        /*enabled_features=*/{{blink::features::kPrivateAggregationApi,
-                               {{"fledge_extensions_enabled", "true"}}},
-                              {blink::features::
-                                   kPrivateAggregationApiFilteringIds,
-                               {}}},
-        /*disabled_features=*/{});
+    feature_list_.InitAndEnableFeature(blink::features::kPrivateAggregationApi);
 
     mojo::SetDefaultProcessErrorHandler(
         base::BindRepeating(&InterestGroupAuctionReporterTest::OnBadMessage,
@@ -183,6 +235,7 @@ class InterestGroupAuctionReporterTest
 
     winning_bid_info_.render_url = GURL((*interest_group.ads)[0].render_url());
     winning_bid_info_.ad_metadata = kWinningAdMetadata;
+    winning_bid_info_.bid_ad = &(*interest_group.ads)[0];
 
     // The actual value doesn't matter for tests, but need to set some value as
     // it doesn't have a default one.
@@ -277,7 +330,7 @@ class InterestGroupAuctionReporterTest
             std::move(auction_config_), kDevtoolsAuctionId, kTopFrameOrigin,
             kFrameOrigin, frame_client_security_state_.Clone(),
             dummy_report_shared_url_loader_factory_,
-            auction_worklet::mojom::KAnonymityBidMode::kNone, false,
+            auction_worklet::mojom::KAnonymityStatus::kUnknown,
             std::move(winning_bid_info_), std::move(seller_winning_bid_info_),
             std::move(component_seller_winning_bid_info_),
             /*interest_groups_that_bid=*/
@@ -337,6 +390,8 @@ class InterestGroupAuctionReporterTest
       base::flat_map<std::string, std::string> ad_macro_map = {},
       std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr>
           pa_requests = {},
+      auction_worklet::mojom::PrivateModelTrainingRequestDataPtr
+          pmt_request_data = nullptr,
       std::vector<std::string> errors = {}) {
     auction_process_manager_.WaitForWinningBidderReload();
     std::unique_ptr<MockBidderWorklet> bidder_worklet =
@@ -344,27 +399,13 @@ class InterestGroupAuctionReporterTest
     bidder_worklet->WaitForReportWin();
     bidder_worklet->InvokeReportWinCallback(
         std::move(report_url), std::move(ad_beacon_map),
-        std::move(ad_macro_map), std::move(pa_requests), std::move(errors));
+        std::move(ad_macro_map), std::move(pa_requests),
+        std::move(pmt_request_data), std::move(errors));
 
     // Note that the bidder pipe is not automatically flushed on destruction, so
     // need to destroy it manually. Flushing the pipe ensures that the reporter
     // has received the response, and any resulting reports have been queued.
     bidder_worklet->Flush();
-  }
-
-  // Helper to make a std::vector from PrivateAggregationRequestPtrs.
-  // Initializer lists for vectors can't have move-only types, so this works
-  // around that.
-  std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr>
-  MakeRequestPtrVector(
-      auction_worklet::mojom::PrivateAggregationRequestPtr request1,
-      auction_worklet::mojom::PrivateAggregationRequestPtr request2 = nullptr) {
-    std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr> out;
-    out.emplace_back(std::move(request1));
-    if (request2) {
-      out.emplace_back(std::move(request2));
-    }
-    return out;
   }
 
   // Checks that the win has not yet been recorded by the InterestGroupManager.
@@ -417,17 +458,15 @@ class InterestGroupAuctionReporterTest
   // classes don't make network requests, but a real AuctionWorkletManager is
   // used, which expects most of these methods to return non-null objects.
   network::mojom::URLLoaderFactory* GetFrameURLLoaderFactory() override {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
   network::mojom::URLLoaderFactory* GetTrustedURLLoaderFactory() override {
-    NOTREACHED_IN_MIGRATION();
-    return nullptr;
+    NOTREACHED();
   }
   void PreconnectSocket(
       const GURL& url,
       const net::NetworkAnonymizationKey& network_anonymization_key) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   RenderFrameHostImpl* GetFrame() override {
     return static_cast<RenderFrameHostImpl*>(main_rfh());
@@ -441,7 +480,8 @@ class InterestGroupAuctionReporterTest
   std::optional<std::string> GetCookieDeprecationLabel() override {
     return std::nullopt;
   }
-  void GetBiddingAndAuctionServerKey(
+  void GetTrustedKeyValueServerKey(
+      const url::Origin& scope_origin,
       const std::optional<url::Origin>& coordinator,
       base::OnceCallback<void(base::expected<BiddingAndAuctionServerKey,
                                              std::string>)> callback) override {
@@ -540,70 +580,58 @@ class InterestGroupAuctionReporterTest
 
   // Private aggregation requests. Their values don't matter, beyond that
   // they're different from each other.
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kWinningBidderGenerateBidPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/1,
-                              /*value=*/2,
-                              /*filtering_id=*/std::nullopt)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/1,
+                  /*value=*/2,
+                  /*filtering_id=*/std::nullopt),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kReportWinPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/3,
-                              /*value=*/4,
-                              /*filtering_id=*/0)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/3,
+                  /*value=*/4,
+                  /*filtering_id=*/0),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kLosingBidderGenerateBidPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/5,
-                              /*value=*/6,
-                              /*filtering_id=*/1)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/5,
+                  /*value=*/6,
+                  /*filtering_id=*/1),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kScoreAdPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/7,
-                              /*value=*/8,
-                              /*filtering_id=*/255)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/7,
+                  /*value=*/8,
+                  /*filtering_id=*/255),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kReportResultPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/9,
-                              /*value=*/10,
-                              /*filtering_id=*/std::nullopt)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/9,
+                  /*value=*/10,
+                  /*filtering_id=*/std::nullopt),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
-  const auction_worklet::mojom::PrivateAggregationRequestPtr
+  const auction_worklet::mojom::FinalizedPrivateAggregationRequestPtr
       kBonusPrivateAggregationRequest =
-          auction_worklet::mojom::PrivateAggregationRequest::New(
-              auction_worklet::mojom::AggregatableReportContribution::
-                  NewHistogramContribution(
-                      blink::mojom::AggregatableReportHistogramContribution::
-                          New(/*bucket=*/42,
-                              /*value=*/24,
-                              /*filtering_id=*/std::nullopt)),
+          auction_worklet::mojom::FinalizedPrivateAggregationRequest::New(
+              blink::mojom::AggregatableReportHistogramContribution::New(
+                  /*bucket=*/42,
+                  /*value=*/24,
+                  /*filtering_id=*/std::nullopt),
               blink::mojom::AggregationServiceMode::kDefault,
               blink::mojom::DebugModeDetails::New());
   const auction_worklet::mojom::PrivateAggregationRequestPtr
@@ -755,12 +783,12 @@ class InterestGroupAuctionReporterTest
       component_seller_winning_bid_info_;
   // The private aggregation requests passed in to the constructor.
   std::map<PrivateAggregationKey,
-           InterestGroupAuctionReporter::PrivateAggregationRequests>
+           InterestGroupAuctionReporter::FinalizedPrivateAggregationRequests>
       private_aggregation_requests_reserved_;
 
   // The non-reserved private aggregation requests passed in to the constructor.
   std::map<std::string,
-           InterestGroupAuctionReporter::PrivateAggregationRequests>
+           InterestGroupAuctionReporter::FinalizedPrivateAggregationRequests>
       private_aggregation_event_map_;
 
   InterestGroupAuctionReporter::PrivateAggregationAllParticipantsData
@@ -924,7 +952,9 @@ TEST_F(InterestGroupAuctionReporterTest, ComponentAuctionErrors) {
 
   WaitForReportWinAndRunCallback(kBidderReportUrl, /*ad_beacon_map=*/{},
                                  /*ad_macro_map=*/{},
-                                 /*pa_requests=*/{}, /*errors=*/{kBuyerError});
+                                 /*pa_requests=*/{},
+                                 /*pmt_request_data=*/nullptr,
+                                 /*errors=*/{kBuyerError});
   interest_group_manager_impl_->ExpectReports(
       {{InterestGroupManagerImpl::ReportType::kSendReportTo,
         kBidderReportUrl}});
@@ -1576,6 +1606,76 @@ TEST_F(InterestGroupAuctionReporterTest, RecordKAnonKeysToJoinLateNavigation) {
               testing::UnorderedElementsAre());
 }
 
+class InterestGroupAuctionReporterPrivateModelTrainingEnabledTest
+    : public InterestGroupAuctionReporterTest {
+ public:
+  InterestGroupAuctionReporterPrivateModelTrainingEnabledTest() {
+    feature_list_.InitAndEnableFeature(
+        blink::features::kFledgePrivateModelTraining);
+  }
+
+ protected:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_F(InterestGroupAuctionReporterPrivateModelTrainingEnabledTest,
+       PrivateModelTrainingRequestDataInvalidPayloadLength) {
+  SetUpAndStartSingleSellerAuction();
+
+  interest_group_auction_reporter_
+      ->OnNavigateToWinningAdCallback(FrameTreeNodeId())
+      .Run();
+
+  WaitForReportResultAndRunCallback(kSellerScriptUrl, std::nullopt);
+  auto pmt_request_data =
+      auction_worklet::mojom::PrivateModelTrainingRequestData::New(
+          /*payload=*/mojo_base::BigBuffer(10),
+          /*payload_length*/ auction_worklet::kMaxPayloadLength + 1,
+          /*aggregation_coordinator_origin=*/GURL("https://aggregation.test"),
+          /*destination=*/GURL("https://destination.test"));
+
+  WaitForReportWinAndRunCallback(
+      std::nullopt, /*ad_beacon_map=*/{},
+      /*ad_macro_map=*/{},
+      /*pa_requests=*/{},
+      /*pmt_request_data=*/std::move(pmt_request_data));
+  EXPECT_EQ(
+      "queueReportAggregateWin(): modelingSignalsConfig.payloadLength "
+      "exceeds maximum length.",
+      TakeBadMessage());
+
+  WaitForCompletion();
+}
+
+TEST_F(InterestGroupAuctionReporterPrivateModelTrainingEnabledTest,
+       PrivateModelTrainingRequestDataInvalidPayloadSize) {
+  SetUpAndStartSingleSellerAuction();
+
+  interest_group_auction_reporter_
+      ->OnNavigateToWinningAdCallback(FrameTreeNodeId())
+      .Run();
+
+  WaitForReportResultAndRunCallback(kSellerScriptUrl, std::nullopt);
+  auto pmt_request_data =
+      auction_worklet::mojom::PrivateModelTrainingRequestData::New(
+          /*payload=*/mojo_base::BigBuffer(10),
+          /*payload_length*/ 9,
+          /*aggregation_coordinator_origin=*/GURL("https://aggregation.test"),
+          /*destination=*/GURL("https://destination.test"));
+
+  WaitForReportWinAndRunCallback(
+      std::nullopt, /*ad_beacon_map=*/{},
+      /*ad_macro_map=*/{},
+      /*pa_requests=*/{},
+      /*pmt_request_data=*/std::move(pmt_request_data));
+  EXPECT_EQ(
+      "sendEncryptedTo(): payload exceeds "
+      "modelingSignalsConfig.payloadLength.",
+      TakeBadMessage());
+
+  WaitForCompletion();
+}
+
 // Check that private aggregation requests are passed along as expected. This
 // creates an auction which is both passed aggregation reports from the bidding
 // and scoring phase of the auction, and receives more from each reporting
@@ -1951,11 +2051,18 @@ TEST_F(InterestGroupAuctionReporterTest,
       MakeRequestPtrVector(
           kReportWinNonReservedPrivateAggregationRequest.Clone()));
 
+  // Requests are logged when not yet finalized.
+  auction_worklet::mojom::PrivateAggregationRequestPtr
+      report_result_private_aggregation_request =
+          ConvertFromFinalized(kReportResultPrivateAggregationRequest->Clone());
+
   // Requests encountered in reportResult() and reportWin() are passed along.
   EXPECT_THAT(
       private_aggregation_manager_.TakeLoggedPrivateAggregationRequests(),
-      ElementsAreRequests(kReportResultPrivateAggregationRequest,
-                          kReportWinNonReservedPrivateAggregationRequest));
+      testing::UnorderedElementsAre(
+          testing::Eq(std::ref(report_result_private_aggregation_request)),
+          testing::Eq(
+              std::ref(kReportWinNonReservedPrivateAggregationRequest))));
 }
 
 // Check that no private aggregation requests are passed along to trigger use
@@ -2268,69 +2375,6 @@ TEST_F(InterestGroupAuctionReporterPrivateAggregationDisabledTest,
   WaitForCompletion();
 }
 
-// Disable FLEDGE-specific extensions of Private Aggregation API.
-class InterestGroupAuctionReporterPrivateAggregationFledgeExtensionDisabledTest
-    : public InterestGroupAuctionReporterTest {
- public:
-  InterestGroupAuctionReporterPrivateAggregationFledgeExtensionDisabledTest() {
-    feature_list_.InitAndEnableFeatureWithParameters(
-        blink::features::kPrivateAggregationApi,
-        {{"fledge_extensions_enabled", "false"}});
-  }
-
- protected:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_F(
-    InterestGroupAuctionReporterPrivateAggregationFledgeExtensionDisabledTest,
-    PrivateAggregationRequestsNonReserved) {
-  // This is possible currently because we're not checking the feature flags
-  // when collecting PA requests and sending to InterestGroupAuctionReporter,
-  // and a compromised worklet can send PA requests to browser process when
-  // feature param
-  // `blink::features::kPrivateAggregationApiProtectedAudienceExtensionsEnabled`
-  // is false.
-  private_aggregation_event_map_["event_type"].push_back(
-      kWinningBidderGenerateBidPrivateAggregationRequest.Clone());
-  private_aggregation_event_map_["event_type2"].push_back(
-      kBonusPrivateAggregationRequest.Clone());
-
-  SetUpAndStartSingleSellerAuction();
-
-  // Nothing should be sent when the auction is started.
-  EXPECT_TRUE(interest_group_auction_reporter_->fenced_frame_reporter()
-                  ->GetPrivateAggregationEventMapForTesting()
-                  .empty());
-
-  // The requests from the bidding and scoring phase of the auction should not
-  // be passed along.
-  interest_group_auction_reporter_
-      ->OnNavigateToWinningAdCallback(FrameTreeNodeId())
-      .Run();
-  EXPECT_TRUE(interest_group_auction_reporter_->fenced_frame_reporter()
-                  ->GetPrivateAggregationEventMapForTesting()
-                  .empty());
-
-  WaitForReportResultAndRunCallback(kSellerScriptUrl,
-                                    /*report_url=*/std::nullopt);
-
-  // The non-reserved aggregation requests from the bidder's reportWin() method
-  // should not be passed along neither. reportWin() could only return PA
-  // requests if the worklet is compromised when feature param
-  // `blink::features::kPrivateAggregationApiProtectedAudienceExtensionsEnabled`
-  // is false.
-  WaitForReportWinAndRunCallback(
-      /*report_url=*/std::nullopt, /*ad_beacon_map=*/{}, /*ad_macro_map=*/{},
-      MakeRequestPtrVector(
-          kReportWinNonReservedPrivateAggregationRequest.Clone()));
-  EXPECT_TRUE(interest_group_auction_reporter_->fenced_frame_reporter()
-                  ->GetPrivateAggregationEventMapForTesting()
-                  .empty());
-
-  WaitForCompletion();
-}
-
 TEST(InterestGroupAuctionReporterStochasticRounding, MatchesTable) {
   struct {
     double input;
@@ -2447,20 +2491,7 @@ TEST(InterestGroupAuctionReporterStochasticRounding, ApproximatesTrueSum) {
   EXPECT_LT(total, 1.1 * kInput * kIterations);
 }
 
-class InterestGroupAuctionReporterAdMacroReportingEnabledTest
-    : public InterestGroupAuctionReporterTest {
- public:
-  InterestGroupAuctionReporterAdMacroReportingEnabledTest() {
-    feature_list_.InitAndEnableFeature(
-        blink::features::kAdAuctionReportingWithMacroApi);
-  }
-
- protected:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_F(InterestGroupAuctionReporterAdMacroReportingEnabledTest,
-       SingleSellerReportMacros) {
+TEST_F(InterestGroupAuctionReporterTest, SingleSellerReportMacros) {
   SetUpAndStartSingleSellerAuction();
   // The macros should be empty from the start.
   EXPECT_THAT(interest_group_auction_reporter_->fenced_frame_reporter()
@@ -2493,8 +2524,7 @@ TEST_F(InterestGroupAuctionReporterAdMacroReportingEnabledTest,
                   testing::UnorderedElementsAreArray(kAdMacros))));
 }
 
-TEST_F(InterestGroupAuctionReporterAdMacroReportingEnabledTest,
-       ComponentAuctionReportMacros) {
+TEST_F(InterestGroupAuctionReporterTest, ComponentAuctionReportMacros) {
   SetUpAndStartComponentAuction();
   EXPECT_THAT(interest_group_auction_reporter_->fenced_frame_reporter()
                   ->GetAdMacrosForTesting(),

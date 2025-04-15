@@ -8,28 +8,42 @@
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_bridge.h"
+#include "components/password_manager/core/browser/password_cross_domain_confirmation_popup_controller.h"
 
 // Displays the UI to ask for user verification before filling credential, that
 // was originally saved for a web site or app grouped with current web site. If
 // the user confirms filling, the credential will be saved as an exact match for
 // the current web site.
-class AcknowledgeGroupedCredentialSheetController {
+class AcknowledgeGroupedCredentialSheetController
+    : public password_manager::PasswordCrossDomainConfirmationPopupController {
  public:
-  explicit AcknowledgeGroupedCredentialSheetController(
+  AcknowledgeGroupedCredentialSheetController();
+  AcknowledgeGroupedCredentialSheetController(
+      base::PassKey<
+          class AcknowledgeGroupedCredentialSheetControllerTestHelper>,
+      std::unique_ptr<AcknowledgeGroupedCredentialSheetBridge> bridge);
+  AcknowledgeGroupedCredentialSheetController(
+      base::PassKey<class AcknowledgeGroupedCredentialSheetControllerTest>,
       std::unique_ptr<AcknowledgeGroupedCredentialSheetBridge> bridge);
   AcknowledgeGroupedCredentialSheetController(
       const AcknowledgeGroupedCredentialSheetController&) = delete;
   AcknowledgeGroupedCredentialSheetController& operator=(
       const AcknowledgeGroupedCredentialSheetController&) = delete;
 
-  ~AcknowledgeGroupedCredentialSheetController();
+  ~AcknowledgeGroupedCredentialSheetController() override;
 
-  void ShowAcknowledgeSheet(std::string current_origin,
-                            std::string credential_origin,
-                            base::OnceCallback<void(bool)> on_close_callback);
+  void ShowAcknowledgeSheet(
+      const std::string& current_hostname,
+      const std::string& credential_hostname,
+      gfx::NativeWindow window,
+      base::OnceCallback<
+          void(AcknowledgeGroupedCredentialSheetBridge::DismissReason)>
+          on_close_callback);
 
  private:
-  base::OnceCallback<void(bool)> on_close_callback_ = base::NullCallback();
+  base::OnceCallback<void(
+      AcknowledgeGroupedCredentialSheetBridge::DismissReason)>
+      on_close_callback_ = base::NullCallback();
 
   std::unique_ptr<AcknowledgeGroupedCredentialSheetBridge> bridge_;
 };

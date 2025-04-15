@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "extensions/browser/image_sanitizer.h"
 
 #include <optional>
@@ -158,14 +153,9 @@ void ImageSanitizer::ImageDecoded(const base::FilePath& image_path,
     return;
   }
 
-  // TODO(https://crbug.com/370696612): Remove this disambiguating cast when the
-  // deprecated APIs are removed.
-  using NonDeprecatedVersion =
-      std::optional<std::vector<uint8_t>> (*)(const SkBitmap&, bool);
   io_task_runner_->PostTaskAndReplyWithResult(
       FROM_HERE,
-      base::BindOnce((NonDeprecatedVersion)gfx::PNGCodec::EncodeBGRASkBitmap,
-                     decoded_image,
+      base::BindOnce(gfx::PNGCodec::EncodeBGRASkBitmap, decoded_image,
                      /*discard_transparency=*/false),
       base::BindOnce(&ImageSanitizer::ImageReencoded,
                      weak_factory_.GetWeakPtr(), image_path));

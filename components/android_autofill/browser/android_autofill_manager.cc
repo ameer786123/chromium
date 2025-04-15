@@ -44,16 +44,15 @@ bool AndroidAutofillManager::ShouldClearPreviewedForm() {
 
 void AndroidAutofillManager::OnFormSubmittedImpl(
     const FormData& form,
-    bool known_success,
     mojom::SubmissionSource source) {
   address_logger_->OnWillSubmitForm();
   payments_logger_->OnWillSubmitForm();
   password_logger_->OnWillSubmitForm();
   if (auto* provider = GetAutofillProvider())
-    provider->OnFormSubmitted(this, form, known_success, source);
+    provider->OnFormSubmitted(this, form, source);
 }
 
-void AndroidAutofillManager::OnTextFieldDidChangeImpl(
+void AndroidAutofillManager::OnTextFieldValueChangedImpl(
     const FormData& form,
     const FieldGlobalId& field_id,
     const TimeTicks timestamp) {
@@ -70,7 +69,7 @@ void AndroidAutofillManager::OnTextFieldDidChangeImpl(
   // cleared by blink. Check `provider` cache.
   bool cached_is_autofilled = provider->GetCachedIsAutofilled(*field);
 
-  provider->OnTextFieldDidChange(this, form, *field, timestamp);
+  provider->OnTextFieldValueChanged(this, form, *field, timestamp);
 
   if (auto* logger = GetEventFormLogger(form.global_id(), field_id)) {
     if (cached_is_autofilled) {
@@ -121,12 +120,12 @@ void AndroidAutofillManager::OnFocusOnFormFieldImpl(
   }
 }
 
-void AndroidAutofillManager::OnSelectControlDidChangeImpl(
+void AndroidAutofillManager::OnSelectControlSelectionChangedImpl(
     const FormData& form,
     const FieldGlobalId& field_id) {
   if (auto* provider = GetAutofillProvider()) {
     if (const FormFieldData* field = form.FindFieldByGlobalId(field_id)) {
-      provider->OnSelectControlDidChange(this, form, *field);
+      provider->OnSelectControlSelectionChanged(this, form, *field);
     }
   }
 }
@@ -184,13 +183,16 @@ void AndroidAutofillManager::OnFieldTypesDetermined(AutofillManager& manager,
                                                     FormGlobalId form,
                                                     FieldTypeSource source) {
   CHECK_EQ(&manager, this);
-  if (source != FieldTypeSource::kAutofillServer) {
-    return;
-  }
-
-  forms_with_server_predictions_.insert(form);
-  if (auto* provider = GetAutofillProvider()) {
-    provider->OnServerPredictionsAvailable(*this, form);
+  switch (source) {
+    case FieldTypeSource::kAutofillAiModel:
+    case FieldTypeSource::kAutofillServer:
+      forms_with_server_predictions_.insert(form);
+      if (auto* provider = GetAutofillProvider()) {
+        provider->OnServerPredictionsAvailable(*this, form);
+      }
+      break;
+    case FieldTypeSource::kHeuristicsOrAutocomplete:
+      break;
   }
 }
 
@@ -270,8 +272,7 @@ AndroidFormEventLogger* AndroidAutofillManager::GetEventFormLogger(
     case FormType::kUnknownFormType:
       return nullptr;
   }
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 }  // namespace autofill

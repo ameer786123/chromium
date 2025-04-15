@@ -28,7 +28,7 @@
 #include "base/strings/to_string.h"
 #include "base/types/expected.h"
 #include "base/types/pass_key.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/user_display_mode.h"
@@ -38,6 +38,8 @@
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_database.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
+#include "chrome/browser/web_applications/web_app_install_manager.h"
+#include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_proto_utils.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
@@ -361,7 +363,7 @@ void WebAppSyncBridge::SetUserPageOrdinal(const webapps::AppId& app_id,
   // called before the app is installed in the web apps system. Until apps are
   // no longer double-installed on both systems, ignore this case.
   // https://crbug.com/1101781
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInRegistrar(app_id)) {
     return;
   }
   if (web_app) {
@@ -380,7 +382,7 @@ void WebAppSyncBridge::SetUserLaunchOrdinal(
   // called before the app is installed in the web apps system. Until apps are
   // no longer double-installed on both systems, ignore this case.
   // https://crbug.com/1101781
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInRegistrar(app_id)) {
     return;
   }
   WebApp* web_app = update->UpdateApp(app_id);
@@ -396,7 +398,10 @@ void WebAppSyncBridge::SetUserLaunchOrdinal(
 void WebAppSyncBridge::SetAlwaysShowToolbarInFullscreen(
     const webapps::AppId& app_id,
     bool show) {
-  if (!registrar_->IsInstalled(app_id)) {
+  if (!registrar_->IsInstallState(
+          app_id, {proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
+                   proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
+                   proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     return;
   }
   {
@@ -491,11 +496,6 @@ void WebAppSyncBridge::UpdateRegistrar(
   for (std::unique_ptr<WebApp>& web_app : update_data->apps_to_create) {
     webapps::AppId app_id = web_app->app_id();
     DCHECK(!registrar_->GetAppById(app_id));
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    // We do not install non-system web apps in Ash when Lacros web apps are
-    // enabled.
-    DCHECK(web_app->IsSystemApp() || !IsWebAppsCrosapiEnabled());
-#endif
     registrar_->registry().emplace(std::move(app_id), std::move(web_app));
   }
 
@@ -545,8 +545,16 @@ void WebAppSyncBridge::UpdateSync(
     // if IsSynced flag becomes false.
     if (new_state->IsSynced()) {
       CHECK(new_state->manifest_id().is_valid(), base::NotFatalUntil::M125);
-      change_processor()->Put(app_id, CreateSyncEntityData(*new_state),
-                              metadata_change_list);
+      // Only call 'Put' if it wasn't synced, or if the sync data has changed.
+      // TODO(https://crbug.com/409867622): We can remove this optimization
+      // after tests are updated to use a Fake version instead of the Mock
+      // version of the processor.
+      if (!current_state->IsSynced() ||
+          (current_state->sync_proto().SerializeAsString() !=
+           new_state->sync_proto().SerializeAsString())) {
+        change_processor()->Put(app_id, CreateSyncEntityData(*new_state),
+                                metadata_change_list);
+      }
     } else if (current_state->IsSynced()) {
       change_processor()->Delete(app_id, syncer::DeletionOrigin::Unspecified(),
                                  metadata_change_list);
@@ -577,6 +585,7 @@ void WebAppSyncBridge::OnDatabaseOpened(
 
   // Do database migrations to ensure apps are valid before notifying anything
   // else that the sync bridge is ready.
+  EnsureShortcutAppToDiyAppMigration();
   EnsureAppsHaveUserDisplayModeForCurrentPlatform();
   EnsurePartiallyInstalledAppsHaveCorrectStatus();
 
@@ -606,6 +615,33 @@ void WebAppSyncBridge::EnsureAppsHaveUserDisplayModeForCurrentPlatform() {
           ->SetUserDisplayMode(ToMojomUserDisplayMode(udm));
     }
   }
+}
+
+void WebAppSyncBridge::EnsureShortcutAppToDiyAppMigration() {
+  web_app::ScopedRegistryUpdate update = BeginUpdate();
+  int shortcut_to_diy_apps = 0;
+  for (const webapps::AppId& app_id : registrar().GetAppIds()) {
+    WebApp* app_to_update = update->UpdateApp(app_id);
+    bool is_shortcut = app_to_update->scope().is_empty() ||
+                       (app_to_update->latest_install_source().has_value() &&
+                        app_to_update->latest_install_source() ==
+                            webapps::WebappInstallSource::MENU_CREATE_SHORTCUT);
+    if (is_shortcut) {
+      app_to_update->SetIsDiyApp(true);
+      // Shortcut apps are separated from other web apps based on the fact that
+      // they have an empty scope. DIY apps do not have that distinction, so
+      // populate the scope from the start_url of the web app.
+      if (!app_to_update->scope().is_valid()) {
+        CHECK(app_to_update->start_url().is_valid());
+        GURL scope(app_to_update->start_url().GetWithoutFilename());
+        app_to_update->SetScope(scope);
+      }
+      app_to_update->SetWasShortcutApp(true);
+      shortcut_to_diy_apps++;
+    }
+  }
+  base::UmaHistogramCounts1000("WebApp.Migrations.ShortcutAppsToDiy",
+                               shortcut_to_diy_apps);
 }
 
 void WebAppSyncBridge::EnsurePartiallyInstalledAppsHaveCorrectStatus() {
@@ -689,6 +725,8 @@ ManifestIdParseResult WebAppSyncBridge::PrepareLocalUpdateFromSyncChange(
       // when all asynchronous uninstallation tasks are complete then the entity
       // is deleted from the database.
       app_copy->SetIsUninstalling(true);
+    } else {
+      install_manager_->NotifyWebAppSourceRemoved(app_id);
     }
     update_local_data->apps_to_update.push_back(std::move(app_copy));
     return ManifestIdParseResult::kSuccess;
@@ -792,25 +830,18 @@ void WebAppSyncBridge::ApplyIncrementalSyncChangesToRegistrar(
     auto callback =
         base::BindRepeating(&WebAppSyncBridge::OnWebAppUninstallComplete,
                             weak_ptr_factory_.GetWeakPtr());
-    if (uninstall_from_sync_before_registry_update_callback_for_testing_) {
-      uninstall_from_sync_before_registry_update_callback_for_testing_.Run(
-          apps_to_delete, callback);
-    } else {
-      for (const webapps::AppId& app_id : apps_to_delete) {
-        command_scheduler_->RemoveAllManagementTypesAndUninstall(
-            base::PassKey<WebAppSyncBridge>(), app_id,
-            webapps::WebappUninstallSource::kSync,
-            base::BindOnce(callback, app_id));
-      }
+    for (const webapps::AppId& app_id : apps_to_delete) {
+      command_scheduler_->RemoveAllManagementTypesAndUninstall(
+          base::PassKey<WebAppSyncBridge>(), app_id,
+          webapps::WebappUninstallSource::kSync,
+          base::BindOnce(callback, app_id));
     }
   }
 
   // Do a full follow up install for all remote entities that don’t exist
   // locally.
   if (!apps_to_install.empty()) {
-    // TODO(dmurph): Just call the InstallFromSync command.
-    // https://crbug.com/1328968
-    InstallWebAppsAfterSync(std::move(apps_to_install), base::DoNothing());
+    InstallWebAppsAfterSync(std::move(apps_to_install));
   }
 }
 
@@ -887,13 +918,6 @@ std::optional<syncer::ModelError> WebAppSyncBridge::ApplyIncrementalSyncChanges(
 
 void WebAppSyncBridge::ApplyDisableSyncChanges(
     std::unique_ptr<syncer::MetadataChangeList> delete_metadata_change_list) {
-  if (!base::FeatureList::IsEnabled(
-          features::kWebAppDontAddExistingAppsToSync)) {
-    syncer::DataTypeSyncBridge::ApplyDisableSyncChanges(
-        std::move(delete_metadata_change_list));
-    return;
-  }
-
   auto update_local_data = std::make_unique<RegistryUpdateData>();
 
   for (const WebApp& web_app : registrar_->GetAppsIncludingStubs()) {
@@ -983,22 +1007,6 @@ bool WebAppSyncBridge::IsEntityDataValid(
   return false;
 }
 
-void WebAppSyncBridge::SetRetryIncompleteUninstallsCallbackForTesting(
-    RetryIncompleteUninstallsCallback callback) {
-  retry_incomplete_uninstalls_callback_for_testing_ = std::move(callback);
-}
-
-void WebAppSyncBridge::SetInstallWebAppsAfterSyncCallbackForTesting(
-    InstallWebAppsAfterSyncCallback callback) {
-  install_web_apps_after_sync_callback_for_testing_ = std::move(callback);
-}
-
-void WebAppSyncBridge::SetUninstallFromSyncCallbackForTesting(
-    UninstallFromSyncCallback callback) {
-  uninstall_from_sync_before_registry_update_callback_for_testing_ =
-      std::move(callback);
-}
-
 void WebAppSyncBridge::SetAppNotLocallyInstalledForTesting(
     const webapps::AppId& app_id) {
   {
@@ -1024,10 +1032,6 @@ void WebAppSyncBridge::MaybeUninstallAppsPendingUninstall() {
 
   // Retrying incomplete uninstalls
   if (!apps_uninstalling.empty()) {
-    if (retry_incomplete_uninstalls_callback_for_testing_) {
-      retry_incomplete_uninstalls_callback_for_testing_.Run(apps_uninstalling);
-      return;
-    }
     auto callback =
         base::BindRepeating(&WebAppSyncBridge::OnWebAppUninstallComplete,
                             weak_ptr_factory_.GetWeakPtr());
@@ -1049,23 +1053,11 @@ void WebAppSyncBridge::MaybeInstallAppsFromSyncAndPendingInstallation() {
   }
 
   if (!apps_in_sync_install.empty()) {
-    if (install_web_apps_after_sync_callback_for_testing_) {
-      install_web_apps_after_sync_callback_for_testing_.Run(
-          std::move(apps_in_sync_install), base::DoNothing());
-      return;
-    }
-    InstallWebAppsAfterSync(std::move(apps_in_sync_install), base::DoNothing());
+    InstallWebAppsAfterSync(std::move(apps_in_sync_install));
   }
 }
 
-void WebAppSyncBridge::InstallWebAppsAfterSync(
-    std::vector<WebApp*> web_apps,
-    RepeatingInstallCallback callback) {
-  if (install_web_apps_after_sync_callback_for_testing_) {
-    install_web_apps_after_sync_callback_for_testing_.Run(std::move(web_apps),
-                                                          callback);
-    return;
-  }
+void WebAppSyncBridge::InstallWebAppsAfterSync(std::vector<WebApp*> web_apps) {
   for (WebApp* web_app : web_apps) {
     command_scheduler_->InstallFromSync(*web_app, base::DoNothing());
   }

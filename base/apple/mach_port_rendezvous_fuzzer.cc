@@ -5,6 +5,7 @@
 #include "base/apple/mach_port_rendezvous.h"
 
 #include "base/apple/mach_logging.h"
+#include "base/apple/mach_port_rendezvous_mac.h"
 #include "base/logging.h"
 #include "base/synchronization/lock.h"
 #include "testing/libfuzzer/fuzzers/mach/mach_message_converter.h"
@@ -27,7 +28,8 @@ struct MachPortRendezvousFuzzer {
 
   void ClearClientData() EXCLUSIVE_LOCKS_REQUIRED(
       base::MachPortRendezvousServerMac::GetInstance()->GetLock()) {
-    base::MachPortRendezvousServerMac::GetInstance()->client_data_.clear();
+    base::MachPortRendezvousServerMac::GetInstance()
+        ->ClearClientDataForTesting();
   }
 
   base::apple::ScopedMachSendRight server_send_right;

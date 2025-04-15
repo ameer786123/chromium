@@ -53,12 +53,12 @@ class LocalFileSyncService final : public RemoteChangeProcessor,
 
   class Observer {
    public:
-    Observer() {}
+    Observer() = default;
 
     Observer(const Observer&) = delete;
     Observer& operator=(const Observer&) = delete;
 
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
 
     // This is called when there're one or more local changes available.
     // |pending_changes_hint| indicates the pending queue length to help sync
@@ -130,8 +130,8 @@ class LocalFileSyncService final : public RemoteChangeProcessor,
   void PromoteDemotedChanges(base::RepeatingClosure callback);
 
   // Returns the metadata of a remote file pointed by |url|.
-  virtual void GetLocalFileMetadata(const storage::FileSystemURL& url,
-                                    SyncFileMetadataCallback callback);
+  void GetLocalFileMetadata(const storage::FileSystemURL& url,
+                            SyncFileMetadataCallback callback);
 
   // RemoteChangeProcessor overrides.
   void PrepareForProcessRemoteChange(const storage::FileSystemURL& url,

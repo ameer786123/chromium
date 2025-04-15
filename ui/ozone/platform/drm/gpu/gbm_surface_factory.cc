@@ -14,6 +14,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/not_fatal_until.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -378,10 +379,6 @@ scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmapForVulkan(
                                          std::move(framebuffer));
 }
 #endif
-
-bool GbmSurfaceFactory::SupportsOverlays() {
-  return drm_thread_proxy_->IsPrimaryDeviceAtomic();
-}
 
 std::unique_ptr<OverlaySurface> GbmSurfaceFactory::CreateOverlaySurface(
     gfx::AcceleratedWidget window) {

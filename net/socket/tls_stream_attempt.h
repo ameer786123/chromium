@@ -7,12 +7,15 @@
 
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "base/types/expected.h"
+#include "base/values.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
@@ -62,6 +65,7 @@ class NET_EXPORT_PRIVATE TlsStreamAttempt final : public StreamAttempt {
   // `params` and `ssl_config_provider` must outlive `this`.
   TlsStreamAttempt(const StreamAttemptParams* params,
                    IPEndPoint ip_endpoint,
+                   perfetto::Track track,
                    HostPortPair host_port_pair,
                    SSLConfigProvider* ssl_config_provider);
 
@@ -72,6 +76,7 @@ class NET_EXPORT_PRIVATE TlsStreamAttempt final : public StreamAttempt {
 
   // StreamAttempt implementations:
   LoadState GetLoadState() const override;
+  base::Value::Dict GetInfoAsValue() const override;
   scoped_refptr<SSLCertRequestInfo> GetCertRequestInfo() override;
 
   // Set a callback that will be invoked after the TCP handshake completes.
@@ -91,6 +96,8 @@ class NET_EXPORT_PRIVATE TlsStreamAttempt final : public StreamAttempt {
     kTlsAttempt,
     kTlsAttemptComplete,
   };
+
+  static std::string_view StateToString(State state);
 
   // StreamAttempt methods:
   int StartInternal() override;
@@ -121,6 +128,8 @@ class NET_EXPORT_PRIVATE TlsStreamAttempt final : public StreamAttempt {
 
   std::optional<SSLConfig> ssl_config_;
   std::optional<std::vector<uint8_t>> ech_retry_configs_;
+
+  base::WeakPtrFactory<TlsStreamAttempt> weak_ptr_factory_{this};
 };
 
 }  // namespace net

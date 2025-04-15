@@ -212,8 +212,6 @@ async def test_cached_revalidate(
     )
 
 
-
-
 @pytest.mark.asyncio
 async def test_page_with_cached_link_stylesheet(
     bidi_session,
@@ -542,10 +540,12 @@ async def test_page_with_cached_script_javascript(
         wait="complete",
     )
 
-    # Expect three events, one for the document and two for script javascript files.
+    # Expect two or three events, one for the document and the rest for javascript files.
+    # If the browser uses memory caching there may be only single request for the javascript files,
+    # see issue https://github.com/whatwg/html/issues/6110.
     wait = AsyncPoll(bidi_session, timeout=2)
-    await wait.until(lambda _: len(events) >= 7)
-    assert len(events) == 7
+    await wait.until(lambda _: len(events) >= 6)
+    assert len(events) >= 6
 
     # Assert only cached events after reload.
     cached_events = events[4:]
@@ -560,13 +560,22 @@ async def test_page_with_cached_script_javascript(
         expected_request={"method": "GET", "url": cached_script_js_url},
         expected_response={"url": cached_script_js_url, "fromCache": True},
     )
-    assert_response_event(
-        cached_events[2],
-        expected_request={"method": "GET", "url": cached_script_js_url},
-        expected_response={"url": cached_script_js_url, "fromCache": True},
-    )
+    if len(events) > 6:
+        assert_response_event(
+            cached_events[2],
+            expected_request={"method": "GET", "url": cached_script_js_url},
+            expected_response={"url": cached_script_js_url, "fromCache": True},
+        )
 
 
+@pytest.mark.parametrize(
+    "kind, module_template",
+    [
+        ("top-level", """<script type="module" src="{url}">"""),
+        ("statically-imported", """<script type="module">import foo from "{url}"; foo();</script>"""),
+        ("dynamically-imported", """<script type="module">const ns = await import("{url}"); ns.default();</script>"""),
+    ]
+)
 @pytest.mark.asyncio
 async def test_page_with_cached_javascript_module(
     bidi_session,
@@ -574,6 +583,8 @@ async def test_page_with_cached_javascript_module(
     inline,
     setup_network_test,
     top_context,
+    kind,
+    module_template,
 ):
     network_events = await setup_network_test(
         events=[
@@ -585,14 +596,12 @@ async def test_page_with_cached_javascript_module(
     cached_js_module_url = url(
         get_cached_url("text/javascript", SCRIPT_CONSOLE_LOG_IN_MODULE)
     )
+    module_script_tag = module_template.format(url=cached_js_module_url)
     page_with_cached_js_module = inline(
         f"""
         <body>
-            test page with cached js module
-            <script type="module">
-                import foo from "{cached_js_module_url}";
-                foo();
-            </script>
+            test page with cached {kind} js module
+            {module_script_tag}
         </body>
         """,
     )
@@ -641,15 +650,9 @@ async def test_page_with_cached_javascript_module(
     page_with_2_cached_js_modules = inline(
         f"""
         <body>
-            test page with 2 cached javascript modules
-            <script type="module">
-                import foo from "{cached_js_module_url}";
-                foo();
-            </script>
-            <script type="module">
-                import foo from "{cached_js_module_url}";
-                foo();
-            </script>
+            test page with 2 cached {kind} js modules
+            {module_script_tag}
+            {module_script_tag}
         </body>
         """,
     )

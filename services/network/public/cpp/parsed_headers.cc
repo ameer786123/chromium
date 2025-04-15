@@ -115,12 +115,10 @@ mojom::ParsedHeadersPtr PopulateParsedHeaders(
   }
 
 #if BUILDFLAG(ENABLE_REPORTING)
-  if (base::FeatureList::IsEnabled(net::features::kDocumentReporting)) {
-    if (std::optional<std::string> reporting_endpoints =
-            headers->GetNormalizedHeader("Reporting-Endpoints")) {
-      parsed_headers->reporting_endpoints =
-          net::ParseReportingEndpoints(*reporting_endpoints);
-    }
+  if (std::optional<std::string> reporting_endpoints =
+          headers->GetNormalizedHeader("Reporting-Endpoints")) {
+    parsed_headers->reporting_endpoints =
+        net::ParseReportingEndpoints(*reporting_endpoints);
   }
 #endif
 
@@ -128,7 +126,9 @@ mojom::ParsedHeadersPtr PopulateParsedHeaders(
     parsed_headers->cookie_indices = net::ParseCookieIndices(*headers);
   }
 
-  if (base::FeatureList::IsEnabled(network::features::kReduceAcceptLanguage)) {
+  if (base::FeatureList::IsEnabled(network::features::kReduceAcceptLanguage) ||
+      base::FeatureList::IsEnabled(
+          network::features::kReduceAcceptLanguageHTTP)) {
     if (std::optional<std::string> avail_language =
             headers->GetNormalizedHeader("Avail-Language")) {
       parsed_headers->avail_language = ParseAvailLanguage(*avail_language);

@@ -36,7 +36,6 @@ class MockMainNodeAnnotationService
   }
 
   void ExtractMainContent(const ::ui::AXTreeUpdate& snapshot,
-                          int64_t ukm_source_id,
                           ExtractMainContentCallback callback) override {}
 
   void ExtractMainNode(const ui::AXTreeUpdate& snapshot,
@@ -53,6 +52,11 @@ class MockMainNodeAnnotationService
         &tree, content_nodes_);
     std::move(callback).Run(main_);
   }
+
+  void IdentifyMainNode(const ui::AXTreeUpdate& snapshot,
+                        IdentifyMainNodeCallback callback) override {}
+
+  void SetClientType(screen_ai::mojom::MceClientType client) override {}
 
   // Tests should not modify entries in these lists.
   std::vector<ui::AXNodeID> content_nodes_;

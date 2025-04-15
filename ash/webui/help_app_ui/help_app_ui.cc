@@ -60,8 +60,7 @@ HelpAppUI::HelpAppUI(content::WebUI* web_ui,
   // We need a CSP override to use the chrome-untrusted://, almanac:// and
   // cros-apps:// schemes in the host.
   std::string csp = base::StrCat({"frame-src ", kChromeUIHelpAppUntrustedURL,
-                                  " ", chromeos::kAppInstallUriScheme, ": ",
-                                  chromeos::kLegacyAppInstallUriScheme, ":;"});
+                                  " ", chromeos::kAppInstallUriScheme, ":;"});
   host_source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::FrameSrc, csp);
 
@@ -117,14 +116,12 @@ void HelpAppUI::BindInterface(
 
 void HelpAppUI::BindInterface(
     mojo::PendingReceiver<local_search_service::mojom::Index> index_receiver) {
-  if (base::FeatureList::IsEnabled(features::kEnableLocalSearchService)) {
-    auto* const factory = local_search_service::LocalSearchServiceProxyFactory::
-        GetForBrowserContext(web_ui()->GetWebContents()->GetBrowserContext());
-    factory->SetLocalState(delegate_->GetLocalState());
-    factory->GetIndex(local_search_service::IndexId::kHelpApp,
-                      local_search_service::Backend::kInvertedIndex,
-                      std::move(index_receiver));
-  }
+  auto* const factory = local_search_service::LocalSearchServiceProxyFactory::
+      GetForBrowserContext(web_ui()->GetWebContents()->GetBrowserContext());
+  factory->SetLocalState(delegate_->GetLocalState());
+  factory->GetIndex(local_search_service::IndexId::kHelpApp,
+                    local_search_service::Backend::kInvertedIndex,
+                    std::move(index_receiver));
 }
 
 void HelpAppUI::BindInterface(

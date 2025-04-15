@@ -12,6 +12,7 @@
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
 #include "components/security_interstitials/core/common_string_util.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/supervised_user/core/common/features.h"
 #include "content/public/browser/web_contents.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -19,8 +20,6 @@
 namespace {
 constexpr char kBlockedSiteVerifyItsYouInterstitialStateHistogramName[] =
     "FamilyLinkUser.BlockedSiteVerifyItsYouInterstitialState";
-constexpr char kSignInTabHistogramPrefix[] =
-    "FamilyLinkUser.BlockedSiteVerifyItsYouInterstitialSigninTab.";
 }  // namespace
 
 // static
@@ -88,11 +87,14 @@ void SupervisedUserVerificationPageForBlockedSites::PopulateInterstitialStrings(
   load_time_data.Set("primaryParagraph",
                      l10n_util::GetStringUTF16(
                          IDS_CHILD_BLOCK_INTERSTITIAL_MESSAGE_NOT_SIGNED_IN));
-  load_time_data.Set("show_blocked_site_message", true);
-  load_time_data.Set("blockedSiteMessageHeader",
-                     l10n_util::GetStringUTF8(IDS_GENERIC_SITE_BLOCK_HEADER));
-  load_time_data.Set("blockedSiteMessageReason",
-                     l10n_util::GetStringUTF8(GetBlockMessageReasonId()));
+  // Hide the block message to match the V3 block interstitial.
+  if (!supervised_user::IsBlockInterstitialV3Enabled()) {
+    load_time_data.Set("show_blocked_site_message", true);
+    load_time_data.Set("blockedSiteMessageHeader",
+                       l10n_util::GetStringUTF8(IDS_GENERIC_SITE_BLOCK_HEADER));
+    load_time_data.Set("blockedSiteMessageReason",
+                       l10n_util::GetStringUTF8(GetBlockMessageReasonId()));
+  }
   load_time_data.Set("primaryButtonText",
                      l10n_util::GetStringUTF16(
                          IDS_SUPERVISED_USER_VERIFY_PAGE_PRIMARY_BUTTON));
@@ -105,35 +107,9 @@ void SupervisedUserVerificationPageForBlockedSites::RecordReauthStatusMetrics(
     return;
   }
 
-  auto state =
-      FamilyLinkUserReauthenticationInterstitialState::kInterstitialShown;
-  switch (status) {
-    case Status::SHOWN:
-      break;
-    case Status::REAUTH_STARTED:
-      state = FamilyLinkUserReauthenticationInterstitialState::
-          kReauthenticationStarted;
-      break;
-    case Status::REAUTH_COMPLETED:
-      state = FamilyLinkUserReauthenticationInterstitialState::
-          kReauthenticationCompleted;
-      break;
-    default:
-      NOTREACHED();
-  }
   base::UmaHistogramEnumeration(
-      kBlockedSiteVerifyItsYouInterstitialStateHistogramName, state);
-}
-
-void SupervisedUserVerificationPageForBlockedSites::RecordSignInTabUmaMetrics(
-    int closed_tab_count,
-    int skipped_tab_count) {
-  UMA_HISTOGRAM_CUSTOM_COUNTS(
-      std::string(kSignInTabHistogramPrefix) + "ClosedCount", closed_tab_count,
-      /*minimum=*/1, /*maximum=*/20, /*bucket_count=*/20);
-  UMA_HISTOGRAM_CUSTOM_COUNTS(
-      std::string(kSignInTabHistogramPrefix) + "SkippedClosingCount",
-      skipped_tab_count, /*minimum=*/1, /*maximum=*/20, /*bucket_count=*/20);
+      kBlockedSiteVerifyItsYouInterstitialStateHistogramName,
+      GetReauthenticationInterstitialStateFromStatus(status));
 }
 
 int SupervisedUserVerificationPageForBlockedSites::GetBlockMessageReasonId() {
@@ -149,6 +125,6 @@ int SupervisedUserVerificationPageForBlockedSites::GetBlockMessageReasonId() {
                  ? IDS_CHILD_BLOCK_MESSAGE_MANUAL_MULTI_PARENT
                  : IDS_CHILD_BLOCK_MESSAGE_MANUAL_SINGLE_PARENT;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }

@@ -35,18 +35,19 @@ from blinkpy.common.net.rpc import Build, BuildStatus
 from blinkpy.web_tests.layout_package import json_results_generator
 from blinkpy.web_tests.models.test_failures import FailureImage
 from blinkpy.web_tests.models.typ_types import ResultType
-from blinkpy.web_tests.port.base import Port
 
 
 class Artifact(NamedTuple):
     url: str
     digest: Optional[str] = None
 
+# All of the non-reftest baseline extensions we use.
+BASELINE_EXTENSIONS = ('.wav', '.txt', '.png')
 
 # For CLI compatibility, we would like a list of baseline extensions without
 # the leading dot.
 # TODO: Investigate changing the CLI.
-BaselineSuffix = Literal[tuple(ext[1:] for ext in Port.BASELINE_EXTENSIONS)]
+BaselineSuffix = Literal[tuple(ext[1:] for ext in BASELINE_EXTENSIONS)]
 
 
 class WebTestResult:
@@ -163,8 +164,8 @@ class IncompleteResultsReason(NamedTuple):
         return 'results are incomplete for an unknown reason'
 
 
-# FIXME: This should be unified with ResultsSummary or other NRWT web tests code
-# in the web_tests package.
+# TODO(crbug.com/406299273): This should be unified with ResultsSummary or other
+# NRWT web tests code in the web_tests package.
 # This doesn't belong in common.net, but we don't have a better place for it yet.
 class WebTestResults:
     @classmethod

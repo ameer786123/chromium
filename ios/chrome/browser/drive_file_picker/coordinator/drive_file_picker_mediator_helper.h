@@ -10,6 +10,7 @@
 #import <optional>
 #import <vector>
 
+#import "base/files/file_path.h"
 #import "ios/chrome/browser/drive_file_picker/ui/drive_file_picker_constants.h"
 #import "ios/web/public/web_state_id.h"
 
@@ -95,8 +96,11 @@ std::optional<DriveItem> FindDriveItemFromIdentifier(
     NSString* identifier);
 
 // Generates the `URL` to which the local copy of a file will be saved.
-NSURL* DriveFilePickerGenerateDownloadFileURL(web::WebStateID web_state_id,
-                                              NSString* download_file_name);
+// This function should always return the same output for a given input.
+std::optional<base::FilePath> DriveFilePickerGenerateDownloadFilePath(
+    web::WebStateID web_state_id,
+    NSString* download_file_identifier,
+    NSString* download_file_name);
 
 // Returns the placeholder icon for `item`.
 UIImage* GetPlaceholderIconForDriveItem(const DriveItem& item);
@@ -104,5 +108,9 @@ UIImage* GetPlaceholderIconForDriveItem(const DriveItem& item);
 // Returns the appropriate image link to use for a given `item`.
 // If there is no such link, returns nil instead.
 NSString* GetImageLinkForDriveItem(const DriveItem& item);
+
+// Returns a string to display next to a file input when `file_urls` is
+// submitted.
+NSString* GetDisplayStringForFileUrls(NSArray<NSURL*>* file_urls);
 
 #endif  // IOS_CHROME_BROWSER_DRIVE_FILE_PICKER_COORDINATOR_DRIVE_FILE_PICKER_MEDIATOR_HELPER_H_

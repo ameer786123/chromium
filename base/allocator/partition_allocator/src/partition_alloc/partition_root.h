@@ -71,6 +71,7 @@
 #include "partition_alloc/partition_lock.h"
 #include "partition_alloc/partition_oom.h"
 #include "partition_alloc/partition_page.h"
+#include "partition_alloc/partition_shared_mutex.h"
 #include "partition_alloc/reservation_offset_table.h"
 #include "partition_alloc/tagging.h"
 #include "partition_alloc/thread_cache.h"
@@ -165,14 +166,24 @@ struct PartitionOptions {
   static constexpr auto kEnabled = EnableToggle::kEnabled;
 
   EnableToggle thread_cache = kDisabled;
-  AllowToggle star_scan_quarantine = kDisallowed;
+  EnableToggle use_cookie_if_supported = kEnabled;
   EnableToggle backup_ref_ptr = kDisabled;
   AllowToggle use_configurable_pool = kDisallowed;
+
+  // TODO(https://crbug.com/371135823): Remove after the investigation.
+  size_t backup_ref_ptr_extra_extras_size = 0;
 
   EnableToggle scheduler_loop_quarantine = kDisabled;
   size_t scheduler_loop_quarantine_branch_capacity_in_bytes = 0;
 
   EnableToggle zapping_by_free_flags = kDisabled;
+  // As the name implies, this is not a security measure, as there is no
+  // guarantee that memorys has been zeroed out when handed back to the
+  // application, or when free() returns. This is intended to improve the
+  // compression ratio of freed memory inside partially allocated pages (due to
+  // fragmentation).
+  EnableToggle eventually_zero_freed_memory = kDisabled;
+  EnableToggle fewer_memory_regions = kDisabled;
 
   struct {
     EnableToggle enabled = kDisabled;
@@ -239,7 +250,7 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
     bool with_thread_cache = false;
 
 #if PA_BUILDFLAG(USE_PARTITION_COOKIE)
-    static constexpr bool use_cookie = true;
+    bool use_cookie = true;
 #else
     static constexpr bool use_cookie = false;
 #endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
@@ -252,8 +263,14 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
     size_t in_slot_metadata_size = 0;
 #endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
     bool use_configurable_pool = false;
+    // Despite its name, `FreeFlags` for zapping is deleted and does not exist.
+    // This value is used for SchedulerLoopQuarantine.
+    // TODO(https://crbug.com/351974425): group this setting and quarantine
+    // setting in one place.
     bool zapping_by_free_flags = false;
+    bool eventually_zero_freed_memory = false;
     bool scheduler_loop_quarantine = false;
+    bool fewer_memory_regions = false;
 #if PA_BUILDFLAG(HAS_MEMORY_TAGGING)
     bool memory_tagging_enabled_ = false;
     bool use_random_memory_tagging_ = false;
@@ -364,7 +381,11 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
 
   // Integrity check = ~reinterpret_cast<uintptr_t>(this).
   uintptr_t inverted_self = 0;
-  std::atomic<int> thread_caches_being_constructed_{0};
+
+  // A lock which is hold during thread cache construction.
+  // Any (de)allocation code path should not try to `Acquire()` this lock to
+  // prevent deadlocks. Instead, `TryAcquire()`.
+  internal::Lock thread_cache_construction_lock;
 
   size_t scheduler_loop_quarantine_branch_capacity_in_bytes = 0;
   internal::LightweightQuarantineRoot scheduler_loop_quarantine_root;
@@ -379,6 +400,12 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
   // Not overriding the global one to only change it for this partition.
   internal::base::TimeTicks (*now_maybe_overridden_for_testing)() =
       internal::base::TimeTicks::Now;
+
+#if PA_CONFIG(ENABLE_SHADOW_METADATA)
+  // Locks not to run EnableShadowMetadata() and PartitionDirectMap()
+  // at the same time.
+  static internal::SharedMutex g_shadow_metadata_init_mutex_;
+#endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
 
   PartitionRoot();
   explicit PartitionRoot(PartitionOptions opts);
@@ -752,6 +779,13 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
         internal::DirectMapAllocationGranularity());
   }
 
+  PA_ALWAYS_INLINE bool IsDirectMapped(
+      partition_alloc::internal::SlotSpanMetadata<
+          partition_alloc::internal::MetadataKind::kReadOnly>* slot_span)
+      const {
+    return IsDirectMappedBucket(slot_span->bucket);
+  }
+
   PA_ALWAYS_INLINE size_t AdjustSize0IfNeeded(size_t size) const {
     // There are known cases where allowing size 0 would lead to problems:
     // 1. If extras are present only before allocation (e.g. in-slot metadata),
@@ -870,6 +904,14 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
     return GetSchedulerLoopQuarantineBranch();
   }
 
+  void SetSchedulerLoopQuarantineThreadLocalBranchCapacity(
+      size_t capacity_in_bytes) {
+    ThreadCache* thread_cache = this->EnsureThreadCache();
+    PA_CHECK(ThreadCache::IsValid(thread_cache));
+    thread_cache->GetSchedulerLoopQuarantineBranch().SetCapacityInBytes(
+        capacity_in_bytes);
+  }
+
   const internal::PartitionFreelistDispatcher* get_freelist_dispatcher() {
 #if PA_BUILDFLAG(USE_FREELIST_DISPATCHER)
     if (settings.use_pool_offset_freelists) {
@@ -894,6 +936,8 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
     return 0;
   }
 #endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+
+  PA_NOINLINE static void CheckMetadataIntegrity(const void* object);
 
  private:
   static inline StraightenLargerSlotSpanFreeListsMode
@@ -1009,10 +1053,16 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
   PA_ALWAYS_INLINE void RawFreeLocked(uintptr_t slot_start)
       PA_EXCLUSIVE_LOCKS_REQUIRED(internal::PartitionRootLock(this));
   ThreadCache* MaybeInitThreadCache();
+  ThreadCache* ForceInitThreadCache();
 
   // May return an invalid thread cache.
   PA_ALWAYS_INLINE ThreadCache* GetOrCreateThreadCache();
   PA_ALWAYS_INLINE ThreadCache* GetThreadCache();
+  // Similar to `GetOrCreateThreadCache()`, but this creates a new thread cache
+  // with `ForceInitThreadCache()`. This can be slow since it acquires a lock,
+  // and hence with a risk of deadlock.
+  // Must NOT be used inside (de)allocation code path.
+  PA_ALWAYS_INLINE ThreadCache* EnsureThreadCache();
 
   PA_ALWAYS_INLINE internal::LightweightQuarantineBranch&
   GetSchedulerLoopQuarantineBranch();
@@ -1043,6 +1093,9 @@ struct alignas(64) PA_COMPONENT_EXPORT(PARTITION_ALLOC) PartitionRoot {
 #endif  // PA_CONFIG(USE_PARTITION_ROOT_ENUMERATOR)
 
   friend class ThreadCache;
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+  friend class internal::InSlotMetadata;
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 };
 
 namespace internal {
@@ -1212,6 +1265,7 @@ PA_ALWAYS_INLINE void PartitionAllocFreeForRefCounting(uintptr_t slot_start) {
 
   // Iterating over the entire slot can be really expensive.
 #if PA_BUILDFLAG(EXPENSIVE_DCHECKS_ARE_ON)
+#if !PA_BUILDFLAG(IS_IOS)
   auto hook = PartitionAllocHooks::GetQuarantineOverrideHook();
   // If we have a hook the object segment is not necessarily filled
   // with |kQuarantinedByte|.
@@ -1222,6 +1276,7 @@ PA_ALWAYS_INLINE void PartitionAllocFreeForRefCounting(uintptr_t slot_start) {
       PA_DCHECK(object[i] == kQuarantinedByte);
     }
   }
+#endif  //  !PA_BUILDFLAG(IS_IOS)
   DebugMemset(SlotStartAddr2Ptr(slot_start), kFreedByte,
               slot_span->GetUtilizedSlotSize());
 #endif  // PA_BUILDFLAG(EXPENSIVE_DCHECKS_ARE_ON)
@@ -1485,7 +1540,11 @@ PA_ALWAYS_INLINE void PartitionRoot::FreeInline(void* object) {
   // cacheline ping-pong.
   PA_PREFETCH(slot_span);
 
-  if constexpr (ContainsFlags(flags, FreeFlags::kZap)) {
+  // TODO(crbug.com/40287058): Collecting objects for
+  // `kSchedulerLoopQuarantineBranch` here means it "delays" other checks (BRP
+  // refcount, cookie, etc.)
+  // For better debuggability, we should do these checks before quarantining.
+  if constexpr (ContainsFlags(flags, FreeFlags::kSchedulerLoopQuarantine)) {
     // No need to zap direct mapped allocations, as they are unmapped right
     // away. This also ensures that we don't needlessly memset() very large
     // allocations.
@@ -1494,12 +1553,7 @@ PA_ALWAYS_INLINE void PartitionRoot::FreeInline(void* object) {
       internal::SecureMemset(object, internal::kFreedByte,
                              GetSlotUsableSize(slot_span));
     }
-  }
-  // TODO(crbug.com/40287058): Collecting objects for
-  // `kSchedulerLoopQuarantineBranch` here means it "delays" other checks (BRP
-  // refcount, cookie, etc.)
-  // For better debuggability, we should do these checks before quarantining.
-  if constexpr (ContainsFlags(flags, FreeFlags::kSchedulerLoopQuarantine)) {
+
     if (settings.scheduler_loop_quarantine) {
 #if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
       // TODO(keishi): Add `[[likely]]` when brp is fully enabled as
@@ -1552,13 +1606,15 @@ PA_ALWAYS_INLINE void PartitionRoot::FreeNoHooksImmediate(
   // For more context, see the other "Layout inside the slot" comment inside
   // AllocInternalNoHooks().
 
-  if (Settings::use_cookie) {
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+  if (settings.use_cookie) {
     // Verify the cookie after the allocated region.
     // If this assert fires, you probably corrupted memory.
     const size_t usable_size = GetSlotUsableSize(slot_span);
     internal::PartitionCookieCheckValue(
         static_cast<unsigned char*>(object) + usable_size, usable_size);
   }
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
 
 #if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
   if (brp_enabled()) [[likely]] {
@@ -1570,11 +1626,15 @@ PA_ALWAYS_INLINE void PartitionRoot::FreeNoHooksImmediate(
     // complete before we clear kMemoryHeldByAllocatorBit in
     // ReleaseFromAllocator(), otherwise another thread may allocate and start
     // using the slot in the middle of zapping.
+    bool was_zapped = false;
     if (!ref_count->IsAliveWithNoKnownRefs()) [[unlikely]] {
+      was_zapped = true;
       QuarantineForBrp(slot_span, object);
     }
 
-    if (!(ref_count->ReleaseFromAllocator())) [[unlikely]] {
+    if (!(ref_count->ReleaseFromAllocator(slot_start, slot_span)))
+        [[unlikely]] {
+      PA_CHECK(was_zapped);
       total_size_of_brp_quarantined_bytes.fetch_add(
           slot_span->GetSlotSizeForBookkeeping(), std::memory_order_relaxed);
       total_count_of_brp_quarantined_slots.fetch_add(1,
@@ -1638,6 +1698,7 @@ PA_ALWAYS_INLINE void PartitionRoot::RawFree(uintptr_t slot_start) {
 PA_ALWAYS_INLINE void PartitionRoot::RawFree(
     uintptr_t slot_start,
     ReadOnlySlotSpanMetadata* slot_span) {
+  void* ptr = internal::SlotStartAddr2Ptr(slot_start);
   // At this point we are about to acquire the lock, so we try to minimize the
   // risk of blocking inside the locked section.
   //
@@ -1662,8 +1723,7 @@ PA_ALWAYS_INLINE void PartitionRoot::RawFree(
   // RawFreeLocked()). This is intentional, as the thread cache is purged often,
   // and the memory has a consequence the memory has already been touched
   // recently (to link the thread cache freelist).
-  *static_cast<volatile uintptr_t*>(internal::SlotStartAddr2Ptr(slot_start)) =
-      0;
+  *static_cast<volatile uintptr_t*>(ptr) = 0;
   // Note: even though we write to slot_start + sizeof(void*) as well, due to
   // alignment constraints, the two locations are always going to be in the same
   // OS page. No need to write to the second one as well.
@@ -1672,6 +1732,21 @@ PA_ALWAYS_INLINE void PartitionRoot::RawFree(
 #if !(PA_CONFIG(IS_NONCLANG_MSVC))
   __asm__ __volatile__("" : : "r"(slot_start) : "memory");
 #endif
+  // This is done for memory usage (by improving the compression ratio of heap
+  // pages), not for security, so we care more about being affordable than
+  // prompt. This is done after the thread cache, so most deallocation do not
+  // end up here. Nevertheless, we do not need to memset() direct-mapped
+  // allocations, as they are released right away. And single-slot slot spans
+  // are also excluded, because they can be entirely decommitted once leaving
+  // the global ring.
+  //
+  // This is done before acquiring the lock, to prevent page faults causing
+  // issues there.
+  if (settings.eventually_zero_freed_memory &&
+      !IsDirectMappedBucket(slot_span->bucket) &&
+      slot_span->bucket->get_slots_per_span() > 1) {
+    internal::SecureMemset(ptr, 0, GetSlotUsableSize(slot_span));
+  }
 
   ::partition_alloc::internal::ScopedGuard guard{
       internal::PartitionRootLock(this)};
@@ -2247,10 +2322,12 @@ PA_ALWAYS_INLINE void* PartitionRoot::AllocInternalNoHooks(
   void* object = SlotStartToObject(slot_start);
 
   // Add the cookie after the allocation.
-  if (Settings::use_cookie) {
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+  if (settings.use_cookie) {
     internal::PartitionCookieWriteValue(static_cast<unsigned char*>(object) +
                                         usable_size);
   }
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
 
   // Fill the region kUninitializedByte (on debug builds, if not requested to 0)
   // or 0 (if requested and not 0 already).
@@ -2424,7 +2501,7 @@ void* PartitionRoot::ReallocInline(void* ptr,
   constexpr bool no_hooks = ContainsFlags(alloc_flags, AllocFlags::kNoHooks);
   const bool hooks_enabled = PartitionAllocHooks::AreHooksEnabled();
   bool overridden = false;
-  size_t old_usable_size;
+  size_t old_usable_size = 0;
   if (!no_hooks && hooks_enabled) [[unlikely]] {
     overridden = PartitionAllocHooks::ReallocOverrideHookIfEnabled(
         &old_usable_size, ptr);
@@ -2466,6 +2543,21 @@ void* PartitionRoot::ReallocInline(void* ptr,
       }
     }
   }
+
+#if PA_BUILDFLAG(REALLOC_GROWTH_FACTOR_MITIGATION)
+  // Some nVidia drivers have a performance bug where they repeatedly realloc a
+  // buffer with a small 4144 byte increment instead of using a growth factor to
+  // amortize the cost of a memcpy. To work around this, we apply a growth
+  // factor to the new size to avoid this issue. This workaround is only
+  // intended to be used for Skia bots, and is not intended to be a general
+  // solution.
+  if (new_size > old_usable_size && new_size > 12 << 20) {
+    // 1.5x growth factor.
+    // Note that in case of integer overflow, the std::max ensures that the
+    // new_size is at least as large as the old_usable_size.
+    new_size = std::max(new_size, old_usable_size * 3 / 2);
+  }
+#endif
 
   // This realloc cannot be resized in-place. Sadness.
   void* ret = AllocInternal<alloc_flags>(
@@ -2528,6 +2620,17 @@ ThreadCache* PartitionRoot::GetThreadCache() {
     return ThreadCache::Get();
   }
   return nullptr;
+}
+
+ThreadCache* PartitionRoot::EnsureThreadCache() {
+  ThreadCache* thread_cache = nullptr;
+  if (settings.with_thread_cache) [[likely]] {
+    thread_cache = ThreadCache::Get();
+    if (!ThreadCache::IsValid(thread_cache)) [[unlikely]] {
+      thread_cache = ForceInitThreadCache();
+    }
+  }
+  return thread_cache;
 }
 
 // private.

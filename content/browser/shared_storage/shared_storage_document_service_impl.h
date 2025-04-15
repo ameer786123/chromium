@@ -15,6 +15,7 @@
 #include "content/public/browser/frame_tree_node_id.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "services/network/public/mojom/shared_storage.mojom-forward.h"
 #include "third_party/blink/public/mojom/origin_trials/origin_trial_feature.mojom-shared.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage.mojom.h"
 #include "url/origin.h"
@@ -27,12 +28,11 @@ namespace content {
 
 class RenderFrameHost;
 class SharedStorageWorkletHost;
-class SharedStorageWorkletHostManager;
+class SharedStorageRuntimeManager;
 
+extern CONTENT_EXPORT const char kFencedStorageReadDisabledMessage[];
 extern CONTENT_EXPORT const char
-    kFencedFrameLocalUnpartitionedDataAccessDisabledMessage[];
-extern CONTENT_EXPORT const char
-    kFencedFrameLocalUnpartitionedDataAccessWithoutRevokeNetworkMessage[];
+    kFencedStorageReadWithoutRevokeNetworkMessage[];
 extern CONTENT_EXPORT const char kSharedStorageDisabledMessage[];
 extern CONTENT_EXPORT const char kSharedStorageSelectURLDisabledMessage[];
 extern CONTENT_EXPORT const char kSharedStorageAddModuleDisabledMessage[];
@@ -65,7 +65,9 @@ class CONTENT_EXPORT SharedStorageDocumentServiceImpl final
   void CreateWorklet(
       const GURL& script_source_url,
       const url::Origin& data_origin,
+      blink::mojom::SharedStorageDataOriginType data_origin_type,
       network::mojom::CredentialsMode credentials_mode,
+      blink::mojom::SharedStorageWorkletCreationMethod creation_method,
       const std::vector<blink::mojom::OriginTrialFeature>&
           origin_trial_features,
       mojo::PendingAssociatedReceiver<blink::mojom::SharedStorageWorkletHost>
@@ -73,8 +75,15 @@ class CONTENT_EXPORT SharedStorageDocumentServiceImpl final
       CreateWorkletCallback callback) override;
   void SharedStorageGet(const std::u16string& key,
                         SharedStorageGetCallback callback) override;
-  void SharedStorageUpdate(blink::mojom::SharedStorageModifierMethodPtr method,
-                           SharedStorageUpdateCallback callback) override;
+  void SharedStorageUpdate(
+      network::mojom::SharedStorageModifierMethodWithOptionsPtr
+          method_with_options,
+      SharedStorageUpdateCallback callback) override;
+  void SharedStorageBatchUpdate(
+      std::vector<network::mojom::SharedStorageModifierMethodWithOptionsPtr>
+          methods_with_options,
+      const std::optional<std::string>& with_lock,
+      SharedStorageBatchUpdateCallback callback) override;
 
   base::WeakPtr<SharedStorageDocumentServiceImpl> GetWeakPtr();
 
@@ -91,7 +100,7 @@ class CONTENT_EXPORT SharedStorageDocumentServiceImpl final
       bool post_prefs_success,
       const std::string& error_message);
 
-  SharedStorageWorkletHostManager* GetSharedStorageWorkletHostManager();
+  SharedStorageRuntimeManager* GetSharedStorageRuntimeManager();
 
   SharedStorageWorkletHost* GetSharedStorageWorkletHost();
 
@@ -104,8 +113,7 @@ class CONTENT_EXPORT SharedStorageDocumentServiceImpl final
                                        std::string* out_debug_message,
                                        bool* out_block_is_site_specific);
 
-  bool IsLocalUnpartitionedDataAccessAllowed(
-      const url::Origin& accessing_origin);
+  bool IsFencedStorageReadAllowed(const url::Origin& accessing_origin);
 
   bool IsSharedStorageAddModuleAllowedForOrigin(
       const url::Origin& accessing_origin,

@@ -146,8 +146,9 @@ class CONTENT_EXPORT AuctionRunner : public blink::mojom::AbortableAdAuction {
   //   issued the auction request -- this is used for post-auction interest
   //   group updates, and sending reports.
   //
-  //  `url_loader_factory` will be used to issue reporting requests. It should
-  //  be backed by a trusted URLLoaderFactory.
+  //  `url_loader_factory` will be used to issue reporting requests and request
+  //   trusted KVv2 signals. It should be backed by a trusted URLLoaderFactory
+  //   associated with the frame running the auction.
   //
   //  `is_interest_group_api_allowed_callback` will be called on all buyer and
   //   seller origins, and those for which it returns false will not be allowed
@@ -162,6 +163,7 @@ class CONTENT_EXPORT AuctionRunner : public blink::mojom::AbortableAdAuction {
   //   after CreateAndStart() returns.
   static std::unique_ptr<AuctionRunner> CreateAndStart(
       AuctionMetricsRecorder* auction_metrics_recorder,
+      DwaAuctionMetricsManager* dwa_auction_metrics_manager,
       AuctionWorkletManager* auction_worklet_manager,
       AuctionNonceManager* auction_nonce_manager,
       InterestGroupManagerImpl* interest_group_manager,
@@ -250,6 +252,7 @@ class CONTENT_EXPORT AuctionRunner : public blink::mojom::AbortableAdAuction {
 
   AuctionRunner(
       AuctionMetricsRecorder* auction_metrics_recorder,
+      DwaAuctionMetricsManager* dwa_auction_metrics_manager,
       AuctionWorkletManager* auction_worklet_manager,
       AuctionNonceManager* auction_nonce_manager,
       InterestGroupManagerImpl* interest_group_manager,

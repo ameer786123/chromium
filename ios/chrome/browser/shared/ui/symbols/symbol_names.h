@@ -32,7 +32,6 @@ extern NSString* const kGooglePasswordManagerWidgetPromoImage;
 extern NSString* const kGooglePasswordManagerWidgetPromoDisabledImage;
 extern NSString* const kGooglePaySymbol;
 extern NSString* const kGooglePhotosSymbol;
-extern NSString* const kGooglePlusAddressSymbol;
 extern NSString* const kGoogleSettingsPasswordsInOtherAppsBannerImage;
 extern NSString* const kLensKeyboardAccessoryImage;
 extern NSString* const kMulticolorChromeballSymbol;
@@ -55,13 +54,13 @@ extern NSString* const kChromiumSigninPromoLogoImage;
 
 // Custom symbol names.
 extern NSString* const kPrivacySymbol;
-extern NSString* const kSyncDisabledSymbol;
 extern NSString* const kSafetyCheckSymbol;
 extern NSString* const kArrowClockWiseSymbol;
 extern NSString* const kIncognitoSymbol;
 extern NSString* const kSquareNumberSymbol;
 extern NSString* const kTranslateSymbol;
 extern NSString* const kPasswordManagerSymbol;
+extern NSString* const kEnterpriseSigninBannerSymbol;
 extern NSString* const kEnterpriseSymbol;
 extern NSString* const kPopupBadgeMinusSymbol;
 extern NSString* const kPhotoSymbol;
@@ -119,6 +118,7 @@ extern NSString* const kCameraFillSymbol;
 
 // Default symbol names.
 extern NSString* const kChartBarXAxisSymbol;
+extern NSString* const kChartLineDowntrendXYAxisSymbol;
 extern NSString* const kCircleSymbol;
 extern NSString* const kCircleFillSymbol;
 extern NSString* const kSyncEnabledSymbol;
@@ -231,6 +231,7 @@ extern NSString* const kShippingBoxSymbol;
 extern NSString* const kSliderHorizontalSymbol;
 extern NSString* const kMacbookAndIPhoneSymbol;
 extern NSString* const kCheckmarkShieldSymbol;
+extern NSString* const kListBulletSymbol;
 extern NSString* const kListBulletClipboardSymbol;
 extern NSString* const kListBulletRectangleSymbol;
 extern NSString* const kBoxTruckFillSymbol;
@@ -265,7 +266,15 @@ extern NSString* const kPlayButton;
 extern NSString* const kFolderSymbol;
 extern NSString* const kCartSymbol;
 extern NSString* const kArrowUTurnForwardSymbol;
+extern NSString* const kArrowUTurnForwardCircleFillSymbol;
 extern NSString* const kIPhoneAndArrowForwardSymbol;
+extern NSString* const kPersonPlusSymbol;
+extern NSString* const kArrowUpTrashSymbol;
+extern NSString* const kRectangleGroupBubble;
+extern NSString* const kHomeSymbol;
+extern NSString* const kWorkSymbol;
+extern NSString* const kShieldedEnvelope;
+extern NSString* const kReaderModeSymbol;
 
 // Names of the default symbol being non-monochrome by default. When using them,
 // you probably want to set their color to monochrome.

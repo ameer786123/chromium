@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/features.gni")
 import("//components/password_manager/core/browser/buildflags.gni")
 import("//third_party/libprotobuf-mutator/fuzzable_proto_library.gni")
@@ -21,6 +20,8 @@ config("password_reuse_detection_config") {
 
 static_library("browser") {
   sources = [
+    "browser_credential_manager_factory.cc",
+    "browser_credential_manager_factory.h",
     "browser_save_password_progress_logger.cc",
     "browser_save_password_progress_logger.h",
     "credential_cache.cc",
@@ -37,7 +38,6 @@ static_library("browser") {
     "credential_manager_pending_request_task.h",
     "credential_manager_utils.cc",
     "credential_manager_utils.h",
-    "credential_type_flags.h",
     "credentials_cleaner.cc",
     "credentials_cleaner.h",
     "credentials_cleaner_runner.cc",
@@ -79,6 +79,7 @@ static_library("browser") {
     "password_autofill_manager.h",
     "password_bubble_experiment.cc",
     "password_bubble_experiment.h",
+    "password_change_service_interface.h",
     "password_check_referrer_android.h",
     "password_counter.cc",
     "password_counter.h",
@@ -193,7 +194,8 @@ static_library("browser") {
     "//components/device_reauth",
     "//components/favicon/core",
     "//components/favicon_base",
-    "//components/os_crypt/sync:os_crypt",
+    "//components/os_crypt/sync",
+    "//components/password_manager/content/common:common",
     "//components/password_manager/core/browser:password_switches",
     "//components/password_manager/core/browser/affiliation:affiliation_match_helper",
     "//components/password_manager/core/browser/features:password_features",
@@ -208,7 +210,6 @@ static_library("browser") {
     "//components/safe_browsing/core/common:safe_browsing_prefs",
     "//components/strings",
     "//components/url_formatter",
-    "//device/fido:fido",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
     "//ui/accessibility:accessibility",
@@ -249,7 +250,7 @@ static_library("browser") {
     ]
   }
 
-  if (!is_chromeos_ash && !is_android) {
+  if (!is_chromeos && !is_android) {
     sources += [
       "password_reuse_manager_signin_notifier_impl.cc",
       "password_reuse_manager_signin_notifier_impl.h",
@@ -335,7 +336,6 @@ if (is_android) {
     sources = [
       "manage_passwords_referrer.h",
       "password_check_referrer_android.h",
-      "password_manager_metrics_util.h",
       "password_manager_setting.h",
       "password_manager_util.h",
       "password_store/android_backend_error.h",
@@ -519,7 +519,7 @@ source_set("unit_tests") {
     sources += [ "hash_password_manager_unittest.cc" ]
   }
 
-  if (!is_chromeos_ash && !is_android) {
+  if (!is_chromeos && !is_android) {
     sources += [ "password_reuse_manager_signin_notifier_impl_unittest.cc" ]
   }
 
@@ -535,8 +535,9 @@ source_set("unit_tests") {
     "//components/device_reauth",
     "//components/device_reauth:test_support",
     "//components/favicon/core/test:test_support",
-    "//components/os_crypt/sync:os_crypt",
+    "//components/os_crypt/sync",
     "//components/os_crypt/sync:test_support",
+    "//components/password_manager/content/common:common",
     "//components/password_manager/core/browser/affiliation:affiliation_match_helper",
     "//components/password_manager/core/browser/features:password_features",
     "//components/password_manager/core/browser/form_parsing",

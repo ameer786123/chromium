@@ -149,7 +149,7 @@ bool IsLazyWebUILoadingEnabled() {
         ash::prefs::kLoginScreenWebUILazyLoading);
   }
 
-  return base::FeatureList::IsEnabled(features::kEnableLazyLoginWebUILoading);
+  return true;
 }
 
 void UpdatePinAuthAvailability(const AccountId& account_id) {
@@ -165,9 +165,6 @@ void UpdatePinAuthAvailability(const AccountId& account_id) {
              cryptohome::PinLockAvailability available_at) {
             if (!LoginScreen::Get() || !LoginScreen::Get()->GetModel()) {
               return;
-            }
-            if (!features::IsAllowPinTimeoutSetupEnabled()) {
-              available_at = std::nullopt;
             }
             LoginScreen::Get()->GetModel()->SetPinEnabledForUser(
                 account_id, can_authenticate, available_at);
@@ -186,8 +183,11 @@ LoginDisplayHostMojo::AuthState::AuthState(
 
 LoginDisplayHostMojo::AuthState::~AuthState() = default;
 
-LoginDisplayHostMojo::LoginDisplayHostMojo(DisplayedScreen displayed_screen)
-    : user_selection_screen_(
+LoginDisplayHostMojo::LoginDisplayHostMojo(
+    DisplayedScreen displayed_screen,
+    bool update_geolocation_usage_allowed)
+    : LoginDisplayHostCommon(update_geolocation_usage_allowed),
+      user_selection_screen_(
           std::make_unique<ChromeUserSelectionScreen>(displayed_screen)),
       auth_performer_(UserDataAuthClient::Get()),
       system_info_updater_(std::make_unique<MojoSystemInfoDispatcher>()) {
@@ -496,10 +496,13 @@ void LoginDisplayHostMojo::OnStartSignInScreen() {
 
   CreateExistingUserController();
 
-  ScheduleStartAuthHubInLoginMode();
+  if (ash::features::IsAuthPanelUsingAuthHub()) {
+    ScheduleStartAuthHubInLoginMode();
+  }
 
   // Load the UI.
-  existing_user_controller_->Init(user_manager::UserManager::Get()->GetUsers());
+  existing_user_controller_->Init(
+      user_manager::UserManager::Get()->GetPersistedUsers());
 
   user_selection_screen_->InitEasyUnlock();
 
@@ -742,11 +745,6 @@ void LoginDisplayHostMojo::HandleAuthenticateUserWithPasswordOrPin(
                                              ->GetCurrentInputMethod()
                                              .id());
 
-  if (account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY) {
-    LOG(FATAL) << "Incorrect Active Directory user type "
-               << user_context.GetUserType();
-  }
-
   existing_user_controller_->Login(user_context, SigninSpecifics());
 }
 
@@ -785,11 +783,6 @@ void LoginDisplayHostMojo::HandleOnFocusPod(const AccountId& account_id) {
     MaybeUpdateOfflineLoginLinkVisibility(account_id);
   }
   focused_pod_account_id_ = account_id;
-}
-
-bool LoginDisplayHostMojo::HandleFocusLockScreenApps(bool reverse) {
-  NOTREACHED_IN_MIGRATION();
-  return false;
 }
 
 void LoginDisplayHostMojo::HandleFocusOobeDialog() {
@@ -931,6 +924,7 @@ void LoginDisplayHostMojo::ShowDialog() {
   EnsureOobeDialogLoaded();
   ObserveOobeUI();
   dialog_->Show();
+  Shell::UpdateAccessibilityForStatusAreaWidget();
 }
 
 void LoginDisplayHostMojo::ShowFullScreen() {
@@ -949,6 +943,8 @@ void LoginDisplayHostMojo::HideDialog() {
   // with hidden error screens).
   StopObservingOobeUI();
   dialog_->Hide();
+  Shell::UpdateAccessibilityForStatusAreaWidget();
+
   // Hide the current screen of the `WizardController` to force `Show()` to be
   // called on the first screen when the dialog reopens.
   GetWizardController()->HideCurrentScreen();

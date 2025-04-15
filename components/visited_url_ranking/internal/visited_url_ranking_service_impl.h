@@ -83,12 +83,6 @@ class VisitedURLRankingServiceImpl : public VisitedURLRankingService {
   void RankURLVisitAggregates(const Config& config,
                               std::vector<URLVisitAggregate> visits,
                               RankURLVisitAggregatesCallback callback) override;
-  // TODO(crbug/364577990): Remove this function when callers switch to the
-  // version that uses metadata.
-  void DecorateURLVisitAggregates(
-      const Config& config,
-      std::vector<URLVisitAggregate> visit_aggregates,
-      DecorateURLVisitAggregatesCallback callback) override;
   void DecorateURLVisitAggregates(
       const Config& config,
       visited_url_ranking::URLVisitsMetadata url_visits_metadata,
@@ -98,6 +92,9 @@ class VisitedURLRankingServiceImpl : public VisitedURLRankingService {
       ScoredURLUserAction action,
       const std::string& visit_id,
       segmentation_platform::TrainingRequestId visit_request_id) override;
+  void RegisterTransformer(
+      URLVisitAggregatesTransformType type,
+      std::unique_ptr<URLVisitAggregatesTransformer> transformer) override;
 
  private:
   // Trigger training data collection with the user action.

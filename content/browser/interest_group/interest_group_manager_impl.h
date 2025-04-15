@@ -27,6 +27,8 @@
 #include "content/browser/interest_group/auction_process_manager.h"
 #include "content/browser/interest_group/bidding_and_auction_serializer.h"
 #include "content/browser/interest_group/bidding_and_auction_server_key_fetcher.h"
+#include "content/browser/interest_group/data_decoder_manager.h"
+#include "content/browser/interest_group/for_debugging_only_report_util.h"
 #include "content/browser/interest_group/interest_group_caching_storage.h"
 #include "content/browser/interest_group/interest_group_k_anonymity_manager.h"
 #include "content/browser/interest_group/interest_group_permissions_checker.h"
@@ -59,6 +61,7 @@ namespace content {
 
 class AdAuctionPageData;
 class InterestGroupStorage;
+class TrustedSignalsCacheImpl;
 struct DebugReportLockoutAndCooldowns;
 
 // InterestGroupManager is a per-StoragePartition class that owns shared
@@ -135,13 +138,16 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
   // InterestGroupManager overrides:
   void GetAllInterestGroupJoiningOrigins(
       base::OnceCallback<void(std::vector<url::Origin>)> callback) override;
-
   void GetAllInterestGroupDataKeys(
       base::OnceCallback<void(std::vector<InterestGroupDataKey>)> callback)
       override;
-
   void RemoveInterestGroupsByDataKey(InterestGroupDataKey data_key,
                                      base::OnceClosure callback) override;
+  void AddTrustedServerKeysDebugOverride(
+      TrustedServerAPIType api,
+      const url::Origin& coordinator,
+      std::string serialized_keys,
+      base::OnceCallback<void(std::optional<std::string>)> callback) override;
 
   /******** Proxy function calls to InterestGroupsStorage **********/
 
@@ -266,12 +272,30 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
                               const std::string& ad_json);
   // Adds an entry to forDebuggingOnly report lockout table if the table is
   // empty. Otherwise replaces the existing entry.
-  void RecordDebugReportLockout(base::Time last_report_sent_time);
+  void RecordDebugReportLockout(base::Time starting_time,
+                                base::TimeDelta duration);
+  // Adds an entry with random duration to forDebuggingOnly report lockout
+  // table. This is used to avoid new user bias when changing from allowing 3PC
+  // to disallowing 3PC.
+  void RecordRandomDebugReportLockout(base::Time starting_time);
   // Adds an entry to forDebuggingOnly report cooldown table for `origin` if it
   // does not exist, otherwise replaces the existing entry.
   void RecordDebugReportCooldown(const url::Origin& origin,
                                  base::Time cooldown_start,
                                  DebugReportCooldownType cooldown_type);
+
+  // Records a view or a click event. Aggregate time bucketed view and click
+  // information is provided to bidder's browsing signals in generateBid().
+  void RecordViewClick(network::AdAuctionEventRecord event_record);
+
+  // Invokes `callback` with whether the database has a record of view/click
+  // events for given combination of provider & eligible origins.
+  //
+  // nullopt will be passed in case of some sort of database error.
+  void CheckViewClickInfoInDbForTesting(
+      url::Origin provider_origin,
+      url::Origin eligible_origin,
+      base::OnceCallback<void(std::optional<bool>)> callback);
 
   // Reports the ad keys to the k-anonymity service. Should be called when
   // FLEDGE selects an ad.
@@ -303,27 +327,32 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
       base::OnceCallback<void(scoped_refptr<StorageInterestGroups>)> callback);
 
   // For a given `owner`, return whether the owner origin and bidding signal
-  // origin were cached in-memory in previous calls to
-  // GetInterestGroupsForOwner and JoinInterestGroup. If the `owner` origin was
-  // cached, update `signals_origin` to the one that was cached -- or set to
-  // nullopt if no bidding signals origin was cached or if it would be the same
-  // as the owner origin. The cache includes at most one entry per origin, and
-  // may not reflect the results of interest group updates. It's intended to be
-  // used for best-effort preconnecting, and should not be considered
-  // authoritative. It is guaranteed not to contain interest groups that have
-  // are beyond the max expiration time limit, so preconnecting should not leak
-  // data the bidder would otherwise have access to, if it so desired. That is,
-  // manual voluntarily removing or expiring of an interest group may not be
-  // reflected in the result, but hitting the the global interest group lifetime
-  // cap will be respected.
+  // origin were cached in-memory via UpdateCachedOriginsIfEnabled. If the
+  // `owner` origin was cached, update `signals_origin` to the one that was
+  // cached -- or set to nullopt if no bidding signals origin was cached or if
+  // it would be the same as the owner origin. The cache includes at most one
+  // entry per origin, and may not reflect the results of interest group
+  // updates. It's intended to be used for best-effort preconnecting, and should
+  // not be considered authoritative. It is guaranteed not to contain interest
+  // groups that have are beyond the max expiration time limit, so preconnecting
+  // should not leak data the bidder would otherwise have access to, if it so
+  // desired. That is, manual voluntarily removing or expiring of an interest
+  // group may not be reflected in the result, but hitting the the global
+  // interest group lifetime cap will be respected.
   bool GetCachedOwnerAndSignalsOrigins(
       const url::Origin& owner,
       std::optional<url::Origin>& signals_origin);
+
+  // Update the cached owner and signal origins for an owner's interest groups
+  // if kFledgeUsePreconnectCache or kFledgeStartAnticipatoryProcesses are
+  // enabled and the owner's IGs are still in memory.
+  void UpdateCachedOriginsIfEnabled(const url::Origin& owner);
 
   // Clear out storage for the matching owning storage key. If the matcher is
   // empty then apply to all storage keys.
   void DeleteInterestGroupData(
       StoragePartition::StorageKeyMatcherFunction storage_key_matcher,
+      bool user_initiated_deletion,
       base::OnceClosure completion_callback);
 
   // Completely delete all interest group data, including k-anonymity data that
@@ -333,11 +362,6 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
   // Get the last maintenance time from the underlying InterestGroupStorage.
   void GetLastMaintenanceTimeForTesting(
       base::RepeatingCallback<void(base::Time)> callback) const;
-
-  // Returns a user agent override string for the given frame tree node,
-  // if one is available and the feature is enabled.
-  std::optional<std::string> MaybeGetUserAgentOverride(
-      const FrameTreeNodeId& frame_tree_node_id);
 
   // Enqueues reports for the specified URLs. Virtual for testing.
   virtual void EnqueueReports(
@@ -374,18 +398,15 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
 
   // Update B&A keys for a coordinator. This function will overwrite any
   // existing keys for the coordinator.
-  void SetBiddingAndAuctionServerKeys(
-      const url::Origin& coordinator,
-      const std::vector<BiddingAndAuctionServerKey>& keys,
-      base::Time expiration);
+  void SetBiddingAndAuctionServerKeys(const url::Origin& coordinator,
+                                      std::string serialized_keys,
+                                      base::Time expiration);
 
   // Load stored B&A server keys for a coordinator along with the keys'
   // expiration.
   void GetBiddingAndAuctionServerKeys(
       const url::Origin& coordinator,
-      base::OnceCallback<
-          void(std::pair<base::Time, std::vector<BiddingAndAuctionServerKey>>)>
-          callback);
+      base::OnceCallback<void(std::pair<base::Time, std::string>)> callback);
 
   // Clears the InterestGroupPermissionsChecker's cache of the results of
   // .well-known fetches.
@@ -394,6 +415,8 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
   AuctionProcessManager& auction_process_manager() {
     return *auction_process_manager_;
   }
+
+  DataDecoderManager& data_decoder_manager() { return data_decoder_manager_; }
 
   void AddInterestGroupObserver(InterestGroupObserver* observer) {
     observers_.AddObserver(observer);
@@ -410,6 +433,14 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
       std::unique_ptr<AuctionProcessManager> auction_process_manager) {
     auction_process_manager_ = std::move(auction_process_manager);
   }
+
+  // Allows the AuctionProcessManager to be overridden in unit tests, to mock
+  // out its behavior. Note that the automatically created built-in
+  // AuctionProcessManager may have raw pointers to the old cache,
+  // set_auction_process_manager_for_testing() should typically be called before
+  // this method.
+  void set_trusted_signals_cache_for_testing(
+      std::unique_ptr<TrustedSignalsCacheImpl> trusted_signals_cache);
 
   // For testing *only*; changes the maximum number of active report requests
   // at a time.
@@ -470,9 +501,15 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
                         const base::Time update_time,
                         bool initial_update);
 
-  // Gets lockout and cooldown for sending forDebuggingOnly reports.
+  // Gets lockout and cooldowns of `origins` for sending forDebuggingOnly
+  // reports.
   void GetDebugReportLockoutAndCooldowns(
       base::flat_set<url::Origin> origins,
+      base::OnceCallback<void(std::optional<DebugReportLockoutAndCooldowns>)>
+          callback);
+
+  // Gets lockout and all cooldowns for sending forDebuggingOnly reports.
+  void GetDebugReportLockoutAndAllCooldowns(
       base::OnceCallback<void(std::optional<DebugReportLockoutAndCooldowns>)>
           callback);
 
@@ -488,12 +525,15 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
       base::Uuid generation_id,
       base::Time timestamp,
       blink::mojom::AuctionDataConfigPtr config,
+      std::vector<url::Origin> sellers,
       base::OnceCallback<void(BiddingAndAuctionData)> callback);
 
   // Get the public key to use for the auction data. The `callback` may be
   // called synchronously if the key is already available or the coordinator is
   // not recognized.
-  void GetBiddingAndAuctionServerKey(
+  void GetTrustedServerKey(
+      TrustedServerAPIType api,
+      const url::Origin& seller,
       const std::optional<url::Origin>& coordinator,
       base::OnceCallback<void(
           base::expected<BiddingAndAuctionServerKey, std::string>)> callback);
@@ -524,7 +564,15 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
       std::optional<double> bid,
       base::optional_ref<const std::string> bid_currency);
 
+  // Cache for trusted browser signals version 2. Returns nullptr if relevant
+  // features have not been enabled.
+  TrustedSignalsCacheImpl* trusted_signals_cache() {
+    return trusted_signals_cache_.get();
+  }
+
  private:
+  friend class InterestGroupManagerImplTestPeer;
+
   // InterestGroupUpdateManager calls private members to write updates to the
   // database.
   friend class InterestGroupUpdateManager;
@@ -537,6 +585,10 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
     // Real time reporting histograms to be sent in POST request's body. Null
     // for other report types.
     std::optional<std::vector<uint8_t>> real_time_histogram;
+
+    // The flip probability that was used to calculate the real time report's
+    // noise using RAPPOR.
+    std::optional<double> real_time_report_flip_probability;
 
     url::Origin frame_origin;
     network::mojom::ClientSecurityState client_security_state;
@@ -560,6 +612,7 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
     ~AdAuctionDataLoaderState();
     AdAuctionDataLoaderState(AdAuctionDataLoaderState&& state);
     BiddingAndAuctionSerializer serializer;
+    std::vector<url::Origin> sellers;
     base::OnceCallback<void(BiddingAndAuctionData)> callback;
     base::TimeTicks start_time;
   };
@@ -679,11 +732,11 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
   // `OnAdAuctionDataLoadComplete()` directly.
   void OnInterestGroupAdAuctionDataLoadComplete(AdAuctionDataLoaderState state);
 
-  // Constructs the AuctionAdata when the load is complete and calls the
+  // Constructs the AdAuctionData when the load is complete and calls the
   // provided callback.
   void OnAdAuctionDataLoadComplete(
       AdAuctionDataLoaderState state,
-      std::optional<base::Time> last_report_sent_time);
+      std::optional<DebugReportLockoutAndCooldowns> lockout);
 
   // Helper to that returns bound NotifyInterestGroupAccessed() callbacks to
   // allow notifications to be sent after a database update.
@@ -696,6 +749,16 @@ class CONTENT_EXPORT InterestGroupManagerImpl : public InterestGroupManager {
   // InterestGroupStorage. Returns cached values for GetInterestGroupsForOwner
   // when available.
   InterestGroupCachingStorage caching_storage_;
+
+  // This must be above the `trusted_signals_cache_`, which depends on it.
+  DataDecoderManager data_decoder_manager_;
+
+  // Cache for trusted browser signals version 2. Only populated if
+  // kFledgeTrustedSignalsKVv2Support and kFledgeUseKvv2SignalsCache features
+  // are enabled. Rather than check for those features, consumers should check
+  // if this has been populated. Must be declared before
+  // `auction_process_manager_`, which depends on this.
+  std::unique_ptr<TrustedSignalsCacheImpl> trusted_signals_cache_;
 
   // Stored as pointer so that tests can override it.
   std::unique_ptr<AuctionProcessManager> auction_process_manager_;

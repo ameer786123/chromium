@@ -140,7 +140,7 @@ class CONTENT_EXPORT AttributionManagerImpl : public AttributionManager {
                     base::OnceClosure done) override;
   void ReportRegistrationHeaderError(
       attribution_reporting::SuitableOrigin reporting_origin,
-      const attribution_reporting::RegistrationHeaderError&,
+      attribution_reporting::RegistrationHeaderError,
       const attribution_reporting::SuitableOrigin& context_origin,
       bool is_within_fenced_frame,
       GlobalRenderFrameHostId render_frame_id) override;
@@ -152,6 +152,8 @@ class CONTENT_EXPORT AttributionManagerImpl : public AttributionManager {
                                       base::OnceClosure callback) override;
 
   void HandleOsRegistration(OsRegistration) override;
+
+  void UpdateLastNavigationTime(base::Time navigation_time) override;
 
  private:
   friend class AttributionManagerImplTest;
@@ -289,10 +291,7 @@ class CONTENT_EXPORT AttributionManagerImpl : public AttributionManager {
   // duplicated here to avoid an async call to retrieve them.
   bool debug_mode_ = false;
 
-  // Caches the
-  // `FeatureList::IsEnabled(kAttributionReportDeliveryThirdRetryAttempt` check
-  // as to reduce large map lookups.
-  bool third_retry_enabled_ = false;
+  std::optional<base::Time> last_navigation_time_;
 
   base::WeakPtrFactory<AttributionManagerImpl> weak_factory_{this};
 };
@@ -305,8 +304,7 @@ class CONTENT_EXPORT AttributionManagerImpl : public AttributionManager {
 //
 // Exposed here for testing.
 CONTENT_EXPORT
-std::optional<base::TimeDelta> GetFailedReportDelay(int failed_send_attempts,
-                                                    bool third_retry_enabled);
+std::optional<base::TimeDelta> GetFailedReportDelay(int failed_send_attempts);
 
 }  // namespace content
 

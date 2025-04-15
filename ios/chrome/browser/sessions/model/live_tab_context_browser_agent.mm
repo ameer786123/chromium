@@ -90,8 +90,7 @@ LiveTabContextBrowserAgent::GetVisualDataForGroup(
     const tab_groups::TabGroupId& group) const {
   // Since we never return a group from GetTabGroupForTab(), this should never
   // be called.
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 bool LiveTabContextBrowserAgent::IsTabPinned(int index) const {
@@ -103,8 +102,7 @@ const std::optional<base::Uuid>
 LiveTabContextBrowserAgent::GetSavedTabGroupIdForGroup(
     const tab_groups::TabGroupId& group) const {
   // Not supported by iOS... yet.
-  NOTREACHED_IN_MIGRATION();
-  return std::nullopt;
+  NOTREACHED();
 }
 
 void LiveTabContextBrowserAgent::SetVisualDataForGroup(
@@ -133,6 +131,7 @@ sessions::LiveTab* LiveTabContextBrowserAgent::AddRestoredTab(
     const sessions::tab_restore::Tab& tab,
     int tab_index,
     bool select,
+    bool is_restoring_group_or_window,
     sessions::tab_restore::Type original_session_type) {
   // TODO(crbug.com/40491734): Handle tab-switch animation somehow...
   web_state_list_->InsertWebState(

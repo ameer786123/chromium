@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
@@ -38,7 +39,6 @@
 #include "net/http/structured_headers.h"
 #include "services/network/public/mojom/attribution.mojom.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -58,7 +58,7 @@ constexpr char kResponseKey[] = "response";
 constexpr char kResponsesKey[] = "responses";
 constexpr char kTimestampKey[] = "timestamp";
 
-using Context = absl::variant<std::string_view, size_t>;
+using Context = std::variant<std::string_view, size_t>;
 using ContextPath = std::vector<Context>;
 
 std::string TimeAsUnixMillisecondString(base::Time time) {
@@ -90,11 +90,11 @@ std::ostream& operator<<(std::ostream& out, const ContextPath& path) {
   }
 
   for (Context context : path) {
-    absl::visit(base::Overloaded{
-                    [&](std::string_view key) { out << "[\"" << key << "\"]"; },
-                    [&](size_t index) { out << '[' << index << ']'; },
-                },
-                context);
+    std::visit(base::Overloaded{
+                   [&](std::string_view key) { out << "[\"" << key << "\"]"; },
+                   [&](size_t index) { out << '[' << index << ']'; },
+               },
+               context);
   }
   return out;
 }
@@ -173,14 +173,8 @@ class AttributionInteropParser {
       bool required) && {
     interop_config.needs_cross_app_web =
         ParseBool(dict, "needs_cross_app_web").value_or(false);
-    interop_config.needs_aggregatable_debug =
-        ParseBool(dict, "needs_aggregatable_debug").value_or(false);
-    interop_config.needs_source_destination_limit =
-        ParseBool(dict, "needs_source_destination_limit").value_or(false);
-    interop_config.needs_aggregatable_filtering_ids =
-        ParseBool(dict, "needs_aggregatable_filtering_ids").value_or(false);
-    interop_config.needs_attribution_scopes =
-        ParseBool(dict, "needs_attribution_scopes").value_or(false);
+    interop_config.needs_delivery_after_new_navigation =
+        ParseBool(dict, "needs_delivery_after_new_navigation").value_or(false);
 
     AttributionConfig& config = interop_config.attribution_config;
 
@@ -319,7 +313,7 @@ class AttributionInteropParser {
     }
 
     if (has_error_) {
-      return base::unexpected(error_stream_.str());
+      return base::unexpected(std::move(error_stream_).str());
     }
     return base::ok();
   }
@@ -387,6 +381,10 @@ class AttributionInteropParser {
                   /*previous_time=*/events.empty() ? base::Time::Min()
                                                    : events.back().time,
                   /*strictly_greater=*/true);
+    if (dict.FindBool("navigation").value_or(false)) {
+      events.emplace_back(time, AttributionSimulationEvent::Navigation());
+      return;
+    }
 
     std::optional<SuitableOrigin> context_origin;
     AttributionReportingEligibility eligibility;
@@ -462,7 +460,6 @@ class AttributionInteropParser {
                           std::move(randomized_response),
                           std::move(null_aggregatable_reports_days),
                           debug_permission));
-
                 });
           });
     }

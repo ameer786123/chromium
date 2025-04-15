@@ -8,10 +8,10 @@
 
 #import "base/task/bind_post_task.h"
 #import "base/task/thread_pool.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
 #import "ios/chrome/browser/lens_overlay/model/lens_overlay_tab_helper.h"
 #import "ios/chrome/browser/lens_overlay/model/snapshot_cover_view_controller.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
-#import "ios/chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 
 namespace {
@@ -134,22 +134,12 @@ UIImage* ImageCroppedToFirstRows(UIImage* image, int numberOfRows) {
 }
 
 // Captures a snapshot of the given `UIWindow`.
-UIImage* CaptureSnapshotOfWindow(UIWindow* window,
-                                 UIEdgeInsets viewport_insets) {
+UIImage* CaptureSnapshotOfWindow(UIWindow* window) {
   UIGraphicsImageRenderer* renderer =
       [[UIGraphicsImageRenderer alloc] initWithSize:window.bounds.size];
-  UIImage* image =
-      [renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
-        [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:NO];
-      }];
-
-  CGRect croppingRect = CGRectMake(
-      viewport_insets.left * image.scale, viewport_insets.top * image.scale,
-      (window.bounds.size.width - viewport_insets.right) * image.scale,
-      (window.bounds.size.height - viewport_insets.bottom) * image.scale);
-
-  return [[UIImage alloc] initWithCGImage:CGImageCreateWithImageInRect(
-                                              image.CGImage, croppingRect)];
+  return [renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
+    [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:NO];
+  }];
 }
 
 // Creates a new window that displays a static image of the original window.
@@ -158,7 +148,7 @@ UIWindow* CreateMirrorWindowFromBaseWindow(
     base::OnceClosure windowShownCallback) {
   UIWindow* mirrorWindow =
       [[UIWindow alloc] initWithWindowScene:window.windowScene];
-  UIImage* windowSnapshot = CaptureSnapshotOfWindow(window, UIEdgeInsetsZero);
+  UIImage* windowSnapshot = CaptureSnapshotOfWindow(window);
   mirrorWindow.rootViewController = [[SnapshotCoverViewController alloc]
       initWithImage:windowSnapshot
       onFirstAppear:base::CallbackToBlock(std::move(windowShownCallback))];
@@ -246,12 +236,35 @@ LensOverlaySnapshotController::~LensOverlaySnapshotController() {
   pending_snapshot_callbacks_.clear();
 }
 
-UIImage* LensOverlaySnapshotController::CaptureSnapshotOfBaseWindowSafeArea() {
+UIImage* LensOverlaySnapshotController::CropSnapshotToWindowSafeArea(
+    UIImage* snapshot) {
+  if (!base_window_) {
+    return snapshot;
+  }
+
+  UIEdgeInsets viewportInsets = base_window_.safeAreaInsets;
+  CGRect croppingRect = CGRectMake(
+      viewportInsets.left * snapshot.scale, viewportInsets.top * snapshot.scale,
+      (base_window_.bounds.size.width - viewportInsets.right) * snapshot.scale,
+      (base_window_.bounds.size.height - viewportInsets.bottom) *
+          snapshot.scale);
+
+  CGImageRef imageRef =
+      CGImageCreateWithImageInRect(snapshot.CGImage, croppingRect);
+  UIImage* croppedImage = [[UIImage alloc] initWithCGImage:imageRef];
+
+  // We are responsible for releasing the `CGImageRef` after being consumed.
+  CGImageRelease(imageRef);
+
+  return croppedImage;
+}
+
+UIImage* LensOverlaySnapshotController::CaptureSnapshotOfBaseWindow() {
   if (!base_window_) {
     return nil;
   }
 
-  return CaptureSnapshotOfWindow(base_window_, base_window_.safeAreaInsets);
+  return CaptureSnapshotOfWindow(base_window_);
 }
 
 void LensOverlaySnapshotController::CaptureFullscreenSnapshot(
@@ -416,7 +429,7 @@ void LensOverlaySnapshotController::StartSnapshotFlow() {
 }
 
 void LensOverlaySnapshotController::ProcessRawSnapshot(UIImage* snapshot) {
-  if (!is_capturing_) {
+  if (!snapshot || !is_capturing_) {
     return;
   }
 

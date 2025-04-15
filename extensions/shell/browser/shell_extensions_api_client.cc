@@ -9,19 +9,23 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "content/public/browser/browser_context.h"
+#include "extensions/browser/api/declarative_content/content_rules_registry.h"
 #include "extensions/browser/api/messaging/messaging_delegate.h"
 #include "extensions/shell/browser/api/feedback_private/shell_feedback_private_delegate.h"
 #include "extensions/shell/browser/delegates/shell_kiosk_delegate.h"
-#include "extensions/shell/browser/shell_app_view_guest_delegate.h"
 #include "extensions/shell/browser/shell_display_info_provider.h"
 #include "extensions/shell/browser/shell_extension_web_contents_observer.h"
 #include "extensions/shell/browser/shell_virtual_keyboard_delegate.h"
-#include "extensions/shell/browser/shell_web_view_guest_delegate.h"
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
 #include "extensions/shell/browser/api/file_system/shell_file_system_delegate.h"
+#endif
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
+#include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
+#include "extensions/shell/browser/shell_app_view_guest_delegate.h"
+#include "extensions/shell/browser/shell_web_view_guest_delegate.h"
 #endif
 
 namespace extensions {
@@ -35,15 +39,28 @@ void ShellExtensionsAPIClient::AttachWebContentsHelpers(
   ShellExtensionWebContentsObserver::CreateForWebContents(web_contents);
 }
 
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
 AppViewGuestDelegate* ShellExtensionsAPIClient::CreateAppViewGuestDelegate()
     const {
   return new ShellAppViewGuestDelegate();
+}
+
+std::unique_ptr<guest_view::GuestViewManagerDelegate>
+ShellExtensionsAPIClient::CreateGuestViewManagerDelegate() const {
+  return std::make_unique<ExtensionsGuestViewManagerDelegate>();
 }
 
 WebViewGuestDelegate* ShellExtensionsAPIClient::CreateWebViewGuestDelegate(
     WebViewGuest* web_view_guest) const {
   return new ShellWebViewGuestDelegate();
 }
+
+WebViewPermissionHelperDelegate*
+ShellExtensionsAPIClient::CreateWebViewPermissionHelperDelegate(
+    WebViewPermissionHelper* web_view_permission_helper) const {
+  return new WebViewPermissionHelperDelegate(web_view_permission_helper);
+}
+#endif  // BUILDFLAG(ENABLE_GUEST_VIEW)
 
 std::unique_ptr<VirtualKeyboardDelegate>
 ShellExtensionsAPIClient::CreateVirtualKeyboardDelegate(
@@ -56,9 +73,7 @@ ShellExtensionsAPIClient::CreateDisplayInfoProvider() const {
   return std::make_unique<ShellDisplayInfoProvider>();
 }
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX)
 FileSystemDelegate* ShellExtensionsAPIClient::GetFileSystemDelegate() {
   if (!file_system_delegate_)
     file_system_delegate_ = std::make_unique<ShellFileSystemDelegate>();

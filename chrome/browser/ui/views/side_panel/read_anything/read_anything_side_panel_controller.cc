@@ -63,7 +63,7 @@ ReadAnythingSidePanelController::ReadAnythingSidePanelController(
   tab_subscriptions_.push_back(tab_->RegisterWillDetach(
       base::BindRepeating(&ReadAnythingSidePanelController::TabWillDetach,
                           weak_factory_.GetWeakPtr())));
-  tab_subscriptions_.push_back(tab_->RegisterDidEnterForeground(
+  tab_subscriptions_.push_back(tab_->RegisterDidActivate(
       base::BindRepeating(&ReadAnythingSidePanelController::TabForegrounded,
                           weak_factory_.GetWeakPtr())));
   Observe(tab_->GetContents());
@@ -144,7 +144,8 @@ void ReadAnythingSidePanelController::OnEntryHidden(SidePanelEntry* entry) {
 }
 
 std::unique_ptr<views::View>
-ReadAnythingSidePanelController::CreateContainerView() {
+ReadAnythingSidePanelController::CreateContainerView(
+    SidePanelEntryScope& scope) {
   // If there was an old WebView, clear the reference.
   if (web_view_) {
     web_view_->contents_wrapper()->web_contents()->RemoveUserData(
@@ -152,7 +153,7 @@ ReadAnythingSidePanelController::CreateContainerView() {
   }
 
   auto web_view = std::make_unique<ReadAnythingSidePanelWebView>(
-      tab_->GetBrowserWindowInterface()->GetProfile());
+      tab_->GetBrowserWindowInterface()->GetProfile(), scope);
 
   ReadAnythingSidePanelControllerGlue::CreateForWebContents(
       web_view->contents_wrapper()->web_contents(), this);
@@ -180,6 +181,12 @@ void ReadAnythingSidePanelController::TabForegrounded(tabs::TabInterface* tab) {
 void ReadAnythingSidePanelController::TabWillDetach(
     tabs::TabInterface* tab,
     tabs::TabInterface::DetachReason reason) {
+  observers_.Notify(
+      &ReadAnythingSidePanelController::Observer::OnTabWillDetach);
+
+  if (!tab_->IsActivated()) {
+    return;
+  }
   auto* coordinator =
       tab_->GetBrowserWindowInterface()->GetFeatures().side_panel_coordinator();
   // TODO(https://crbug.com/360163254): BrowserWithTestWindowTest currently does
@@ -191,7 +198,7 @@ void ReadAnythingSidePanelController::TabWillDetach(
   }
   if (coordinator->IsSidePanelEntryShowing(
           SidePanelEntry::Key(SidePanelEntry::Id::kReadAnything))) {
-    coordinator->Close(/*suppress_animation=*/true);
+    coordinator->Close(/*suppress_animations=*/true);
   }
 }
 
@@ -210,7 +217,7 @@ void ReadAnythingSidePanelController::PrimaryPageChanged(content::Page& page) {
 }
 
 void ReadAnythingSidePanelController::UpdateIphVisibility() {
-  if (!tab_->IsInForeground()) {
+  if (!tab_->IsActivated()) {
     return;
   }
 

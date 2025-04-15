@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.toolbar;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
@@ -17,10 +18,6 @@ public final class ToolbarFeatures {
 
     /** Private constructor to avoid instantiation. */
     private ToolbarFeatures() {}
-
-    public static boolean shouldSuppressCaptures() {
-        return ChromeFeatureList.sSuppressionToolbarCaptures.isEnabled();
-    }
 
     /**
      * Returns whether to record metrics from suppression experiment. This allows an arm of
@@ -36,6 +33,9 @@ public final class ToolbarFeatures {
         if (sTabStripLayoutOptimizationEnabledForTesting != null) {
             return sTabStripLayoutOptimizationEnabledForTesting;
         }
+        if (DeviceInfo.isAutomotive()) {
+            return false;
+        }
         return ChromeFeatureList.sTabStripLayoutOptimization.isEnabled()
                 && isTablet
                 && VERSION.SDK_INT >= VERSION_CODES.R;
@@ -45,10 +45,5 @@ public final class ToolbarFeatures {
     public static void setIsTabStripLayoutOptimizationEnabledForTesting(boolean enabled) {
         sTabStripLayoutOptimizationEnabledForTesting = enabled;
         ResettersForTesting.register(() -> sTabStripLayoutOptimizationEnabledForTesting = null);
-    }
-
-    public static boolean isBrowserControlsInVizEnabled(boolean isTablet) {
-        return ChromeFeatureList.sBrowserControlsInViz.isEnabled()
-                && (!ChromeFeatureList.sBcivPhoneOnly.isEnabled() || !isTablet);
     }
 }

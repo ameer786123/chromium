@@ -164,7 +164,8 @@ void WebTestPermissionManager::RequestPermissions(
       render_frame_host->GetMainFrame());
   for (const auto& permission : request_description.permissions) {
     result.push_back(GetPermissionStatusForRequestPermission(
-        permission, request_description.requesting_origin, embedding_origin));
+        blink::PermissionDescriptorToPermissionType(permission),
+        request_description.requesting_origin, embedding_origin));
   }
 
   std::move(callback).Run(result);
@@ -204,7 +205,8 @@ void WebTestPermissionManager::RequestPermissionsFromCurrentDocument(
       render_frame_host->GetMainFrame());
   for (const auto& permission : request_description.permissions) {
     result.push_back(GetPermissionStatusForRequestPermission(
-        permission, request_description.requesting_origin, embedding_origin));
+        blink::PermissionDescriptorToPermissionType(permission),
+        request_description.requesting_origin, embedding_origin));
   }
 
   std::move(callback).Run(result);
@@ -386,7 +388,7 @@ void WebTestPermissionManager::SetPermission(
     const GURL& url,
     const GURL& embedding_url,
     blink::test::mojom::PermissionAutomation::SetPermissionCallback callback) {
-  auto type = blink::PermissionDescriptorToPermissionType(descriptor);
+  auto type = blink::MaybePermissionDescriptorToPermissionType(descriptor);
   if (!type) {
     std::move(callback).Run(false);
     return;
@@ -483,7 +485,7 @@ void WebTestPermissionManager::OnPermissionChanged(
                      permission_callback,
                  const std::vector<bool>& successes) {
                 std::move(permission_callback)
-                    .Run(base::ranges::all_of(successes, std::identity()));
+                    .Run(std::ranges::all_of(successes, std::identity()));
               },
               std::move(permission_callback)));
       SetPermission(blink::PermissionType::STORAGE_ACCESS_GRANT,

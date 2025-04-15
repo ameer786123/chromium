@@ -89,7 +89,7 @@ TEST_F(FormAutofillIssuesTest, FormDuplicateIdForInputError) {
       GetFormIssuesForTesting(form_target.GetFormControlElements(), {});
 
   int duplicated_ids_issue_count =
-      base::ranges::count_if(form_issues, [](const FormIssue& form_issue) {
+      std::ranges::count_if(form_issues, [](const FormIssue& form_issue) {
         return form_issue.issue_type ==
                    GenericIssueErrorType::kFormDuplicateIdForInputError &&
                form_issue.violating_node_attribute.Utf8() == "id";
@@ -243,7 +243,8 @@ TEST_F(FormAutofillIssuesTest, FormLabelForNameError) {
   WebLocalFrame* web_frame = GetMainFrame();
   FormData form_data = *form_util::ExtractFormData(
       web_frame->GetDocument(), WebFormElementFromHTML(kHtml),
-      *base::MakeRefCounted<FieldDataManager>(), kCallTimerStateDummy);
+      *base::MakeRefCounted<FieldDataManager>(), kCallTimerStateDummy,
+      /*button_titles_cache=*/nullptr);
 
   std::vector<FormIssue> form_issues =
       CheckForLabelsWithIncorrectForAttributeForTesting(
@@ -266,7 +267,8 @@ TEST_F(FormAutofillIssuesTest, FormLabelForMatchesNonExistingIdError) {
   WebLocalFrame* web_frame = GetMainFrame();
   FormData form_data = *form_util::ExtractFormData(
       web_frame->GetDocument(), WebFormElementFromHTML(kHtml),
-      *base::MakeRefCounted<FieldDataManager>(), kCallTimerStateDummy);
+      *base::MakeRefCounted<FieldDataManager>(), kCallTimerStateDummy,
+      /*button_titles_cache=*/nullptr);
 
   std::vector<FormIssue> form_issues =
       CheckForLabelsWithIncorrectForAttributeForTesting(

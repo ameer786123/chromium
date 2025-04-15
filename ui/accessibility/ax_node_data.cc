@@ -6,16 +6,17 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <set>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
@@ -95,8 +96,8 @@ typename std::vector<std::pair<FirstType, SecondType>>::const_iterator
 FindInVectorOfPairs(
     FirstType first,
     const std::vector<std::pair<FirstType, SecondType>>& vector) {
-  return base::ranges::find(vector, first,
-                            &std::pair<FirstType, SecondType>::first);
+  return std::ranges::find(vector, first,
+                           &std::pair<FirstType, SecondType>::first);
 }
 
 }  // namespace
@@ -182,8 +183,7 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
       return false;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 // Returns true if |attr| contains a vector of node ids that would need
@@ -191,6 +191,7 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
 bool IsNodeIdIntListAttribute(ax::mojom::IntListAttribute attr) {
   switch (attr) {
     case ax::mojom::IntListAttribute::kIndirectChildIds:
+    case ax::mojom::IntListAttribute::kActionsIds:
     case ax::mojom::IntListAttribute::kControlsIds:
     case ax::mojom::IntListAttribute::kDetailsIds:
     case ax::mojom::IntListAttribute::kDescribedbyIds:
@@ -262,7 +263,7 @@ AXNodeData::AXNodeData(AXNodeData&& other) {
   stringlist_attributes.swap(other.stringlist_attributes);
   html_attributes.swap(other.html_attributes);
   child_ids.swap(other.child_ids);
-  relative_bounds = other.relative_bounds;
+  relative_bounds = std::move(other.relative_bounds);
 
   other.id = kInvalidAXNodeID;
   other.role = ax::mojom::Role::kUnknown;
@@ -520,7 +521,7 @@ void AXNodeData::SetName(const std::string& name) {
       << "' because a valid role is needed to set the default NameFrom "
          "attribute. Set the role first.";
 
-  auto iter = base::ranges::find(
+  auto iter = std::ranges::find(
       string_attributes, ax::mojom::StringAttribute::kName,
       &std::pair<ax::mojom::StringAttribute, std::string>::first);
 
@@ -660,8 +661,7 @@ void AXNodeData::RemoveState(ax::mojom::State state_enum) {
 void AXNodeData::AddAction(ax::mojom::Action action_enum) {
   switch (action_enum) {
     case ax::mojom::Action::kNone:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
 
     // Note: all of the attributes are included here explicitly, rather than
     // using "default:", so that it's a compiler error to add a new action
@@ -1691,6 +1691,7 @@ std::string AXNodeData::ToString(bool verbose) const {
         break;
       case ax::mojom::StringAttribute::kClassName:
       case ax::mojom::StringAttribute::kHtmlId:
+      case ax::mojom::StringAttribute::kHtmlInputName:
       case ax::mojom::StringAttribute::kHtmlTag:
       case ax::mojom::StringAttribute::kRole:
       case ax::mojom::StringAttribute::kUrl:
@@ -1737,7 +1738,7 @@ std::string AXNodeData::ToString(bool verbose) const {
 
   for (const std::pair<ax::mojom::BoolAttribute, bool>& bool_attribute :
        bool_attributes) {
-    std::string value = bool_attribute.second ? "true" : "false";
+    std::string value = base::ToString(bool_attribute.second);
     switch (bool_attribute.first) {
       case ax::mojom::BoolAttribute::kNonAtomicTextFieldRoot:
         result += " non_atomic_text_field_root=" + value;
@@ -1818,6 +1819,9 @@ std::string AXNodeData::ToString(bool verbose) const {
         break;
       case ax::mojom::IntListAttribute::kIndirectChildIds:
         result += " indirect_child_ids=" + IntVectorToString(values);
+        break;
+      case ax::mojom::IntListAttribute::kActionsIds:
+        result += " actions_ids=" + IntVectorToString(values);
         break;
       case ax::mojom::IntListAttribute::kControlsIds:
         result += " controls_ids=" + IntVectorToString(values);
@@ -1961,8 +1965,8 @@ std::string AXNodeData::ToString(bool verbose) const {
         result +=
             " aria_notification_announcements=" + base::JoinString(values, ",");
         break;
-      case ax::mojom::StringListAttribute::kAriaNotificationIds:
-        result += " aria_notification_ids=" + base::JoinString(values, ",");
+      case ax::mojom::StringListAttribute::kAriaNotificationTypes:
+        result += " aria_notification_types=" + base::JoinString(values, ",");
         break;
       case ax::mojom::StringListAttribute::kCustomActionDescriptions:
         result +=

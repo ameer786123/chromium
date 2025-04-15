@@ -13,7 +13,6 @@
 #include "base/scoped_multi_source_observation.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/focus_client.h"
@@ -139,7 +138,7 @@ TEST_F(DesktopNativeWidgetAuraTest, WidgetNotVisibleOnlyWindowTreeHostShown) {
 }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // TODO(crbug.com/40607034): investigate fixing and enabling on Chrome OS.
 #define MAYBE_GlobalCursorState DISABLED_GlobalCursorState
 #else
@@ -276,7 +275,7 @@ std::unique_ptr<Widget> CreateAndShowControlWidget(aura::Window* parent) {
 
 }  // namespace
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // TODO(crbug.com/40607034): investigate fixing and enabling on Chrome OS.
 #define MAYBE_ReorderDoesntRecomputeOcclusion \
   DISABLED_ReorderDoesntRecomputeOcclusion
@@ -305,15 +304,15 @@ TEST_F(DesktopNativeWidgetAuraTest, MAYBE_ReorderDoesntRecomputeOcclusion) {
   // Create child views.
   View* host_view1 = new View();
   w1->GetNativeView()->SetProperty(kHostViewKey, host_view1);
-  contents_view->AddChildView(host_view1);
+  contents_view->AddChildViewRaw(host_view1);
 
   View* host_view2 = new View();
   w2->GetNativeView()->SetProperty(kHostViewKey, host_view2);
-  contents_view->AddChildView(host_view2);
+  contents_view->AddChildViewRaw(host_view2);
 
   View* host_view3 = new View();
   w3->GetNativeView()->SetProperty(kHostViewKey, host_view3);
-  contents_view->AddChildView(host_view3);
+  contents_view->AddChildViewRaw(host_view3);
 
   // Reorder child views. Expect occlusion to only be recomputed once.
   aura::test::WindowOcclusionTrackerTestApi window_occlusion_tracker_test_api(
@@ -748,8 +747,9 @@ void GenerateMouseEvents(Widget* widget, ui::EventType last_event_type) {
   ui::MouseEvent release_event(ui::EventType::kMouseReleased, end_point,
                                end_point, ui::EventTimeForNow(), 0, 0);
   details = sink->OnEventFromSource(&release_event);
-  if (details.dispatcher_destroyed)
+  if (details.dispatcher_destroyed) {
     return;
+  }
 }
 
 // Creates a widget and invokes GenerateMouseEvents() with |last_event_type|.
@@ -777,7 +777,7 @@ TEST_F(DesktopNativeWidgetAuraTest, CloseWidgetDuringMouseReleased) {
   RunCloseWidgetDuringDispatchTest(this, ui::EventType::kMouseReleased);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // TODO(crbug.com/40607034): investigate fixing and enabling on Chrome OS.
 #define MAYBE_WindowMouseModalityTest DISABLED_WindowMouseModalityTest
 #else
@@ -801,7 +801,7 @@ TEST_F(DesktopNativeWidgetAuraTest, MAYBE_WindowMouseModalityTest) {
   // Create a view and validate that a mouse moves makes it to the view.
   EventCountView* widget_view = new EventCountView();
   widget_view->SetBounds(0, 0, 10, 10);
-  top_level_widget.GetRootView()->AddChildView(widget_view);
+  top_level_widget.GetRootView()->AddChildViewRaw(widget_view);
 
   gfx::Point cursor_location_main(5, 5);
   ui::MouseEvent move_main(ui::EventType::kMouseMoved, cursor_location_main,
@@ -818,7 +818,8 @@ TEST_F(DesktopNativeWidgetAuraTest, MAYBE_WindowMouseModalityTest) {
   // the main view within the dialog.
 
   // This instance will be destroyed when the dialog is destroyed.
-  auto dialog_delegate = std::make_unique<DialogDelegateView>();
+  auto dialog_delegate =
+      std::make_unique<DialogDelegateView>(DialogDelegateView::CreatePassKey());
   dialog_delegate->SetModalType(ui::mojom::ModalType::kWindow);
 
   Widget* modal_dialog_widget = views::DialogDelegate::CreateDialogWidget(
@@ -826,7 +827,7 @@ TEST_F(DesktopNativeWidgetAuraTest, MAYBE_WindowMouseModalityTest) {
   modal_dialog_widget->SetBounds(gfx::Rect(100, 100, 200, 200));
   EventCountView* dialog_widget_view = new EventCountView();
   dialog_widget_view->SetBounds(0, 0, 50, 50);
-  modal_dialog_widget->GetRootView()->AddChildView(dialog_widget_view);
+  modal_dialog_widget->GetRootView()->AddChildViewRaw(dialog_widget_view);
   modal_dialog_widget->Show();
   EXPECT_TRUE(modal_dialog_widget->IsVisible());
 
@@ -873,7 +874,8 @@ TEST_F(DesktopNativeWidgetAuraTest, WindowModalityActivationTest) {
   // says no, when a modal dialog is active.
   widget_delegate.SetCanActivate(false);
 
-  auto dialog_delegate = std::make_unique<DialogDelegateView>();
+  auto dialog_delegate =
+      std::make_unique<DialogDelegateView>(DialogDelegateView::CreatePassKey());
   dialog_delegate->SetModalType(ui::mojom::ModalType::kWindow);
 
   Widget* modal_dialog_widget = views::DialogDelegate::CreateDialogWidget(

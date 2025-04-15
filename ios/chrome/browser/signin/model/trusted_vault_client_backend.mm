@@ -45,13 +45,3 @@ void TrustedVaultClientBackend::NotifyRecoverabilityChanged(
     observer.OnTrustedVaultRecoverabilityChanged();
   }
 }
-
-TrustedVaultClientBackend::CancelDialogCallback
-TrustedVaultClientBackend::UpdateGPMPinForAccount(
-    id<SystemIdentity> identity,
-    trusted_vault::SecurityDomainId security_domain_id,
-    UINavigationController* navigationController,
-    UIView* brandedNavigationItemTitleView,
-    UpdateGPMPinCompletionCallback completion) {
-  NOTREACHED_NORETURN();
-}

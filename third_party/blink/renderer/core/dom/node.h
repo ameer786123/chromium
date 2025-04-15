@@ -34,6 +34,7 @@
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/counters_attachment_context.h"
+#include "third_party/blink/renderer/core/css/invalidation/invalidation_tracing_flag.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/dom/events/simulated_click_options.h"
 #include "third_party/blink/renderer/core/dom/mutation_observer_options.h"
@@ -60,7 +61,6 @@ class Rect;
 
 namespace blink {
 
-class ComputedStyle;
 class ContainerNode;
 class Document;
 class Element;
@@ -276,7 +276,7 @@ class CORE_EXPORT Node : public EventTarget {
 
   Node* insertBefore(Node* new_child, Node* ref_child, ExceptionState&);
   Node* insertBefore(Node* new_child, Node* ref_child);
-  Node* moveBefore(Node* new_child, Node* ref_child, ExceptionState&);
+  void moveBefore(Node* new_child, Node* ref_child, ExceptionState&);
   Node* replaceChild(Node* new_child, Node* old_child, ExceptionState&);
   Node* replaceChild(Node* new_child, Node* old_child);
   Node* removeChild(Node* child, ExceptionState&);
@@ -347,14 +347,17 @@ class CORE_EXPORT Node : public EventTarget {
     return GetElementNamespaceType() == ElementNamespaceType::kSVG;
   }
 
+  DISABLE_CFI_PERF bool IsCheckPseudoElement() const {
+    return GetPseudoId() == kPseudoIdCheckMark;
+  }
   DISABLE_CFI_PERF bool IsBeforePseudoElement() const {
     return GetPseudoId() == kPseudoIdBefore;
   }
-  DISABLE_CFI_PERF bool IsCheckPseudoElement() const {
-    return GetPseudoId() == kPseudoIdCheck;
-  }
   DISABLE_CFI_PERF bool IsAfterPseudoElement() const {
     return GetPseudoId() == kPseudoIdAfter;
+  }
+  DISABLE_CFI_PERF bool IsPickerIconPseudoElement() const {
+    return GetPseudoId() == kPseudoIdPickerIcon;
   }
   DISABLE_CFI_PERF bool IsScrollMarkerGroupBeforePseudoElement() const {
     return GetPseudoId() == kPseudoIdScrollMarkerGroupBefore;
@@ -362,11 +365,17 @@ class CORE_EXPORT Node : public EventTarget {
   DISABLE_CFI_PERF bool IsScrollMarkerGroupAfterPseudoElement() const {
     return GetPseudoId() == kPseudoIdScrollMarkerGroupAfter;
   }
-  DISABLE_CFI_PERF bool IsScrollNextButtonPseudoElement() const {
-    return GetPseudoId() == kPseudoIdScrollNextButton;
+  DISABLE_CFI_PERF bool IsScrollButtonBlockStartPseudoElement() const {
+    return GetPseudoId() == kPseudoIdScrollButtonBlockStart;
   }
-  DISABLE_CFI_PERF bool IsScrollPrevButtonPseudoElement() const {
-    return GetPseudoId() == kPseudoIdScrollPrevButton;
+  DISABLE_CFI_PERF bool IsScrollButtonInlineStartPseudoElement() const {
+    return GetPseudoId() == kPseudoIdScrollButtonInlineStart;
+  }
+  DISABLE_CFI_PERF bool IsScrollButtonInlineEndPseudoElement() const {
+    return GetPseudoId() == kPseudoIdScrollButtonInlineEnd;
+  }
+  DISABLE_CFI_PERF bool IsScrollButtonBlockEndPseudoElement() const {
+    return GetPseudoId() == kPseudoIdScrollButtonBlockEnd;
   }
   DISABLE_CFI_PERF bool IsMarkerPseudoElement() const {
     return GetPseudoId() == kPseudoIdMarker;
@@ -380,8 +389,12 @@ class CORE_EXPORT Node : public EventTarget {
   DISABLE_CFI_PERF bool IsViewTransitionPseudoElement() const {
     return IsTransitionPseudoElement(GetPseudoId());
   }
+  DISABLE_CFI_PERF bool IsViewTransitionGroupPseudoElement() const {
+    return GetPseudoId() == kPseudoIdViewTransitionGroup;
+  }
   virtual PseudoId GetPseudoId() const { return kPseudoIdNone; }
   virtual PseudoId GetPseudoIdForStyling() const { return kPseudoIdNone; }
+  virtual const AtomicString& GetPseudoArgument() const { return g_null_atom; }
 
   CustomElementState GetCustomElementState() const {
     return static_cast<CustomElementState>(node_flags_ &
@@ -451,8 +464,10 @@ class CORE_EXPORT Node : public EventTarget {
   // isInShadowTree() returns true.
   // This can happen when handling queued events (e.g. during execCommand())
   ShadowRoot* ContainingShadowRoot() const;
-  ShadowRoot* GetShadowRoot() const;
-  bool IsInUserAgentShadowRoot() const;
+
+  // Inline-defined in shadow_root.h
+  inline ShadowRoot* GetShadowRoot() const;
+  inline bool IsInUserAgentShadowRoot() const;
 
   // Returns nullptr, a child of ShadowRoot, or a legacy shadow root.
   Node* NonBoundaryShadowTreeRootNode();
@@ -487,7 +502,7 @@ class CORE_EXPORT Node : public EventTarget {
   };
   virtual void NotifyLoadedSheetAndAllCriticalSubresources(
       LoadedSheetErrorStatus) {}
-  virtual void SetToPendingState() { NOTREACHED_IN_MIGRATION(); }
+  virtual void SetToPendingState() { NOTREACHED(); }
 
   bool HasName() const {
     DCHECK(!IsTextNode());
@@ -568,6 +583,9 @@ class CORE_EXPORT Node : public EventTarget {
     DCHECK(isConnected());
     if (ShouldSkipMarkingStyleDirty())
       return;
+    if (InvalidationTracingFlag::IsEnabled()) [[unlikely]] {
+      MaybeAddNodeInsertedTraceEvent();
+    }
     if (!NeedsStyleRecalc())
       SetStyleChange(kLocalStyleChange);
     MarkAncestorsWithChildNeedsStyleRecalc();
@@ -799,19 +817,6 @@ class CORE_EXPORT Node : public EventTarget {
 
   void ReattachLayoutTree(AttachContext&);
 
-  // ---------------------------------------------------------------------------
-  // Inline ComputedStyle accessor
-  //
-  // Note that the following 'inline' function is not defined in this header,
-  // but in node_computed_style.h. Please include that file if you want to use
-  // this function.
-  //
-  // DO NOT USE - TO BE REMOVED: Only elements have computed styles. This method
-  // falls back to retrieve a ComputedStyle from the LayoutObject for LayoutText
-  // and LayoutView. Use Element::GetComputedStyle() or LayoutObject::Style()
-  // instead.
-  inline const ComputedStyle* GetComputedStyleForElementOrLayoutObject() const;
-
   bool ShouldSkipMarkingStyleDirty() const;
 
   // ---------------------------------------------------------------------------
@@ -887,6 +892,7 @@ class CORE_EXPORT Node : public EventTarget {
 #endif
 
   NodeListsNodeData* NodeLists();
+  const NodeListsNodeData* NodeLists() const;
   void ClearNodeLists();
 
   FlatTreeNodeData* GetFlatTreeNodeData() const;
@@ -1010,6 +1016,11 @@ class CORE_EXPORT Node : public EventTarget {
     return data_ ? data_->GetDOMParts() : nullptr;
   }
 
+  DOMNodeId NodeID() const {
+    return data_ ? data_->NodeId() : kInvalidDOMNodeId;
+  }
+  DOMNodeId& EnsureNodeID() { return EnsureRareData().NodeId(); }
+
   // For the imperative slot distribution API.
   void SetManuallyAssignedSlot(HTMLSlotElement* slot);
   HTMLSlotElement* ManuallyAssignedSlot();
@@ -1018,17 +1029,6 @@ class CORE_EXPORT Node : public EventTarget {
   void SetHasDisplayLockContext() { SetFlag(kHasDisplayLockContext); }
   bool HasDisplayLockContext() const { return GetFlag(kHasDisplayLockContext); }
 
-  // Creates a DocumentFragment, converts |node_unions| from bindings into
-  // actual Nodes by converting strings and script into text nodes via
-  // NodeOrStringToNode.  If there is more than one node, appends all
-  // resulting Nodes to the DocumentFragment, and returns it. Returns nullptr
-  // if exceptions are thrown.
-  static Node* ConvertNodeUnionsIntoNode(
-      const ContainerNode* parent,
-      const HeapVector<Member<V8UnionNodeOrStringOrTrustedScript>>& node_unions,
-      Document& document,
-      const char* property_name,
-      ExceptionState& exception_state);
   // Converts |node_unions| from bindings into actual Nodes by converting
   // strings and script into text nodes, and if more than one node resulted,
   // removes them from their old parent (as though they had been inserted into
@@ -1054,6 +1054,17 @@ class CORE_EXPORT Node : public EventTarget {
                                                       : TextDirection::kLtr;
   }
   void SetCachedDirectionality(TextDirection direction);
+
+  bool SelfOrAncestorHasContainerTiming() const {
+    return GetFlag(kSelfOrAncestorHasContainerTiming);
+  }
+  void SetSelfOrAncestorHasContainerTiming() {
+    SetFlag(kSelfOrAncestorHasContainerTiming);
+  }
+  void ClearSelfOrAncestorHasContainerTiming() {
+    ClearFlag(kSelfOrAncestorHasContainerTiming);
+  }
+  bool HasContainerTiming() const;
 
   void Trace(Visitor*) const override;
 
@@ -1130,6 +1141,10 @@ class CORE_EXPORT Node : public EventTarget {
 
     // Bits indicating this Node is a NodePart or a ChildNodePart endpoint.
     kHasNodePart = 1u << 30,
+
+    // Indicate the node is in a hierarchy that needs to be considered for
+    // ContainerTiming events.
+    kSelfOrAncestorHasContainerTiming = 1u << 31,
 
     kDefaultNodeFlags = kIsFinishedParsingChildrenFlag,
 
@@ -1237,6 +1252,8 @@ class CORE_EXPORT Node : public EventTarget {
 
   // Used exclusively by |EnsureRareData|.
   NodeRareData& CreateRareData();
+
+  void MaybeAddNodeInsertedTraceEvent();
 
   const HeapVector<Member<MutationObserverRegistration>>*
   MutationObserverRegistry();

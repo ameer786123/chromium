@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_ANDROID_TAB_MODEL_TAB_MODEL_JNI_BRIDGE_H_
 
 #include <jni.h>
+
 #include <vector>
 
 #include "base/android/jni_weak_ref.h"
@@ -50,6 +51,7 @@ class TabModelJniBridge : public TabModel {
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject() const override;
 
   void SetActiveIndex(int index) override;
+  void ForceCloseAllTabs() override;
   void CloseTabAt(int index) override;
 
   void CreateTab(TabAndroid* parent,
@@ -58,7 +60,8 @@ class TabModelJniBridge : public TabModel {
   void HandlePopupNavigation(TabAndroid* parent,
                              NavigateParams* params) override;
 
-  content::WebContents* CreateNewTabForDevTools(const GURL& url) override;
+  content::WebContents* CreateNewTabForDevTools(const GURL& url,
+                                                bool new_window) override;
 
   // Return true if we are currently restoring sessions asynchronously.
   bool IsSessionRestoreInProgress() const override;
@@ -67,8 +70,10 @@ class TabModelJniBridge : public TabModel {
   // tab model selector.
   bool IsActiveModel() const override;
 
-  // Return whether |tab| is grouped together with other Tab objects.
-  static bool IsTabInTabGroup(TabAndroid* tab);
+  // Acquires dependences in a more round about way, prefer instanced version.
+  static bool IsTabInTabGroupLegacy(TabAndroid* tab);
+  // Return whether |tab| is in a tab group.
+  bool IsTabInTabGroup(TabAndroid* tab) override;
 
   void AddObserver(TabModelObserver* observer) override;
   void RemoveObserver(TabModelObserver* observer) override;

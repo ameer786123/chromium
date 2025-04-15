@@ -126,6 +126,15 @@ v8::MaybeLocal<v8::Script> CompileScriptInternal(
     bool can_use_crowdsourced_compile_hints,
     std::optional<inspector_compile_script_event::V8ConsumeCacheResult>*
         cache_result) {
+  // Record the script compilation in ScriptState (accessible via
+  // internals.idl).
+  {
+    const bool use_code_cache =
+        (compile_options & v8::ScriptCompiler::kConsumeCodeCache) != 0;
+    script_state->RecordScriptCompilation(classic_script.SourceUrl(),
+                                          use_code_cache);
+  }
+
   v8::Local<v8::String> code = V8String(isolate, classic_script.SourceText());
 
   // TODO(kouhei): Plumb the ScriptState into this function and replace all
@@ -276,15 +285,15 @@ v8::MaybeLocal<v8::Script> CompileScriptInternal(
       v8::MaybeLocal<v8::Script> script =
           v8::ScriptCompiler::Compile(script_state->GetContext(), &source,
                                       v8::ScriptCompiler::kConsumeCodeCache);
-      cache_handler->DidUseCodeCache();
-      // The ScriptState has an associated context. We expect the current
-      // context to match the context associated with Script context when
-      // compiling the script for main world. Hence it is safe to use the
-      // CodeCacheHost corresponding to the script execution context. For
-      // isolated world (for ex: extension scripts), the current context
-      // may not match the script context. Though currently code caching is
-      // disabled for extensions.
+      cache_handler->DidUseCodeCache(cached_data->rejected);
       if (cached_data->rejected) {
+        // The ScriptState has an associated context. We expect the current
+        // context to match the context associated with Script context when
+        // compiling the script for main world. Hence it is safe to use the
+        // CodeCacheHost corresponding to the script execution context. For
+        // isolated world (for ex: extension scripts), the current context may
+        // not match the script context. Though currently code caching is
+        // disabled for extensions.
         cache_handler->ClearCachedMetadata(
             ExecutionContext::GetCodeCacheHostFromContext(
                 ExecutionContext::From(script_state)),
@@ -298,13 +307,8 @@ v8::MaybeLocal<v8::Script> CompileScriptInternal(
       return script;
     }
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-
-  // All switch branches should return and we should never get here.
-  // But some compilers aren't sure, hence this default.
-  NOTREACHED_IN_MIGRATION();
-  return v8::MaybeLocal<v8::Script>();
 }
 
 int GetMicrotasksScopeDepth(v8::Isolate* isolate,
@@ -400,12 +404,19 @@ v8::MaybeLocal<v8::Module> V8ScriptRunner::CompileModule(
         isolate->GetCurrentContext(), streamer->Source(v8::ScriptType::kModule),
         code, origin);
   } else {
-    switch (compile_options) {
+    switch (static_cast<int>(compile_options)) {
       // TODO(40286622): Compile hints for modules.
       case v8::ScriptCompiler::kProduceCompileHints:
       case v8::ScriptCompiler::kConsumeCompileHints:
-        compile_options = v8::ScriptCompiler::kNoCompileOptions;
+      case v8::ScriptCompiler::kFollowCompileHintsMagicComment |
+          v8::ScriptCompiler::kProduceCompileHints:
+      case v8::ScriptCompiler::kFollowCompileHintsMagicComment |
+          v8::ScriptCompiler::kConsumeCompileHints:
+        compile_options = v8::ScriptCompiler::CompileOptions(
+            compile_options & (~(v8::ScriptCompiler::kProduceCompileHints |
+                                 v8::ScriptCompiler::kConsumeCompileHints)));
         ABSL_FALLTHROUGH_INTENDED;
+      case v8::ScriptCompiler::kFollowCompileHintsMagicComment:
       case v8::ScriptCompiler::kNoCompileOptions:
       case v8::ScriptCompiler::kEagerCompile: {
         base::UmaHistogramEnumeration(
@@ -425,7 +436,6 @@ v8::MaybeLocal<v8::Module> V8ScriptRunner::CompileModule(
         // previously.
         CachedMetadataHandler* cache_handler = params.CacheHandler();
         DCHECK(cache_handler);
-        cache_handler->DidUseCodeCache();
         const scoped_refptr<CachedMetadata> cached_metadata =
             V8CodeCache::GetCachedMetadata(cache_handler);
         const bool full_code_cache = V8CodeCache::IsFull(cached_metadata.get());
@@ -437,13 +447,14 @@ v8::MaybeLocal<v8::Module> V8ScriptRunner::CompileModule(
             source.GetCachedData();
         script = v8::ScriptCompiler::CompileModule(
             isolate, &source, compile_options, no_cache_reason);
-        // The ScriptState also has an associated context. We expect the current
-        // context to match the context associated with Script context when
-        // compiling the module. Hence it is safe to use the CodeCacheHost
-        // corresponding to the current execution context.
-        ExecutionContext* execution_context =
-            ExecutionContext::From(isolate->GetCurrentContext());
+        cache_handler->DidUseCodeCache(cached_data->rejected);
         if (cached_data->rejected) {
+          // The ScriptState also has an associated context. We expect the
+          // current context to match the context associated with Script context
+          // when compiling the module. Hence it is safe to use the
+          // CodeCacheHost corresponding to the current execution context.
+          ExecutionContext* execution_context =
+              ExecutionContext::From(isolate->GetCurrentContext());
           cache_handler->ClearCachedMetadata(
               ExecutionContext::GetCodeCacheHostFromContext(execution_context),
               CachedMetadataHandler::kClearPersistentStorage);
@@ -454,7 +465,7 @@ v8::MaybeLocal<v8::Module> V8ScriptRunner::CompileModule(
         break;
       }
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 
@@ -619,16 +630,13 @@ ScriptEvaluationResult V8ScriptRunner::CompileAndRunScript(
     const bool can_use_crowdsourced_compile_hints =
         is_http && page != nullptr && page->MainFrame() == frame &&
         page->GetV8CrowdsourcedCompileHintsConsumer().HasData();
-    const bool v8_compile_hints_magic_comment_runtime_enabled =
-        RuntimeEnabledFeatures::JavaScriptCompileHintsMagicRuntimeEnabled(
-            execution_context);
 
     std::tie(compile_options, produce_cache_options, no_cache_reason) =
         V8CodeCache::GetCompileOptions(
             execution_context->GetV8CacheOptions(), *classic_script,
             might_generate_crowdsourced_compile_hints,
             can_use_crowdsourced_compile_hints,
-            v8_compile_hints_magic_comment_runtime_enabled);
+            v8_compile_hints::GetMagicCommentMode(execution_context));
 
     v8::ScriptOrigin origin = classic_script->CreateScriptOrigin(isolate);
     v8::MaybeLocal<v8::Value> maybe_result;
@@ -666,22 +674,21 @@ ScriptEvaluationResult V8ScriptRunner::CompileAndRunScript(
                : true)) {
         auto delay =
             base::Milliseconds(features::kCacheCodeOnIdleDelayParam.Get());
-        // Workers don't have a concept of idle tasks, so use a default task for
-        // these.
-        TaskType task_type =
-            frame ? TaskType::kIdleTask : TaskType::kInternalDefault;
-        execution_context->GetTaskRunner(task_type)->PostDelayedTask(
-            FROM_HERE,
-            WTF::BindOnce(&DelayedProduceCodeCacheTask,
-                          // TODO(leszeks): Consider passing the
-                          // script state as a weak persistent.
-                          WrapPersistent(script_state),
-                          v8::Global<v8::Script>(isolate, script),
-                          WrapPersistent(cache_handler),
-                          classic_script->SourceText().length(),
-                          classic_script->SourceUrl(),
-                          classic_script->StartPosition()),
-            delay);
+        // TODO(crbug.com/40202028): Consider scheduling idle tasks via
+        // ThreadScheduler::PostDelayedIdleTask().
+        execution_context->GetTaskRunner(TaskType::kInternalDefault)
+            ->PostDelayedTask(
+                FROM_HERE,
+                WTF::BindOnce(&DelayedProduceCodeCacheTask,
+                              // TODO(leszeks): Consider passing the
+                              // script state as a weak persistent.
+                              WrapPersistent(script_state),
+                              v8::Global<v8::Script>(isolate, script),
+                              WrapPersistent(cache_handler),
+                              classic_script->SourceText().length(),
+                              classic_script->SourceUrl(),
+                              classic_script->StartPosition()),
+                delay);
       } else {
         V8CodeCache::ProduceCache(
             isolate,
@@ -694,7 +701,7 @@ ScriptEvaluationResult V8ScriptRunner::CompileAndRunScript(
       // `SharedStorageWorkletGlobalScope` has a out-of-process worklet
       // architecture that does not have a `page` associated.
       // TODO(crbug.com/340920456): Figure out what should be done here.
-      if (compile_options == v8::ScriptCompiler::kProduceCompileHints &&
+      if ((compile_options & v8::ScriptCompiler::kProduceCompileHints) != 0 &&
           !execution_context->IsSharedStorageWorkletGlobalScope()) {
         CHECK(page);
         CHECK(frame);

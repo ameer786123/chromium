@@ -42,7 +42,11 @@ OptionalStyleColor ColorPropertyFunctions::GetUnvisitedColor(
     case CSSPropertyID::kOutlineColor:
       return OptionalStyleColor(style.OutlineColor());
     case CSSPropertyID::kColumnRuleColor:
-      return OptionalStyleColor(style.ColumnRuleColor().GetLegacyGapColor());
+      // TODO(crbug.com/357648037): Look into supporting multiple colors and
+      // deprecating the legacy method.
+      return OptionalStyleColor(style.ColumnRuleColor().GetLegacyValue());
+    case CSSPropertyID::kRowRuleColor:
+      return OptionalStyleColor(style.RowRuleColor().GetLegacyValue());
     case CSSPropertyID::kTextEmphasisColor:
       return OptionalStyleColor(style.TextEmphasisColor());
     case CSSPropertyID::kWebkitTextFillColor:
@@ -60,8 +64,7 @@ OptionalStyleColor ColorPropertyFunctions::GetUnvisitedColor(
     case CSSPropertyID::kTextDecorationColor:
       return OptionalStyleColor(style.TextDecorationColor());
     default:
-      NOTREACHED_IN_MIGRATION();
-      return OptionalStyleColor();
+      NOTREACHED();
   }
 }
 
@@ -101,7 +104,10 @@ OptionalStyleColor ColorPropertyFunctions::GetVisitedColor(
       return OptionalStyleColor(style.InternalVisitedOutlineColor());
     case CSSPropertyID::kColumnRuleColor:
       return OptionalStyleColor(
-          style.InternalVisitedColumnRuleColor().GetLegacyGapColor());
+          style.InternalVisitedColumnRuleColor().GetLegacyValue());
+    case CSSPropertyID::kRowRuleColor:
+      // TODO(crbug.com/357648037): Update to use multiple values.
+      return OptionalStyleColor(style.RowRuleColor().GetLegacyValue());
     case CSSPropertyID::kTextEmphasisColor:
       return OptionalStyleColor(style.InternalVisitedTextEmphasisColor());
     case CSSPropertyID::kWebkitTextFillColor:
@@ -119,8 +125,7 @@ OptionalStyleColor ColorPropertyFunctions::GetVisitedColor(
     case CSSPropertyID::kTextDecorationColor:
       return OptionalStyleColor(style.InternalVisitedTextDecorationColor());
     default:
-      NOTREACHED_IN_MIGRATION();
-      return OptionalStyleColor();
+      NOTREACHED();
   }
 }
 
@@ -178,14 +183,16 @@ void ColorPropertyFunctions::SetUnvisitedColor(const CSSProperty& property,
       builder.SetTextEmphasisColor(style_color);
       return;
     case CSSPropertyID::kColumnRuleColor:
-      builder.SetColumnRuleColor(GapColorDataList(style_color));
+      builder.SetColumnRuleColor(GapDataList<StyleColor>(style_color));
+      return;
+    case CSSPropertyID::kRowRuleColor:
+      builder.SetRowRuleColor(GapDataList<StyleColor>(style_color));
       return;
     case CSSPropertyID::kWebkitTextStrokeColor:
       builder.SetTextStrokeColor(style_color);
       return;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
 }
 
@@ -238,14 +245,14 @@ void ColorPropertyFunctions::SetVisitedColor(const CSSProperty& property,
       builder.SetInternalVisitedTextEmphasisColor(style_color);
       return;
     case CSSPropertyID::kColumnRuleColor:
-      builder.SetInternalVisitedColumnRuleColor(GapColorDataList(style_color));
+      builder.SetInternalVisitedColumnRuleColor(
+          GapDataList<StyleColor>(style_color));
       return;
     case CSSPropertyID::kWebkitTextStrokeColor:
       builder.SetInternalVisitedTextStrokeColor(style_color);
       return;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
 }
 

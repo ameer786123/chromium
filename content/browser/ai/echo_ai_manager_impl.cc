@@ -7,8 +7,9 @@
 #include "base/no_destructor.h"
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
+#include "components/language/core/common/locale_util.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "content/browser/ai/echo_ai_assistant.h"
+#include "content/browser/ai/echo_ai_language_model.h"
 #include "content/browser/ai/echo_ai_rewriter.h"
 #include "content/browser/ai/echo_ai_summarizer.h"
 #include "content/browser/ai/echo_ai_writer.h"
@@ -16,14 +17,40 @@
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
-#include "third_party/blink/public/mojom/ai/ai_assistant.mojom.h"
+#include "third_party/blink/public/common/features_generated.h"
+#include "third_party/blink/public/mojom/ai/ai_common.mojom.h"
+#include "third_party/blink/public/mojom/ai/ai_language_model.mojom-forward.h"
+#include "third_party/blink/public/mojom/ai/ai_language_model.mojom.h"
 
 namespace content {
 
 namespace {
 
-const int kMockDownloadPreperationTimeMillisecond = 300;
-const int kMockModelSizeBytes = 3000;
+const int kMockDownloadPreparationTimeMillisecond = 300;
+const int kMockModelSizeBytes = 0x10000;
+
+using blink::mojom::AILanguageCodePtr;
+
+// TODO(crbug.com/394109104): This is duplicated from chrome AIManager in order
+// to keep the consistent wpt results run from CQ, which currently only supports
+// running wpt_internal/ tests on content_shell, using content EchoAIManager.
+// If there is enough divergence in two AI Managers' code, it should be
+// refactored to share the common code or use subclasses.
+auto is_language_supported = [](const AILanguageCodePtr& language) {
+  return language->code.empty() ||
+         language::ExtractBaseLanguage(language->code) == "en";
+};
+
+bool IsLanguagesSupported(const std::vector<AILanguageCodePtr>& languages) {
+  return std::ranges::all_of(languages, is_language_supported);
+}
+
+bool SupportedLanguages(const std::vector<AILanguageCodePtr>& input,
+                        const std::vector<AILanguageCodePtr>& context,
+                        const AILanguageCodePtr& output) {
+  return IsLanguagesSupported(input) && IsLanguagesSupported(context) &&
+         is_language_supported(output);
+}
 
 }  // namespace
 
@@ -33,23 +60,55 @@ EchoAIManagerImpl::~EchoAIManagerImpl() = default;
 
 // static
 void EchoAIManagerImpl::Create(
-    ReceiverContext context,
     mojo::PendingReceiver<blink::mojom::AIManager> receiver) {
   static base::NoDestructor<EchoAIManagerImpl> ai;
-  ai->receivers_.Add(ai.get(), std::move(receiver), context);
+  ai->receivers_.Add(ai.get(), std::move(receiver));
 }
 
-void EchoAIManagerImpl::CanCreateAssistant(
-    CanCreateAssistantCallback callback) {
+void EchoAIManagerImpl::CanCreateLanguageModel(
+    blink::mojom::AILanguageModelCreateOptionsPtr options,
+    CanCreateLanguageModelCallback callback) {
+  if (options->expected_inputs.has_value()) {
+    for (const auto& expected_input : options->expected_inputs.value()) {
+      if (expected_input->type !=
+              blink::mojom::AILanguageModelPromptType::kText &&
+          !base::FeatureList::IsEnabled(
+              blink::features::kAIPromptAPIMultimodalInput)) {
+        std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                    kUnavailableModelAdaptationNotAvailable);
+        return;
+      }
+      if (expected_input->languages.has_value() &&
+          !IsLanguagesSupported(expected_input->languages.value())) {
+        std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                    kUnavailableUnsupportedLanguage);
+        return;
+      }
+    }
+  }
+
   std::move(callback).Run(
-      blink::mojom::ModelAvailabilityCheckResult::kAfterDownload);
+      blink::mojom::ModelAvailabilityCheckResult::kDownloadable);
 }
 
-void EchoAIManagerImpl::CreateAssistant(
-    mojo::PendingRemote<blink::mojom::AIManagerCreateAssistantClient> client,
-    blink::mojom::AIAssistantCreateOptionsPtr options) {
-  mojo::Remote<blink::mojom::AIManagerCreateAssistantClient> client_remote(
+void EchoAIManagerImpl::CreateLanguageModel(
+    mojo::PendingRemote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client,
+    blink::mojom::AILanguageModelCreateOptionsPtr options) {
+  mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient> client_remote(
       std::move(client));
+
+  if (options->system_prompt.has_value() &&
+      options->system_prompt->size() > kMaxContextSizeInTokens) {
+    client_remote->OnError(
+        blink::mojom::AIManagerCreateClientError::kInitialInputTooLarge);
+    return;
+  }
+
+  auto return_language_model_callback =
+      base::BindOnce(&EchoAIManagerImpl::ReturnAILanguageModelCreationResult,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(client_remote),
+                     std::move(options->sampling_params));
 
   // In order to test the model download progress handling, the
   // `EchoAIManagerImpl` will always start from the `after-download` state, and
@@ -57,14 +116,28 @@ void EchoAIManagerImpl::CreateAssistant(
   content::GetUIThreadTaskRunner()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce(&EchoAIManagerImpl::DoMockDownloadingAndReturn,
-                     weak_ptr_factory_.GetWeakPtr(), std::move(client_remote)),
-      base::Milliseconds(kMockDownloadPreperationTimeMillisecond));
+                     weak_ptr_factory_.GetWeakPtr(),
+                     std::move(return_language_model_callback)),
+      base::Milliseconds(kMockDownloadPreparationTimeMillisecond));
 }
 
 void EchoAIManagerImpl::CanCreateSummarizer(
+    blink::mojom::AISummarizerCreateOptionsPtr options,
     CanCreateSummarizerCallback callback) {
-  std::move(callback).Run(
-      /*result=*/blink::mojom::ModelAvailabilityCheckResult::kReadily);
+  if (options && !SupportedLanguages(options->expected_input_languages,
+                                     options->expected_context_languages,
+                                     options->output_language)) {
+    std::move(callback).Run(blink::mojom::ModelAvailabilityCheckResult::
+                                kUnavailableUnsupportedLanguage);
+    return;
+  }
+  if (!model_downloaded_) {
+    std::move(callback).Run(
+        blink::mojom::ModelAvailabilityCheckResult::kDownloadable);
+  } else {
+    std::move(callback).Run(
+        blink::mojom::ModelAvailabilityCheckResult::kAvailable);
+  }
 }
 
 void EchoAIManagerImpl::CreateSummarizer(
@@ -72,17 +145,47 @@ void EchoAIManagerImpl::CreateSummarizer(
     blink::mojom::AISummarizerCreateOptionsPtr options) {
   mojo::Remote<blink::mojom::AIManagerCreateSummarizerClient> client_remote(
       std::move(client));
-  mojo::PendingRemote<blink::mojom::AISummarizer> summarizer;
-  mojo::MakeSelfOwnedReceiver(std::make_unique<EchoAISummarizer>(),
-                              summarizer.InitWithNewPipeAndPassReceiver());
-  client_remote->OnResult(std::move(summarizer));
+  if (options && !SupportedLanguages(options->expected_input_languages,
+                                     options->expected_context_languages,
+                                     options->output_language)) {
+    client_remote->OnError(
+        blink::mojom::AIManagerCreateClientError::kUnsupportedLanguage);
+    return;
+  }
+  auto return_summarizer_task =
+      base::BindOnce(&EchoAIManagerImpl::ReturnAISummarizerCreationResult,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(client_remote));
+  if (!model_downloaded_) {
+    // In order to test the model download progress handling, the
+    // `EchoAIManagerImpl` will always start from the `after-download` state,
+    // and we simulate the downloading time by posting a delayed task.
+    content::GetUIThreadTaskRunner()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&EchoAIManagerImpl::DoMockDownloadingAndReturn,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       std::move(return_summarizer_task)),
+        base::Milliseconds(kMockDownloadPreparationTimeMillisecond));
+  } else {
+    std::move(return_summarizer_task).Run();
+  }
 }
 
-void EchoAIManagerImpl::GetModelInfo(GetModelInfoCallback callback) {
-  std::move(callback).Run(blink::mojom::AIModelInfo::New(
-      optimization_guide::features::GetOnDeviceModelDefaultTopK(),
-      optimization_guide::features::GetOnDeviceModelMaxTopK(),
-      optimization_guide::features::GetOnDeviceModelDefaultTemperature()));
+void EchoAIManagerImpl::GetLanguageModelParams(
+    GetLanguageModelParamsCallback callback) {
+  std::move(callback).Run(blink::mojom::AILanguageModelParams::New(
+      blink::mojom::AILanguageModelSamplingParams::New(
+          optimization_guide::features::GetOnDeviceModelDefaultTopK(),
+          optimization_guide::features::GetOnDeviceModelDefaultTemperature()),
+      blink::mojom::AILanguageModelSamplingParams::New(
+          optimization_guide::features::GetOnDeviceModelMaxTopK(),
+          /*temperature=*/2.0f)));
+}
+
+void EchoAIManagerImpl::CanCreateWriter(
+    blink::mojom::AIWriterCreateOptionsPtr options,
+    CanCreateWriterCallback callback) {
+  std::move(callback).Run(
+      blink::mojom::ModelAvailabilityCheckResult::kAvailable);
 }
 
 void EchoAIManagerImpl::CreateWriter(
@@ -96,6 +199,13 @@ void EchoAIManagerImpl::CreateWriter(
   client_remote->OnResult(std::move(writer));
 }
 
+void EchoAIManagerImpl::CanCreateRewriter(
+    blink::mojom::AIRewriterCreateOptionsPtr options,
+    CanCreateRewriterCallback callback) {
+  std::move(callback).Run(
+      blink::mojom::ModelAvailabilityCheckResult::kAvailable);
+}
+
 void EchoAIManagerImpl::CreateRewriter(
     mojo::PendingRemote<blink::mojom::AIManagerCreateRewriterClient> client,
     blink::mojom::AIRewriterCreateOptionsPtr options) {
@@ -107,25 +217,42 @@ void EchoAIManagerImpl::CreateRewriter(
   client_remote->OnResult(std::move(rewriter));
 }
 
-void EchoAIManagerImpl::ReturnAIAssistantCreationResult(
-    mojo::Remote<blink::mojom::AIManagerCreateAssistantClient> client_remote) {
-  mojo::PendingRemote<blink::mojom::AIAssistant> assistant;
-  mojo::MakeSelfOwnedReceiver(std::make_unique<EchoAIAssistant>(),
-                              assistant.InitWithNewPipeAndPassReceiver());
+void EchoAIManagerImpl::ReturnAILanguageModelCreationResult(
+    mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
+        client_remote,
+    blink::mojom::AILanguageModelSamplingParamsPtr sampling_params) {
+  mojo::PendingRemote<blink::mojom::AILanguageModel> language_model;
+  auto model_sampling_params =
+      sampling_params
+          ? std::move(sampling_params)
+          : blink::mojom::AILanguageModelSamplingParams::New(
+                optimization_guide::features::GetOnDeviceModelDefaultTopK(),
+                optimization_guide::features::
+                    GetOnDeviceModelDefaultTemperature());
+
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<EchoAILanguageModel>(model_sampling_params->Clone()),
+      language_model.InitWithNewPipeAndPassReceiver());
   client_remote->OnResult(
-      std::move(assistant),
-      blink::mojom::AIAssistantInfo::New(
-          optimization_guide::features::GetOnDeviceModelMaxTokensForContext(),
-          blink::mojom::AIAssistantSamplingParams::New(
-              optimization_guide::features::GetOnDeviceModelDefaultTopK(),
-              optimization_guide::features::
-                  GetOnDeviceModelDefaultTemperature())));
+      std::move(language_model),
+      blink::mojom::AILanguageModelInstanceInfo::New(
+          kMaxContextSizeInTokens,
+          /*current_tokens=*/0, std::move(model_sampling_params)));
 }
 
-void EchoAIManagerImpl::DoMockDownloadingAndReturn(
-    mojo::Remote<blink::mojom::AIManagerCreateAssistantClient> client_remote) {
+void EchoAIManagerImpl::ReturnAISummarizerCreationResult(
+    mojo::Remote<blink::mojom::AIManagerCreateSummarizerClient> client_remote) {
+  model_downloaded_ = true;
+  mojo::PendingRemote<blink::mojom::AISummarizer> summarizer;
+  mojo::MakeSelfOwnedReceiver(std::make_unique<EchoAISummarizer>(),
+                              summarizer.InitWithNewPipeAndPassReceiver());
+  client_remote->OnResult(std::move(summarizer));
+}
+
+void EchoAIManagerImpl::DoMockDownloadingAndReturn(base::OnceClosure callback) {
   // Mock the downloading process update for testing.
   for (auto& observer : download_progress_observers_) {
+    observer->OnDownloadProgressUpdate(0, kMockModelSizeBytes);
     observer->OnDownloadProgressUpdate(kMockModelSizeBytes / 3,
                                        kMockModelSizeBytes);
     observer->OnDownloadProgressUpdate(kMockModelSizeBytes / 3 * 2,
@@ -134,7 +261,7 @@ void EchoAIManagerImpl::DoMockDownloadingAndReturn(
                                        kMockModelSizeBytes);
   }
 
-  ReturnAIAssistantCreationResult(std::move(client_remote));
+  std::move(callback).Run();
 }
 
 void EchoAIManagerImpl::AddModelDownloadProgressObserver(

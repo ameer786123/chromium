@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.ui.messages.snackbar;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
@@ -11,7 +13,6 @@ import android.app.Activity;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.SurfaceView;
@@ -25,9 +26,10 @@ import android.widget.LinearLayout.LayoutParams;
 import android.widget.TextView;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.Nullable;
 import androidx.core.view.ViewCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.chrome.ui.messages.R;
 import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
@@ -44,10 +46,11 @@ import org.chromium.ui.interpolators.Interpolators;
  */
 // TODO (jianli): Change this class and its methods back to package protected after the offline
 // indicator experiment is done.
+@NullMarked
 public class SnackbarView implements InsetObserver.WindowInsetObserver {
     private static final int MAX_LINES = 5;
 
-    private final WindowAndroid mWindowAndroid;
+    private final @Nullable WindowAndroid mWindowAndroid;
     protected final ViewGroup mContainerView;
     protected final ViewGroup mSnackbarView;
     protected final TemplatePreservingTextView mMessageView;
@@ -55,8 +58,8 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
     private final ImageView mProfileImageView;
     private final int mAnimationDuration;
     private final boolean mIsTablet;
-    @Nullable private final EdgeToEdgeSupplier mEdgeToEdgeSupplier;
-    @Nullable private final EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
+    private final @Nullable EdgeToEdgeSupplier mEdgeToEdgeSupplier;
+    private final @Nullable EdgeToEdgePadAdjuster mEdgeToEdgePadAdjuster;
     private ViewGroup mOriginalParent;
     protected ViewGroup mParent;
     protected Snackbar mSnackbar;
@@ -132,9 +135,18 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
 
         mRootContentView = activity.findViewById(android.R.id.content);
         mParent = mOriginalParent;
+
+        int snackbarLayout =
+                SnackbarManager.isFloatingSnackbarEnabled()
+                        ? R.layout.floating_snackbar
+                        : R.layout.snackbar;
+
         mContainerView =
-                (ViewGroup)
-                        LayoutInflater.from(activity).inflate(R.layout.snackbar, mParent, false);
+                (ViewGroup) LayoutInflater.from(activity).inflate(snackbarLayout, mParent, false);
+
+        // Make sure clicks are not consumed by content beneath the container view.
+        mContainerView.setClickable(true);
+
         mSnackbarView = mContainerView.findViewById(R.id.snackbar);
         mAnimationDuration =
                 mContainerView.getResources().getInteger(android.R.integer.config_mediumAnimTime);
@@ -144,11 +156,14 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
         mActionButtonView.setOnClickListener(listener);
         mProfileImageView = (ImageView) mContainerView.findViewById(R.id.snackbar_profile_image);
         mEdgeToEdgeSupplier = edgeToEdgeSupplier;
-        mEdgeToEdgePadAdjuster =
-                edgeToEdgeSupplier != null
-                        ? EdgeToEdgeControllerFactory.createForView(mSnackbarView)
-                        : null;
-
+        if (SnackbarManager.isFloatingSnackbarEnabled()) {
+            mEdgeToEdgePadAdjuster = null;
+        } else {
+            mEdgeToEdgePadAdjuster =
+                    edgeToEdgeSupplier != null
+                            ? EdgeToEdgeControllerFactory.createForView(mSnackbarView)
+                            : null;
+        }
         updateInternal(snackbar, false);
     }
 
@@ -176,8 +191,13 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
                         startAnimatorOnSurfaceView(animator);
                     }
                 });
-        if (mEdgeToEdgeSupplier != null) {
-            mEdgeToEdgeSupplier.registerAdjuster(mEdgeToEdgePadAdjuster);
+
+        if (!SnackbarManager.isFloatingSnackbarEnabled()) {
+            // We do not use mEdgeToEdgePadAdjuster if FloatingSnackbar is enabled.
+            if (mEdgeToEdgeSupplier != null) {
+                assumeNonNull(mEdgeToEdgePadAdjuster);
+                mEdgeToEdgeSupplier.registerAdjuster(mEdgeToEdgePadAdjuster);
+            }
         }
     }
 
@@ -222,7 +242,18 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
             int prevWidth = lp.width;
             int prevGravity = lp.gravity;
 
-            if (mIsTablet) {
+            if (SnackbarManager.isFloatingSnackbarEnabled()) {
+                // If floating snackbar is enabled, set a max width of 600dp for both mobile and
+                // tablet.
+                int maxWidth =
+                        mParent.getResources().getDimensionPixelSize(R.dimen.snackbar_width_max);
+                int snackbarMargin =
+                        mParent.getResources()
+                                .getDimensionPixelSize(R.dimen.snackbar_floating_margin);
+                lp.width = Math.min(maxWidth, mParent.getWidth() - 2 * snackbarMargin);
+                lp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM;
+            } else if (mIsTablet) {
+                // Floating Snackbar disabled && mIsTablet.
                 int margin =
                         mParent.getResources()
                                 .getDimensionPixelSize(R.dimen.snackbar_margin_tablet);
@@ -278,21 +309,16 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
                                     .getString(R.string.bottom_bar_screen_position));
         }
 
-        ViewCompat.setAccessibilityPaneTitle(mMessageView, accessibilityText);
-    }
-
-    /**
-     * Sends an accessibility event to mContainerView announcing that an action was taken based on
-     * the action button being pressed. May do nothing if no announcement was specified.
-     */
-    public void announceActionForAccessibility() {
-        if (TextUtils.isEmpty(mSnackbar.getActionAccessibilityAnnouncement())) return;
-        mContainerView.announceForAccessibility(mSnackbar.getActionAccessibilityAnnouncement());
+        // This post call is required to ensure the pane title change results in a
+        // reliable announcement to the user. See https://crbug.com/395925721
+        mMessageView.post(
+                () -> ViewCompat.setAccessibilityPaneTitle(mMessageView, accessibilityText));
     }
 
     /**
      * Updates the view to display data from the given snackbar. No-op if the view is already
      * showing the given snackbar.
+     *
      * @param snackbar The snackbar to display
      * @return Whether update has actually been executed.
      */
@@ -363,13 +389,22 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
         mActionButtonView.setTextAppearance(getButtonTextAppearance(snackbar));
 
         mBackgroundColor = calculateBackgroundColor(mContainerView, snackbar);
-        if (mIsTablet) {
+
+        if (SnackbarManager.isFloatingSnackbarEnabled()) {
+            // Round the corners for snackbars in both tablets and non-tablets.
+            mSnackbarView.setBackgroundResource(R.drawable.snackbar_background);
+        } else if (mIsTablet) {
+            // isFloatingSnackbarEnabled == false, mIsTablet == true
             // On tablet, snackbars have rounded corners.
             mSnackbarView.setBackgroundResource(R.drawable.snackbar_background_tablet);
             GradientDrawable backgroundDrawable =
                     (GradientDrawable) mSnackbarView.getBackground().mutate();
             backgroundDrawable.setColor(mBackgroundColor);
+
+            mContainerView.findViewById(R.id.snackbar_shadow_left).setVisibility(View.VISIBLE);
+            mContainerView.findViewById(R.id.snackbar_shadow_right).setVisibility(View.VISIBLE);
         } else {
+            // isFloatingSnackbarEnabled == false, mIsTablet == false
             mSnackbarView.setBackgroundColor(mBackgroundColor);
         }
 
@@ -401,12 +436,6 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
         } else {
             mProfileImageView.setVisibility(View.GONE);
         }
-
-        if (mIsTablet) {
-            mContainerView.findViewById(R.id.snackbar_shadow_left).setVisibility(View.VISIBLE);
-            mContainerView.findViewById(R.id.snackbar_shadow_right).setVisibility(View.VISIBLE);
-        }
-
         return true;
     }
 
@@ -443,7 +472,7 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
         return mSnackbarView;
     }
 
-    public EdgeToEdgePadAdjuster getEdgeToEdgePadAdjusterForTesting() {
+    public @Nullable EdgeToEdgePadAdjuster getEdgeToEdgePadAdjusterForTesting() {
         return mEdgeToEdgePadAdjuster;
     }
 }

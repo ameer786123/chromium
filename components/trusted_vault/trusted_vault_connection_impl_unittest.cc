@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/base64url.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -97,6 +98,7 @@ enum class Member {
   kUsableVirtual,
   kUnusableVirtual,
   kGooglePasswordManagerPIN,
+  kUnusableGooglePasswordManagerPIN,
   kICloudKeychain,
   kInvalidICloudKeychain,
 };
@@ -159,7 +161,7 @@ trusted_vault_pb::ListSecurityDomainMembersResponse MakeSecurityDomainMembers(
         member->set_member_type(trusted_vault_pb::SecurityDomainMember::
                                     MEMBER_TYPE_ICLOUD_KEYCHAIN);
         break;
-      case Member::kGooglePasswordManagerPIN:
+      case Member::kGooglePasswordManagerPIN: {
         member->set_member_type(trusted_vault_pb::SecurityDomainMember::
                                     MEMBER_TYPE_GOOGLE_PASSWORD_MANAGER_PIN);
         member->mutable_member_metadata()->set_usable_for_retrieval(true);
@@ -169,6 +171,12 @@ trusted_vault_pb::ListSecurityDomainMembersResponse MakeSecurityDomainMembers(
         gpm_metadata->mutable_expiration_time()->set_seconds(
             kTestGPMExpirySeconds);
         gpm_metadata->set_encrypted_pin_hash(kTestSerializedWrappedPIN);
+        break;
+      }
+      case Member::kUnusableGooglePasswordManagerPIN:
+        member->set_member_type(trusted_vault_pb::SecurityDomainMember::
+                                    MEMBER_TYPE_GOOGLE_PASSWORD_MANAGER_PIN);
+        member->mutable_member_metadata()->set_usable_for_retrieval(false);
         break;
     }
   }
@@ -524,7 +532,9 @@ TEST_P(TrustedVaultConnectionImplTest,
           GetTrustedVaultKeysWithVersions(kTrustedVaultKeys,
                                           /*last_key_version=*/1234),
           key_pair->public_key(),
-          GpmPinMetadata(old_public_key, metadata, /*expiry=*/base::Time()),
+          GpmPinMetadata(old_public_key,
+                         UsableRecoveryPinMetadata(metadata,
+                                                   /*expiry=*/base::Time())),
           TrustedVaultConnection::RegisterAuthenticationFactorCallback());
   EXPECT_THAT(request, NotNull());
 
@@ -1111,8 +1121,9 @@ MATCHER_P2(
   if (!arg.gpm_pin_metadata) {
     return false;
   }
-  return testing::ExplainMatchResult(*arg.gpm_pin_metadata,
-                                     GpmPinMetadata(public_key, wrapped_pin));
+  return testing::ExplainMatchResult(
+      *arg.gpm_pin_metadata,
+      UsableRecoveryPinMetadata(public_key, wrapped_pin));
 }
 
 TEST_P(TrustedVaultConnectionImplTest,
@@ -1123,7 +1134,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -1148,8 +1160,12 @@ TEST_P(TrustedVaultConnectionImplTest,
   std::string member_public_key_bytes;
   base::HexStringToString(kTestMemberPublicKey, &member_public_key_bytes);
   const GpmPinMetadata gpm_pin_metadata(
-      std::move(member_public_key_bytes), kTestSerializedWrappedPIN,
-      /*expiry=*/base::Time::FromTimeT(kTestGPMExpirySeconds));
+      member_public_key_bytes,
+      UsableRecoveryPinMetadata(
+          kTestSerializedWrappedPIN,
+          /*expiry=*/base::Time::FromTimeT(kTestGPMExpirySeconds)));
+  const GpmPinMetadata unusable_gpm_pin_metadata(
+      std::move(member_public_key_bytes), /*pin_metadata=*/std::nullopt);
   const base::Time lskf_expiry = base::Time::FromTimeT(kTestLSKFExpirySeconds);
   const struct TestCase {
     // responses contains the set of security domain members included in each
@@ -1247,6 +1263,13 @@ TEST_P(TrustedVaultConnectionImplTest,
           /*expected_lskf_expiries=*/{},
       },
       {
+          {{Member::kUnusableGooglePasswordManagerPIN}},
+          State::kIrrecoverable,
+          /*expected_key_version=*/kTestKeyVersion,
+          /*expected_gpm_pin_metadata=*/unusable_gpm_pin_metadata,
+          /*expected_lskf_expiries=*/{},
+      },
+      {
           {{Member::kICloudKeychain}},
           State::kIrrecoverable,
           /*expected_key_version=*/kTestKeyVersion,
@@ -1283,10 +1306,11 @@ TEST_P(TrustedVaultConnectionImplTest,
             DownloadAuthenticationFactorsRegistrationStateResult in_result) {
           result.emplace(std::move(in_result));
         });
-
+    testing::StrictMock<base::MockRepeatingClosure> keep_alive_callback;
     std::unique_ptr<TrustedVaultConnection::Request> request =
         connection()->DownloadAuthenticationFactorsRegistrationState(
-            /*account_info=*/CoreAccountInfo(), std::move(callback));
+            /*account_info=*/CoreAccountInfo(), std::move(callback),
+            keep_alive_callback.Get());
     ASSERT_THAT(request, NotNull());
 
     std::optional<std::string> prev_next_page_token;
@@ -1300,6 +1324,7 @@ TEST_P(TrustedVaultConnectionImplTest,
 
       std::optional<std::string> next_page_token;
       if (i < test.responses.size() - 1) {
+        EXPECT_CALL(keep_alive_callback, Run());
         next_page_token = base::NumberToString(i);
       }
       ASSERT_TRUE(
@@ -1309,6 +1334,8 @@ TEST_P(TrustedVaultConnectionImplTest,
               MakeSecurityDomainMembers(security_domain(), test.responses[i],
                                         next_page_token)
                   .SerializeAsString()));
+      EXPECT_TRUE(
+          testing::Mock::VerifyAndClearExpectations(&keep_alive_callback));
       num_pages_downloaded++;
       prev_next_page_token = std::move(next_page_token);
     }
@@ -1341,7 +1368,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,
@@ -1362,7 +1390,8 @@ TEST_P(TrustedVaultConnectionImplTest,
 
   std::unique_ptr<TrustedVaultConnection::Request> request =
       connection()->DownloadAuthenticationFactorsRegistrationState(
-          /*account_info=*/CoreAccountInfo(), callback.Get());
+          /*account_info=*/CoreAccountInfo(), callback.Get(),
+          base::NullCallback());
   ASSERT_THAT(request, NotNull());
 
   EXPECT_CALL(callback,

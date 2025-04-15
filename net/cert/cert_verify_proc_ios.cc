@@ -261,13 +261,11 @@ void GetCertChainInfo(CFArrayRef cert_chain, CertVerifyResult* verify_result) {
     }
 
     HashValue sha256(HASH_VALUE_SHA256);
-    CC_SHA256(spki_bytes.data(), spki_bytes.size(), sha256.data());
+    CC_SHA256(spki_bytes.data(), spki_bytes.size(), sha256.span().data());
     verify_result->public_key_hashes.push_back(sha256);
   }
   if (!verified_cert.get()) {
-    NOTREACHED_IN_MIGRATION();
-    verify_result->cert_status |= CERT_STATUS_INVALID;
-    return;
+    NOTREACHED();
   }
 
   scoped_refptr<X509Certificate> verified_cert_with_chain =
@@ -470,8 +468,7 @@ int CertVerifyProcIOS::VerifyInternal(X509Certificate* cert,
       switch (trust_result) {
         case kSecTrustResultUnspecified:
         case kSecTrustResultProceed:
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
         case kSecTrustResultDeny:
           verify_result->cert_status |= CERT_STATUS_AUTHORITY_INVALID;
           break;
@@ -482,8 +479,8 @@ int CertVerifyProcIOS::VerifyInternal(X509Certificate* cert,
 #else
       // It should be impossible to reach this code, but if somehow it is
       // reached it would allow any certificate as valid since no errors would
-      // be added to cert_status. Therefore, add a CHECK as a fail safe.
-      CHECK(false);
+      // be added to cert_status. Therefore, add a NOTREACHED() as a fail safe.
+      NOTREACHED();
 #endif
     }
   }

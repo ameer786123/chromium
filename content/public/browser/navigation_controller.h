@@ -332,6 +332,11 @@ class NavigationController {
     // a fresh BrowsingInstance.
     bool force_new_browsing_instance = false;
 
+    // Indicates this navigation should use a new compositor. This is used by
+    // web tests to ensure that input state is fully reset between tests. This
+    // should only be set on the main frame.
+    bool force_new_compositor = false;
+
     // True if the initiator explicitly asked for opener relationships to be
     // preserved, via rel="opener".
     bool has_rel_opener = false;
@@ -398,6 +403,7 @@ class NavigationController {
   // associated with the NavigationController is already initialized, as a
   // FrameTree will always start with the initial NavigationEntry.
   virtual NavigationEntry* GetLastCommittedEntry() = 0;
+  virtual const NavigationEntry* GetLastCommittedEntry() const = 0;
 
   // Returns the index of the last committed entry.
   virtual int GetLastCommittedEntryIndex() = 0;

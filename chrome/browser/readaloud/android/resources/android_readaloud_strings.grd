@@ -2,7 +2,7 @@
 
 <!-- android_readaloud_strings.grd contains UI strings for Read Aloud in Chrome Android. -->
 
-<grit current_release="1" latest_public_release="0" output_all_resource_defines="false">
+<grit current_release="1" latest_public_release="0">
   <outputs>
     <output filename="values-af/android_readaloud_strings.xml" lang="af" type="android" />
     <output filename="values-am/android_readaloud_strings.xml" lang="am" type="android" />
@@ -212,6 +212,9 @@
       </message>
       <message name="IDS_READALOUD_MENU_BACK" desc="Accessibility string for the 'navigate back' button on the bottom sheet menus.">
         Back
+      </message>
+      <message name="IDS_READALOUD_PLAYBACK_MODE" desc="Accessibility string for the playback mode selector.">
+        Playback mode selector
       </message>
       <message name="IDS_READALOUD_PLAYBACK_ERROR" desc="Message displayed when an error occured during 'Listen to this page' playback.">
         Playback is unavailable for this page.

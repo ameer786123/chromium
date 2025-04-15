@@ -7,6 +7,8 @@
 
 #include <jni.h>
 
+#include <string>
+
 #include "base/functional/callback_helpers.h"
 #include "base/types/pass_key.h"
 #include "ui/gfx/native_widget_types.h"
@@ -24,21 +26,33 @@ class AcknowledgeGroupedCredentialSheetBridge {
 
     virtual void Create(const gfx::NativeWindow window_android,
                         AcknowledgeGroupedCredentialSheetBridge* bridge) = 0;
-    virtual void Show(std::string current_origin,
-                      std::string credential_origin) = 0;
+    virtual void Show(const std::string& current_hostname,
+                      const std::string& credential_hostname) = 0;
     virtual void Dismiss() = 0;
   };
-  explicit AcknowledgeGroupedCredentialSheetBridge(
-      const gfx::NativeWindow window);
+  // Represents all possible ways to resolve the sheet: acceptance, clicking
+  // `Back`, or just dismissing it. The difference between `Back` and just
+  // dismissing is that the first may navigate user to the previous UI (like
+  // TTF). These values are persisted to logs. Entries should not be renumbered
+  // and numeric values should never be reused.
+  //
+  // GENERATED_JAVA_ENUM_PACKAGE: (
+  //    org.chromium.chrome.browser.grouped_affiliations)
+  enum class DismissReason {
+    kAccept = 0,
+    kBack = 1,
+    kIgnore = 2,
+    kMaxValue = kIgnore,
+  };
+  AcknowledgeGroupedCredentialSheetBridge();
   // Test constructors
   AcknowledgeGroupedCredentialSheetBridge(
-      base::PassKey<class TouchToFillControllerAutofillTest>,
-      std::unique_ptr<JniDelegate> jni_delegate,
-      gfx::NativeWindow window);
+      base::PassKey<
+          class AcknowledgeGroupedCredentialSheetControllerTestHelper>,
+      std::unique_ptr<JniDelegate> jni_delegate);
   AcknowledgeGroupedCredentialSheetBridge(
       base::PassKey<class AcknowledgeGroupedCredentialSheetControllerTest>,
-      std::unique_ptr<JniDelegate> jni_delegate,
-      gfx::NativeWindow window);
+      std::unique_ptr<JniDelegate> jni_delegate);
 
   AcknowledgeGroupedCredentialSheetBridge(
       const AcknowledgeGroupedCredentialSheetBridge&) = delete;
@@ -47,15 +61,15 @@ class AcknowledgeGroupedCredentialSheetBridge {
 
   ~AcknowledgeGroupedCredentialSheetBridge();
 
-  void Show(std::string current_origin,
-            std::string credential_origin,
-            base::OnceCallback<void(bool)> closure_callback);
-  void OnDismissed(JNIEnv* env, bool accepted);
+  void Show(const std::string& current_hostname,
+            const std::string& credential_hostname,
+            gfx::NativeWindow window,
+            base::OnceCallback<void(DismissReason)> closure_callback);
+  void OnDismissed(JNIEnv* env, int dismiss_reason);
 
  private:
-  base::OnceCallback<void(bool)> closure_callback_;
+  base::OnceCallback<void(DismissReason)> closure_callback_;
   std::unique_ptr<JniDelegate> jni_delegate_;
-  const gfx::NativeWindow window_android_;
 };
 
 #endif  // CHROME_BROWSER_PASSWORD_MANAGER_ANDROID_GROUPED_AFFILIATIONS_ACKNOWLEDGE_GROUPED_CREDENTIAL_SHEET_BRIDGE_H_

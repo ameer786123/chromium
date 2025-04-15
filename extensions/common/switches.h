@@ -5,7 +5,7 @@
 #ifndef EXTENSIONS_COMMON_SWITCHES_H_
 #define EXTENSIONS_COMMON_SWITCHES_H_
 
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 
 namespace extensions::switches {
 
@@ -26,6 +26,12 @@ extern const char kDisableAppContentVerification[];
 // Disable checking for user opt-in for extensions that want to inject script
 // into file URLs (ie, always allow it). This is used during automated testing.
 extern const char kDisableExtensionsFileAccessCheck[];
+
+// Disables extensions.
+inline constexpr char kDisableExtensions[] = "disable-extensions";
+
+// Disable extensions except those specified in a comma-separated list.
+inline constexpr char kDisableExtensionsExcept[] = "disable-extensions-except";
 
 // Disable the net::URLRequestThrottlerManager functionality for
 // requests originating from extensions.
@@ -56,7 +62,7 @@ extern const char kLoadApps[];
 // Comma-separated list of paths to extensions to load at startup.
 extern const char kLoadExtension[];
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Path to the unpacked test extension to load into the signin profile. The ID
 // extension loaded must match kTestSigninProfileExtensionId.
 extern const char kLoadSigninProfileTestExtension[];

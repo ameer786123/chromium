@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.customtabs;
 
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ENABLE_EPHEMERAL_BROWSING;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
@@ -26,7 +27,6 @@ import android.graphics.Color;
 import android.net.Uri;
 
 import androidx.browser.customtabs.CustomTabsIntent;
-import androidx.browser.customtabs.CustomTabsSessionToken;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.MediumTest;
 
@@ -53,6 +53,7 @@ import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.browserservices.intents.SessionHolder;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -98,8 +99,6 @@ public class CustomTabActivityEphemeralTest {
     public AutomotiveContextWrapperTestRule mAutomotiveRule =
             new AutomotiveContextWrapperTestRule();
 
-    private CustomTabsConnection mConnectionToCleanup;
-
     @Before
     public void setUp() throws TimeoutException {
         ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
@@ -125,14 +124,12 @@ public class CustomTabActivityEphemeralTest {
                     if (handler != null) handler.hideAppMenu();
                 });
 
-        if (mConnectionToCleanup != null) {
-            CustomTabsTestUtils.cleanupSessions(mConnectionToCleanup);
-        }
+        CustomTabsTestUtils.cleanupSessions();
     }
 
     private Intent createEphemeralCustomTabIntent() {
         return createMinimalCustomTabIntent(ApplicationProvider.getApplicationContext(), mTestPage)
-                .putExtra(IntentHandler.EXTRA_ENABLE_EPHEMERAL_BROWSING, true);
+                .putExtra(EXTRA_ENABLE_EPHEMERAL_BROWSING, true);
     }
 
     private static int getThemeColor(CustomTabActivity activity) {
@@ -148,14 +145,11 @@ public class CustomTabActivityEphemeralTest {
                 });
     }
 
-    private void setCanUseHiddenTabForSession(
-            CustomTabsConnection connection, CustomTabsSessionToken token, boolean useHiddenTab) {
-        assert mConnectionToCleanup == null || mConnectionToCleanup == connection;
+    private void setCanUseHiddenTabForSession(SessionHolder<?> token, boolean useHiddenTab) {
         // Save the connection. In case the hidden tab is not consumed by the test, ensure that it
         // is properly cleaned up after the test.
-        mConnectionToCleanup = connection;
-        connection.mClientManager.setHideDomainForSession(token, true);
-        connection.setCanUseHiddenTabForSession(token, useHiddenTab);
+        CustomTabsConnection.getInstance().mClientManager.setHideDomainForSession(token, true);
+        CustomTabsConnection.getInstance().setCanUseHiddenTabForSession(token, useHiddenTab);
     }
 
     private CustomTabActivity launchEphemeralCustomTabActivity() {
@@ -275,11 +269,11 @@ public class CustomTabActivityEphemeralTest {
         // allowed in OTR profiles. (crbug.com/1106757)
         Intent intent = createEphemeralCustomTabIntent();
         final CustomTabsConnection connection = CustomTabsTestUtils.warmUpAndWait();
-        final CustomTabsSessionToken token =
-                CustomTabsSessionToken.getSessionTokenFromIntent(intent);
+        final var sessionHolder = SessionHolder.getSessionHolderFromIntent(intent);
+        final var token = sessionHolder.getSessionAsCustomTab();
         Assert.assertTrue(connection.newSession(token));
         // Passes the launch intent to the connection.
-        setCanUseHiddenTabForSession(connection, token, true);
+        setCanUseHiddenTabForSession(sessionHolder, true);
         Assert.assertFalse(
                 connection.mayLaunchUrl(token, Uri.parse(mTestPage), intent.getExtras(), null));
         CriteriaHelper.pollUiThread(
@@ -387,6 +381,10 @@ public class CustomTabActivityEphemeralTest {
         CustomTabActivity activity = launchEphemeralCustomTabActivity();
         var tab = activity.getActivityTab();
         ChromeTabUtils.waitForTabPageLoaded(tab, mTestPage);
+
+        // TODO(sinansahin): Find a better way to test omnibox interactivity because titleBar is
+        // going to have a click listener to show page info.
+        if (ChromeFeatureList.sCctNestedSecurityIcon.isEnabled()) return;
 
         var titleBar = activity.findViewById(R.id.title_url_container);
         Assert.assertFalse(titleBar.hasOnClickListeners());

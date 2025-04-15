@@ -46,7 +46,7 @@ CreateChromeSyncTrustedVaultClient(Profile* profile) {
                                  base::BindRepeating(
                                      [](signin::IdentityManager*
                                             identity_manager,
-                                        const std::string& gaia_id)
+                                        const GaiaId& gaia_id)
                                          -> CoreAccountInfo {
                                        return identity_manager
                                            ->FindExtendedAccountInfoByGaiaId(
@@ -107,9 +107,10 @@ TrustedVaultServiceFactory::TrustedVaultServiceFactory()
 
 TrustedVaultServiceFactory::~TrustedVaultServiceFactory() = default;
 
-KeyedService* TrustedVaultServiceFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService>
+TrustedVaultServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return BuildTrustedVaultService(context).release();
+  return BuildTrustedVaultService(context);
 }
 
 bool TrustedVaultServiceFactory::ServiceIsNULLWhileTesting() const {

@@ -129,9 +129,10 @@ std::string SharedProtoDatabaseClientList::ProtoDbTypeToString(
       return "CommerceParcelTrackingDatabase";
     case ProtoDbType::CLIENT_CERTIFICATES_DATABASE:
       return "ClientCertificatesDatabase";
+    case ProtoDbType::AUTOFILL_AI_MODEL_CACHE:
+      return "AutofillAiModelCache";
     case ProtoDbType::LAST:
-      NOTREACHED_IN_MIGRATION();
-      return std::string();
+      NOTREACHED();
   }
 }
 

@@ -13,7 +13,7 @@
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view_controller.h"
 #include "components/autofill/android/touch_to_fill_keyboard_suppressor.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
 
 namespace autofill {
 
@@ -85,6 +85,7 @@ class TouchToFillPaymentMethodController
       JNIEnv* env,
       base::android::JavaParamRef<jstring> guid) override;
   void ServerIbanSuggestionSelected(JNIEnv* env, long instrument_id) override;
+  int GetJavaResourceId(int native_resource_id) override;
 
   TouchToFillKeyboardSuppressor& keyboard_suppressor_for_test() {
     return keyboard_suppressor_;

@@ -40,6 +40,8 @@ ci/Linux TSan Tests
 ci/Linux Tests
 ci/Linux Tests (Wayland)
 ci/Linux Tests (dbg)(1)
+ci/Linux UBSan Builder
+ci/Linux UBSan Tests
 ci/MSAN Release (chained origins)
 ci/MSAN Release (no origins)
 ci/Mac ASAN Release
@@ -101,6 +103,7 @@ ci/linux-chromeos-dbg
 ci/linux-chromeos-rel
 ci/linux-extended-tracing-rel
 ci/linux-gcc-rel
+ci/linux-oi-rel
 ci/linux-presubmit
 ci/linux-v4l2-codec-rel
 ci/linux-win-cross-rel

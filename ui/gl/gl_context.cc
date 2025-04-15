@@ -250,7 +250,7 @@ void GLContext::ReinitializeDynamicBindings() {
 }
 
 void GLContext::ForceReleaseVirtuallyCurrent() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void GLContext::DirtyVirtualContextState() {
@@ -396,8 +396,7 @@ bool GLContext::LosesAllContextsOnContextLost() {
     case kGLImplementationStubGL:
       return false;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return true;
+      NOTREACHED();
   }
 }
 
@@ -531,7 +530,7 @@ bool GLContext::MakeVirtuallyCurrent(
     if (virtual_context->GetGLStateRestorer()->IsInitialized()) {
       GLStateRestorer* virtual_state = virtual_context->GetGLStateRestorer();
       GLStateRestorer* current_state =
-          current_virtual_context_
+          current_virtual_context_ && !current_virtual_context_->context_lost_
               ? current_virtual_context_->GetGLStateRestorer()
               : nullptr;
       if (current_state)

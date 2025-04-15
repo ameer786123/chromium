@@ -9,21 +9,25 @@ import android.os.Build.VERSION_CODES;
 import android.view.Window;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
+import androidx.annotation.OptIn;
+import androidx.core.graphics.Insets;
+import androidx.core.os.BuildCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import org.chromium.base.ApkInfo;
 import org.chromium.base.BuildInfo;
+import org.chromium.base.Log;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.blink.mojom.ViewportFit;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.components.browser_ui.display_cutout.DisplayCutoutController;
 import org.chromium.components.browser_ui.display_cutout.DisplayCutoutController.SafeAreaInsetsTracker;
-import org.chromium.components.cached_flags.BooleanCachedFieldTrialParameter;
-import org.chromium.components.cached_flags.StringCachedFieldTrialParameter;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -34,67 +38,17 @@ import java.lang.annotation.RetentionPolicy;
  * A util helper class to know if e2e is on and eligible for current session and to record metrics
  * when necessary.
  */
+@NullMarked
 public class EdgeToEdgeUtils {
+    private static final String TAG = "E2E_Utils";
+    private static @Nullable Boolean sIsTargetSdkEnforceEdgeToEdge;
     private static boolean sAlwaysDrawWebEdgeToEdgeForTesting;
 
     private static final String ELIGIBLE_HISTOGRAM = "Android.EdgeToEdge.Eligible";
     private static final String INELIGIBLE_REASON_HISTOGRAM =
             "Android.EdgeToEdge.IneligibilityReason";
-
-    private static final String PARAM_DISABLE_INCOGNITO_NTP_E2E = "disable_incognito_ntp_e2e";
-
-    /** Cached param whether we disable e2e on incognito new tab page. See crbug.com/368675202 */
-    public static BooleanCachedFieldTrialParameter DISABLE_INCOGNITO_NTP_E2E =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE,
-                    PARAM_DISABLE_INCOGNITO_NTP_E2E,
-                    false);
-
-    private static final String PARAM_DISABLE_NTP_E2E = "disable_ntp_e2e";
-
-    /** Cached param whether we disable e2e on new tab page. */
-    public static BooleanCachedFieldTrialParameter DISABLE_NTP_E2E =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE, PARAM_DISABLE_NTP_E2E, false);
-
-    private static final String PARAM_DISABLE_HUB_E2E = "disable_hub_e2e";
-
-    /** Cached param whether we disable e2e on the hub. */
-    public static BooleanCachedFieldTrialParameter DISABLE_HUB_E2E =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE, PARAM_DISABLE_HUB_E2E, false);
-
-    private static final String PARAM_DISABLE_CCT_MEDIA_VIEWER_E2E = "disable_cct_media_viewer_e2e";
-
-    /** Cached param whether we disable e2e on the CCT media viewer. */
-    public static BooleanCachedFieldTrialParameter DISABLE_CCT_MEDIA_VIEWER_E2E =
-            ChromeFeatureList.newBooleanCachedFieldTrialParameter(
-                    ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE,
-                    PARAM_DISABLE_CCT_MEDIA_VIEWER_E2E,
-                    false);
-
-    private static final String PARAM_E2E_FIELD_TRIAL_OEM_LIST = "e2e_field_trial_oem_list";
-    private static final String PARAM_E2E_FIELD_TRIAL_OEM_MIN_VERSIONS =
-            "e2e_field_trial_oem_min_versions";
-
-    /**
-     * Param for the OEMs that need an exception for min versions. Its value should be a comma
-     * separated list of manufacturer, and its index should match {@link
-     * #E2E_FIELD_TRIAL_OEM_MIN_VERSIONS}.
-     */
-    public static StringCachedFieldTrialParameter E2E_FIELD_TRIAL_OEM_LIST =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN, PARAM_E2E_FIELD_TRIAL_OEM_LIST, "");
-
-    /**
-     * Param for the OEMs that need an exception for min versions. Its value should be a comma
-     * separated list of integers, and its index should match {@link #E2E_FIELD_TRIAL_OEM_LIST}.
-     */
-    public static StringCachedFieldTrialParameter E2E_FIELD_TRIAL_OEM_MIN_VERSIONS =
-            ChromeFeatureList.newStringCachedFieldTrialParameter(
-                    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-                    PARAM_E2E_FIELD_TRIAL_OEM_MIN_VERSIONS,
-                    "");
+    private static final String PARAM_SAFE_AREA_CONSTRAINT_SCROLLABLE_WHEN_STACKING =
+            "scrollable_when_stacking";
 
     /** The reason of why the current session is not eligible for edge to edge. */
     @IntDef({
@@ -118,9 +72,7 @@ public class EdgeToEdgeUtils {
      * drawing edge to edge on start up.
      */
     public static boolean isEnabled() {
-        return isEdgeToEdgeBottomChinEnabled()
-                || isEdgeToEdgeWebOptInEnabled()
-                || isEdgeToEdgeEverywhereEnabled();
+        return isEdgeToEdgeBottomChinEnabled() || isEdgeToEdgeEverywhereEnabled();
     }
 
     /**
@@ -138,17 +90,59 @@ public class EdgeToEdgeUtils {
      * bottom chin.
      */
     public static boolean isEdgeToEdgeWebOptInEnabled() {
-        return ChromeFeatureList.sEdgeToEdgeWebOptIn.isEnabled();
+        return isEdgeToEdgeBottomChinEnabled() && ChromeFeatureList.sEdgeToEdgeWebOptIn.isEnabled();
     }
 
     /** Whether edge-to-edge should be enabled everywhere. */
+    @OptIn(markerClass = BuildCompat.PrereleaseSdkCheck.class)
     public static boolean isEdgeToEdgeEverywhereEnabled() {
-        return ChromeFeatureList.sEdgeToEdgeEverywhere.isEnabled();
+        if (!EdgeToEdgeFieldTrial.getEverywhereOverrides().isEnabledForManufacturerVersion()) {
+            return false;
+        }
+
+        if (BuildInfo.getInstance().isAutomotive || BuildInfo.getInstance().isDesktop) {
+            return false;
+        }
+
+        if (ChromeFeatureList.sEdgeToEdgeEverywhere.isEnabled()) {
+            return true;
+        }
+
+        if (sIsTargetSdkEnforceEdgeToEdge == null) {
+            // TODO(crbug.com/394945134): Switch to SDK_INT / BuildCompat when it's available.
+            sIsTargetSdkEnforceEdgeToEdge = ApkInfo.targetAtLeastB() && BuildCompat.isAtLeastB();
+            Log.i(TAG, "sIsTargetSdkEnforceEdgeToEdge " + sIsTargetSdkEnforceEdgeToEdge);
+        }
+        return sIsTargetSdkEnforceEdgeToEdge;
+    }
+
+    /** Whether turn on the debug paint for edge to edge layout. */
+    public static boolean isEdgeToEdgeEverywhereDebugging() {
+        return ChromeFeatureList.sEdgeToEdgeEverywhereIsDebugging.getValue();
     }
 
     /** Whether key native pages should draw to edge. */
     public static boolean isDrawKeyNativePageToEdgeEnabled() {
-        return isEnabled() && ChromeFeatureList.sDrawKeyNativeEdgeToEdge.isEnabled();
+        return isEdgeToEdgeBottomChinEnabled()
+                && ChromeFeatureList.sDrawKeyNativeEdgeToEdge.isEnabled();
+    }
+
+    /**
+     * Whether reporting the page's safe area constraint to the bottom chin. Required when {@link
+     * isEdgeToEdgeBottomChinEnabled}.
+     */
+    public static boolean isSafeAreaConstraintEnabled() {
+        return isEdgeToEdgeBottomChinEnabled()
+                && ChromeFeatureList.sEdgeToEdgeSafeAreaConstraint.isEnabled();
+    }
+
+    /** Whether the bottom chin should ignore the constraint when stacking with other layers. */
+    public static boolean isConstraintBottomChinScrollableWhenStacking() {
+        return isSafeAreaConstraintEnabled()
+                && ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
+                        ChromeFeatureList.EDGE_TO_EDGE_SAFE_AREA_CONSTRAINT,
+                        PARAM_SAFE_AREA_CONSTRAINT_SCROLLABLE_WHEN_STACKING,
+                        true);
     }
 
     /**
@@ -158,10 +152,11 @@ public class EdgeToEdgeUtils {
      * @param activity The current active activity.
      * @return Whether the activity is eligible for edge to edge based on device configuration.
      */
-    public static boolean recordEligibility(@NonNull Activity activity) {
+    public static boolean recordEligibility(Activity activity) {
         boolean eligible = true;
 
-        if (hasTappableBottomBar(activity.getWindow())) {
+        // TODO(crbug.com/397756951): Replace with hasTappableNavigationBar()
+        if (hasTappableNavigationBar(activity.getWindow())) {
             eligible = false;
             RecordHistogram.recordEnumeratedHistogram(
                     INELIGIBLE_REASON_HISTOGRAM,
@@ -210,7 +205,7 @@ public class EdgeToEdgeUtils {
                 || (isEdgeToEdgeBottomChinEnabled() && isBottomChinAllowed(layoutType, bottomInset))
                 || (isDrawKeyNativePageToEdgeEnabled()
                         && layoutType == LayoutType.TAB_SWITCHER
-                        && !DISABLE_HUB_E2E.getValue());
+                        && !ChromeFeatureList.sDrawKeyNativeEdgeToEdgeDisableHubE2e.getValue());
     }
 
     /**
@@ -235,7 +230,7 @@ public class EdgeToEdgeUtils {
     /**
      * @return whether the page is opted into edge-to-edge based on the given Tab
      */
-    public static boolean isPageOptedIntoEdgeToEdge(Tab tab) {
+    public static boolean isPageOptedIntoEdgeToEdge(@Nullable Tab tab) {
         if (tab == null || tab.isNativePage()) {
             return isNativeTabDrawingToEdge(tab);
         }
@@ -253,7 +248,7 @@ public class EdgeToEdgeUtils {
      *     viewport-fit value.
      */
     static boolean isPageOptedIntoEdgeToEdge(
-            Tab tab, @WebContentsObserver.ViewportFitType int value) {
+            @Nullable Tab tab, @WebContentsObserver.ViewportFitType int value) {
         if (tab == null || tab.isNativePage()) {
             return isNativeTabDrawingToEdge(tab);
         }
@@ -269,12 +264,18 @@ public class EdgeToEdgeUtils {
         return value == ViewportFit.COVER || value == ViewportFit.COVER_FORCED_BY_USER_AGENT;
     }
 
-    /** Whether a native tab will be drawn edge to to edge. */
-    static boolean isNativeTabDrawingToEdge(Tab activeTab) {
-        // sDrawNativeEdgeToEdge will draw all native page to edge forcefully.
-        if (ChromeFeatureList.sDrawNativeEdgeToEdge.isEnabled()) return true;
+    /** Return whether there's any safe area constraint found for the given tab. */
+    static boolean hasSafeAreaConstraintForTab(@Nullable Tab tab) {
+        if (tab == null || !isSafeAreaConstraintEnabled()) return false;
 
-        if (!ChromeFeatureList.sDrawKeyNativeEdgeToEdge.isEnabled()) return false;
+        SafeAreaInsetsTracker safeAreaInsetsTracker =
+                DisplayCutoutController.getSafeAreaInsetsTracker(tab);
+        return safeAreaInsetsTracker != null && safeAreaInsetsTracker.hasSafeAreaConstraint();
+    }
+
+    /** Whether a native tab will be drawn edge to to edge. */
+    static boolean isNativeTabDrawingToEdge(@Nullable Tab activeTab) {
+        if (!isDrawKeyNativePageToEdgeEnabled()) return false;
 
         // TODO(crbug.com/339025702): Check if we are in tab switcher when activeTab is null.
         if (activeTab == null) return false;
@@ -284,22 +285,28 @@ public class EdgeToEdgeUtils {
     }
 
     /**
-     * @return whether the given window's insets indicate a tappable bottom bar.
+     * @return whether the given window's insets indicate a tappable navigation bar.
      */
-    static boolean hasTappableBottomBar(Window window) {
+    static boolean hasTappableNavigationBar(Window window) {
         var rootInsets = window.getDecorView().getRootWindowInsets();
         assert rootInsets != null;
-        return WindowInsetsCompat.toWindowInsetsCompat(rootInsets)
-                        .getInsets(WindowInsetsCompat.Type.tappableElement())
-                        .bottom
-                != 0;
+        Insets navigationBarInsets =
+                WindowInsetsCompat.toWindowInsetsCompat(rootInsets)
+                        .getInsets(WindowInsetsCompat.Type.navigationBars());
+        Insets tappableElementInsets =
+                WindowInsetsCompat.toWindowInsetsCompat(rootInsets)
+                        .getInsets(WindowInsetsCompat.Type.tappableElement());
+        // Return whether there is any overlap in navigation bar and tappable element insets.
+        return (navigationBarInsets.bottom > 0 && tappableElementInsets.bottom > 0)
+                || (navigationBarInsets.left > 0 && tappableElementInsets.left > 0)
+                || (navigationBarInsets.right > 0 && tappableElementInsets.right > 0);
     }
 
     /**
      * Returns whether the given Tab has a web page that was already rendered with
      * viewport-fit=cover.
      */
-    static boolean getWasViewportFitCover(@NonNull Tab tab) {
+    static boolean getWasViewportFitCover(Tab tab) {
         assert tab != null;
         SafeAreaInsetsTracker safeAreaInsetsTracker =
                 DisplayCutoutController.getSafeAreaInsetsTracker(tab);
@@ -309,5 +316,10 @@ public class EdgeToEdgeUtils {
     public static void setAlwaysDrawWebEdgeToEdgeForTesting(boolean drawWebEdgeToEdge) {
         sAlwaysDrawWebEdgeToEdgeForTesting = drawWebEdgeToEdge;
         ResettersForTesting.register(() -> sAlwaysDrawWebEdgeToEdgeForTesting = false);
+    }
+
+    /** Whether push safe-area-insets-bottom to pages that's not using viewport-fit=cover. */
+    public static boolean pushSafeAreaInsetsForNonOptInPages() {
+        return ChromeFeatureList.sDynamicSafeAreaInsets.isEnabled();
     }
 }

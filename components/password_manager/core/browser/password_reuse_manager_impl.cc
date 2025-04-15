@@ -22,7 +22,6 @@
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_reuse_detector.h"
 #include "components/password_manager/core/browser/password_reuse_manager_signin_notifier.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/signin/public/base/consent_level.h"
@@ -51,10 +50,6 @@ constexpr char kLoginAccountIdentifier[] = "Login.accountIdentifier";
 constexpr char kLoginHashedPassword[] = "Login.hashedPassword";
 constexpr char kLoginSalt[] = "Login.salt";
 #endif
-
-bool IsPasswordReuseDetectionEnabled() {
-  return base::FeatureList::IsEnabled(features::kPasswordReuseDetectionEnabled);
-}
 
 // Represents a single CheckReuse() request. Implements functionality to
 // listen to reuse events and propagate them to |consumer| on the sequence on
@@ -165,10 +160,6 @@ void PasswordReuseManagerImpl::Init(
 #endif
   main_task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
   DCHECK(main_task_runner_);
-
-  if (!IsPasswordReuseDetectionEnabled()) {
-    return;
-  }
 
   background_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
@@ -473,20 +464,28 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
     // On Android, check if there are any gaia credentials saved for this user.
     auto saved_creds = shared_pref_delegate_->GetCredentials("");
     if (saved_creds.empty()) {
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kNoCredentials);
       return;
     }
     auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
         saved_creds, base::JSON_ALLOW_TRAILING_COMMAS);
     if (!parsed_json.has_value()) {
       LOG(ERROR) << "Error parsing JSON: " << parsed_json.error().message;
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kParseError);
       return;
     }
     if (!parsed_json->is_list()) {
       LOG(ERROR) << "Error parsing JSON: Expected a list but got non-list.";
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kBadType);
       return;
     }
     auto& saved_creds_list = parsed_json->GetList();
     if (saved_creds_list.empty()) {
+      metrics_util::LogSharedPrefCredentialsAccessOutcome(
+          metrics_util::SharedPrefCredentialsAccessOutcome::kEmptyCredentials);
       return;
     }
     for (size_t i = 0; i < saved_creds_list.size(); i++) {
@@ -497,6 +496,8 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
       if (identity_manager_
               ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
               .email == *account_id) {
+        metrics_util::LogSharedPrefCredentialsAccessOutcome(
+            metrics_util::SharedPrefCredentialsAccessOutcome::kLoginMatch);
         PasswordHashData password_hash_data;
         password_hash_data.username = gaia::CanonicalizeEmail(*account_id);
         password_hash_data.length = 8;  // Min size for gaia passwords is 8.
@@ -514,6 +515,9 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
         shared_pref_delegate_->SetCredentials(
             base::WriteJson(saved_creds_list).value());
         break;
+      } else {
+        metrics_util::LogSharedPrefCredentialsAccessOutcome(
+            metrics_util::SharedPrefCredentialsAccessOutcome::kLoginMismatch);
       }
     }
   }
@@ -523,9 +527,6 @@ void PasswordReuseManagerImpl::OnPrimaryAccountChanged(
 void PasswordReuseManagerImpl::MaybeSavePasswordHash(
     const PasswordForm* submitted_form,
     PasswordManagerClient* client) {
-  if (!base::FeatureList::IsEnabled(features::kPasswordReuseDetectionEnabled)) {
-    return;
-  }
   // When |username_value| is empty, it's not clear whether the submitted
   // credentials are really Gaia or enterprise credentials. Don't save
   // password hash in that case.
@@ -546,7 +547,7 @@ void PasswordReuseManagerImpl::MaybeSavePasswordHash(
   }
 
   if (password_manager_util::IsLoggingActive(client)) {
-    BrowserSavePasswordProgressLogger logger(client->GetLogManager());
+    BrowserSavePasswordProgressLogger logger(client->GetCurrentLogManager());
     logger.LogMessage(
         autofill::SavePasswordProgressLogger::STRING_SAVE_PASSWORD_HASH);
   }

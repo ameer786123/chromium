@@ -13,6 +13,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Build.VERSION;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -24,6 +25,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentTransaction;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 
@@ -37,7 +39,6 @@ import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeBaseAppCompatActivity;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma.SecondaryActivity;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherImpl;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
@@ -52,12 +53,14 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetControllerFacto
 import org.chromium.components.browser_ui.bottomsheet.ManagedBottomSheetController;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
+import org.chromium.components.browser_ui.settings.SettingsFragment;
 import org.chromium.components.browser_ui.util.TraceEventVectorDrawableCompat;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
-import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.base.IntentRequestTracker;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 
@@ -100,7 +103,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     private boolean mStandalone;
     private Profile mProfile;
-    private ScrimCoordinator mScrim;
+    private ScrimManager mScrimManager;
     private ManagedBottomSheetController mManagedBottomSheetController;
     private final OneshotSupplierImpl<BottomSheetController> mBottomSheetControllerSupplier =
             new OneshotSupplierImpl<>();
@@ -120,6 +123,9 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     // This is only used on automotive.
     private @Nullable MissingDeviceLockLauncher mMissingDeviceLockLauncher;
+
+    // Used to manage and show new intents;
+    private IntentRequestTracker mIntentRequestTracker;
 
     private static final String MAIN_FRAGMENT_TAG = "settings_main";
 
@@ -172,22 +178,19 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         // recreated and super.onCreate() has already recreated the fragment.
         if (savedInstanceState == null) {
             Fragment fragment = instantiateMainFragment(getIntent());
-            fragmentManager
-                    .beginTransaction()
-                    .replace(R.id.content, fragment, MAIN_FRAGMENT_TAG)
-                    .setCustomAnimations(
-                            R.anim.shared_x_axis_open_enter,
-                            R.anim.shared_x_axis_open_exit,
-                            R.anim.shared_x_axis_close_enter,
-                            R.anim.shared_x_axis_close_exit)
-                    .commit();
+
+            var transaction = fragmentManager.beginTransaction();
+            transaction.replace(R.id.content, fragment, MAIN_FRAGMENT_TAG);
+            setFragmentAnimation(transaction, fragment);
+            transaction.commit();
         }
 
         setStatusBarColor();
         initBottomSheet();
 
-        mSnackbarManagerSupplier.set(
-                new SnackbarManager(this, findViewById(android.R.id.content), null));
+        mSnackbarManagerSupplier.set(new SnackbarManager(this, getContentView(), null));
+
+        mIntentRequestTracker = IntentRequestTracker.createFromActivity(this);
     }
 
     @Override
@@ -229,34 +232,18 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     /** Set up the bottom sheet for this activity. */
     private void initBottomSheet() {
         ViewGroup sheetContainer = findViewById(R.id.sheet_container);
-        mScrim =
-                new ScrimCoordinator(
-                        this,
-                        new ScrimCoordinator.SystemUiScrimDelegate() {
-                            @Override
-                            public void setStatusBarScrimFraction(float scrimFraction) {
-                                // TODO: Implement if status bar needs to change color with the
-                                // scrim.
-                            }
-
-                            @Override
-                            public void setNavigationBarScrimFraction(float scrimFraction) {
-                                // TODO: Implement if navigation bar needs to change color with the
-                                // scrim.
-                            }
-                        },
-                        (ViewGroup) sheetContainer.getParent(),
-                        getColor(R.color.default_scrim_color));
+        // TODO: Observe scrim changes if status bar needs to change color with the scrim.
+        mScrimManager = new ScrimManager(this, (ViewGroup) sheetContainer.getParent());
 
         mManagedBottomSheetController =
                 BottomSheetControllerFactory.createBottomSheetController(
-                        () -> mScrim,
+                        () -> mScrimManager,
                         CallbackUtils.emptyCallback(),
                         getWindow(),
                         KeyboardVisibilityDelegate.getInstance(),
                         () -> sheetContainer,
                         () -> 0,
-                        /* desktopWindowStateProvider= */ null);
+                        /* desktopWindowStateManager= */ null);
         mBottomSheetControllerSupplier.set(mManagedBottomSheetController);
     }
 
@@ -314,17 +301,44 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         if (mPendingNewIntent != null) {
             Fragment fragment = instantiateMainFragment(mPendingNewIntent);
             mPendingNewIntent = null;
-            getSupportFragmentManager()
-                    .beginTransaction()
-                    .setReorderingAllowed(true)
-                    .setCustomAnimations(
-                            R.anim.shared_x_axis_open_enter,
-                            R.anim.shared_x_axis_open_exit,
-                            R.anim.shared_x_axis_close_enter,
-                            R.anim.shared_x_axis_close_exit)
+
+            var transaction = getSupportFragmentManager().beginTransaction();
+            transaction.setReorderingAllowed(true);
+            setFragmentAnimation(transaction, fragment);
+            transaction
                     .replace(R.id.content, fragment, MAIN_FRAGMENT_TAG)
                     .addToBackStack(null)
                     .commit();
+        }
+    }
+
+    private static @SettingsFragment.AnimationType int getAnimationType(
+            @NonNull Fragment fragment) {
+        if (fragment instanceof SettingsFragment settingsFragment) {
+            // The fragment is (being) migrated. Respect the animation type that the fragment says.
+            return settingsFragment.getAnimationType();
+        }
+
+        // The fragment is not yet migrated with auditing. Fallback to the legacy animation type.
+        Log.w(
+                "SettingsActivity",
+                "Non-migrated Settings fragment is found: " + fragment.getClass().getName());
+        return SettingsFragment.AnimationType.TWEEN;
+    }
+
+    private static void setFragmentAnimation(
+            @NonNull FragmentTransaction transaction, @NonNull Fragment fragment) {
+        switch (getAnimationType(fragment)) {
+            case SettingsFragment.AnimationType.TWEEN -> transaction.setCustomAnimations(
+                    R.anim.shared_x_axis_open_enter,
+                    R.anim.shared_x_axis_open_exit,
+                    R.anim.shared_x_axis_close_enter,
+                    R.anim.shared_x_axis_close_exit);
+            case SettingsFragment.AnimationType.PROPERTY -> transaction.setCustomAnimations(
+                    R.animator.shared_x_axis_open_enter,
+                    R.animator.shared_x_axis_open_exit,
+                    R.animator.shared_x_axis_close_enter,
+                    R.animator.shared_x_axis_close_exit);
         }
     }
 
@@ -353,7 +367,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
 
     @Override
     protected void onDestroy() {
-        mScrim.destroy();
+        mScrimManager.destroy();
         super.onDestroy();
     }
 
@@ -365,6 +379,16 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
     @VisibleForTesting
     public Fragment getMainFragment() {
         return getSupportFragmentManager().findFragmentById(R.id.content);
+    }
+
+    /**
+     * Returns the intent request tracker for the Settings Activity. If the tracker does not exist
+     * yet create one and return that.
+     *
+     * @return IntentRequestTracker The intent request tracker for the Settings Activity.
+     */
+    public IntentRequestTracker getIntentRequestTracker() {
+        return mIntentRequestTracker;
     }
 
     @Override
@@ -409,6 +433,22 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         return super.onOptionsItemSelected(item);
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        mIntentRequestTracker.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // Finish the current settings when the ESC key is pressed.
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+            finishCurrentSettings(getMainFragment());
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
     private void initBackPressHandler() {
         // Handlers registered last will be called first.
         registerMainFragmentBackPressHandler();
@@ -424,8 +464,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
             BackPressHelper.create(
                     activeFragment.getViewLifecycleOwner(),
                     getOnBackPressedDispatcher(),
-                    (BackPressHandler) activeFragment,
-                    SecondaryActivity.SETTINGS);
+                    (BackPressHandler) activeFragment);
         }
     }
 
@@ -433,8 +472,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         BackPressHelper.create(
                 this,
                 getOnBackPressedDispatcher(),
-                mBottomSheetControllerSupplier.get().getBottomSheetBackPressHandler(),
-                SecondaryActivity.SETTINGS);
+                mBottomSheetControllerSupplier.get().getBottomSheetBackPressHandler());
     }
 
     @Override
@@ -467,8 +505,6 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
                 && !DeviceFormFactor.isNonMultiDisplayContextOnTablet(this)) {
             return;
         }
-
-        if (UiUtils.isSystemUiThemingDisabled()) return;
 
         // Use transparent color, so the AppBarLayout can color the status bar on scroll.
         UiUtils.setStatusBarColor(getWindow(), Color.TRANSPARENT);
@@ -557,7 +593,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
         private ObservableSupplier<String> mCurrentPageTitle;
 
         @Override
-        public void onFragmentResumed(
+        public void onFragmentStarted(
                 @NonNull FragmentManager fragmentManager, @NonNull Fragment fragment) {
             if (!MAIN_FRAGMENT_TAG.equals(fragment.getTag())) {
                 return;
@@ -570,7 +606,7 @@ public class SettingsActivity extends ChromeBaseAppCompatActivity
                 mCurrentPageTitle.removeObserver(mSetTitleCallback);
             }
             mCurrentPageTitle = settingsFragment.getPageTitle();
-            mCurrentPageTitle.addObserver(mSetTitleCallback);
+            mCurrentPageTitle.addSyncObserverAndCallIfNonNull(mSetTitleCallback);
         }
     }
 

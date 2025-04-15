@@ -37,16 +37,16 @@ class MockPaymentProvider : public payments::mojom::blink::PaymentRequest {
   void Show(bool wait_for_updated_details, bool had_user_activation) override {}
   void Retry(
       payments::mojom::blink::PaymentValidationErrorsPtr errors) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   void UpdateWith(
       payments::mojom::blink::PaymentDetailsPtr update_with_details) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
-  void OnPaymentDetailsNotUpdated() override { NOTREACHED_IN_MIGRATION(); }
-  void Abort() override { NOTREACHED_IN_MIGRATION(); }
+  void OnPaymentDetailsNotUpdated() override { NOTREACHED(); }
+  void Abort() override { NOTREACHED(); }
   void Complete(payments::mojom::PaymentComplete result) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   void CanMakePayment() override {}
   void HasEnrolledInstrument() override {}
@@ -117,8 +117,7 @@ TEST_F(PaymentRequestForInvalidOriginOrSslTest,
 
   // The show() will be rejected before user activation is checked, so there is
   // no need to trigger user-activation here.
-  auto promise =
-      request->show(scope.GetScriptState(), scope.GetExceptionState());
+  request->show(scope.GetScriptState(), scope.GetExceptionState());
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(DOMExceptionCode::kNotSupportedError,
             scope.GetExceptionState().CodeAs<DOMExceptionCode>());
@@ -135,7 +134,7 @@ TEST_F(PaymentRequestForInvalidOriginOrSslTest,
   // no need to trigger user-activation here.
   {
     DummyExceptionStateForTesting exception_state;
-    auto promise1 = request->show(scope.GetScriptState(), exception_state);
+    request->show(scope.GetScriptState(), exception_state);
     EXPECT_TRUE(exception_state.HadException());
     EXPECT_EQ(DOMExceptionCode::kNotSupportedError,
               exception_state.CodeAs<DOMExceptionCode>());
@@ -143,7 +142,7 @@ TEST_F(PaymentRequestForInvalidOriginOrSslTest,
 
   {
     DummyExceptionStateForTesting exception_state;
-    auto promise2 = request->show(scope.GetScriptState(), exception_state);
+    request->show(scope.GetScriptState(), exception_state);
     EXPECT_TRUE(exception_state.HadException());
     EXPECT_EQ(DOMExceptionCode::kNotSupportedError,
               exception_state.CodeAs<DOMExceptionCode>());

@@ -54,6 +54,7 @@
 #include "third_party/blink/renderer/modules/shared_storage/shared_storage_worklet_navigator.h"
 #include "third_party/blink/renderer/modules/shared_storage/shared_storage_worklet_thread.h"
 #include "third_party/blink/renderer/platform/bindings/callback_method_retriever.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/loader/fetch/script_cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/code_cache_fetcher.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -86,8 +87,7 @@ void RecordInterestGroupsResultStatusUma(InterestGroupsResultStatus status) {
 
 void ScriptValueToObject(ScriptState* script_state,
                          ScriptValue value,
-                         v8::Local<v8::Object>* object,
-                         ExceptionState& exception_state) {
+                         v8::Local<v8::Object>* object) {
   auto* isolate = script_state->GetIsolate();
   DCHECK(!value.IsEmpty());
   auto v8_value = value.V8Value();
@@ -97,22 +97,15 @@ void ScriptValueToObject(ScriptState* script_state,
     *object = v8::Object::New(isolate);
     return;
   }
-  TryRethrowScope rethrow_scope(isolate, exception_state);
   std::ignore = v8_value->ToObject(script_state->GetContext()).ToLocal(object);
 }
 
 ScriptValue JsonStringToScriptValue(ScriptState* script_state,
                                     const String& json_string) {
   DCHECK(script_state->ContextIsValid());
-
   ScriptState::Scope scope(script_state);
-  v8::Local<v8::Value> v8_value;
-  if (!v8::JSON::Parse(script_state->GetContext(),
-                       V8String(script_state->GetIsolate(), json_string))
-           .ToLocal(&v8_value)) {
-    return ScriptValue();
-  }
-  return ScriptValue(script_state->GetIsolate(), v8_value);
+  return ScriptValue(script_state->GetIsolate(),
+                     FromJSONString(script_state, json_string));
 }
 
 Member<AuctionAd> ConvertMojomAdToIDLAd(
@@ -149,6 +142,9 @@ Member<AuctionAd> ConvertMojomAdToIDLAd(
       allowed_reporting_origins.push_back(origin->ToString());
     }
     ad->setAllowedReportingOrigins(std::move(allowed_reporting_origins));
+  }
+  if (mojom_ad->creative_scanning_metadata) {
+    ad->setCreativeScanningMetadata(mojom_ad->creative_scanning_metadata);
   }
 
   return ad;
@@ -203,10 +199,15 @@ String ExceptionToString(ScriptState* script_state,
 
 struct UnresolvedSelectURLRequest final
     : public GarbageCollected<UnresolvedSelectURLRequest> {
-  UnresolvedSelectURLRequest(size_t urls_size,
-                             blink::mojom::blink::SharedStorageWorkletService::
-                                 RunURLSelectionOperationCallback callback)
-      : urls_size(urls_size), callback(std::move(callback)) {}
+  UnresolvedSelectURLRequest(
+      size_t urls_size,
+      blink::mojom::blink::SharedStorageWorkletService::
+          RunURLSelectionOperationCallback callback,
+      base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+          operation_completion_cb)
+      : urls_size(urls_size),
+        callback(std::move(callback)),
+        operation_completion_cb(std::move(operation_completion_cb)) {}
   ~UnresolvedSelectURLRequest() = default;
 
   void Trace(Visitor* visitor) const {}
@@ -214,24 +215,31 @@ struct UnresolvedSelectURLRequest final
   size_t urls_size;
   blink::mojom::blink::SharedStorageWorkletService::
       RunURLSelectionOperationCallback callback;
+  base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+      operation_completion_cb;
 };
 
 struct UnresolvedRunRequest final
     : public GarbageCollected<UnresolvedRunRequest> {
   explicit UnresolvedRunRequest(
       blink::mojom::blink::SharedStorageWorkletService::RunOperationCallback
-          callback)
-      : callback(std::move(callback)) {}
+          callback,
+      base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+          operation_completion_cb)
+      : callback(std::move(callback)),
+        operation_completion_cb(std::move(operation_completion_cb)) {}
   ~UnresolvedRunRequest() = default;
 
   void Trace(Visitor* visitor) const {}
 
   blink::mojom::blink::SharedStorageWorkletService::RunOperationCallback
       callback;
+  base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+      operation_completion_cb;
 };
 
 class SelectURLResolutionSuccessCallback final
-    : public ScriptFunction::Callable {
+    : public ThenCallable<IDLAny, SelectURLResolutionSuccessCallback> {
  public:
   explicit SelectURLResolutionSuccessCallback(
       UnresolvedSelectURLRequest* request)
@@ -239,14 +247,13 @@ class SelectURLResolutionSuccessCallback final
 
   void Trace(Visitor* visitor) const final {
     visitor->Trace(request_);
-    ScriptFunction::Callable::Trace(visitor);
+    ThenCallable<IDLAny, SelectURLResolutionSuccessCallback>::Trace(visitor);
   }
 
- private:
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+  void React(ScriptState* script_state, ScriptValue value) {
     ScriptState::Scope scope(script_state);
 
-    v8::Local<v8::Context> context = value.GetIsolate()->GetCurrentContext();
+    v8::Local<v8::Context> context = script_state->GetContext();
     v8::Local<v8::Value> v8_value = value.V8Value();
 
     v8::Local<v8::Uint32> v8_result_index;
@@ -267,15 +274,16 @@ class SelectURLResolutionSuccessCallback final
                  /*error_message=*/g_empty_string, result_index);
       }
     }
-
-    return value;
+    std::move(request_->operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
   }
 
+ private:
   Member<UnresolvedSelectURLRequest> request_;
 };
 
 class SelectURLResolutionFailureCallback final
-    : public ScriptFunction::Callable {
+    : public ThenCallable<IDLAny, SelectURLResolutionFailureCallback> {
  public:
   explicit SelectURLResolutionFailureCallback(
       UnresolvedSelectURLRequest* request)
@@ -283,68 +291,67 @@ class SelectURLResolutionFailureCallback final
 
   void Trace(Visitor* visitor) const final {
     visitor->Trace(request_);
-    ScriptFunction::Callable::Trace(visitor);
+    ThenCallable<IDLAny, SelectURLResolutionFailureCallback>::Trace(visitor);
   }
 
- private:
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+  void React(ScriptState* script_state, ScriptValue value) {
     ScriptState::Scope scope(script_state);
-
     v8::Local<v8::Value> v8_value = value.V8Value();
-
     std::move(request_->callback)
         .Run(/*success=*/false, ExceptionToString(script_state, v8_value),
              /*index=*/0);
-
-    return value;
+    std::move(request_->operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kUncaughtException);
   }
 
+ private:
   Member<UnresolvedSelectURLRequest> request_;
 };
 
-class RunResolutionSuccessCallback final : public ScriptFunction::Callable {
+class RunResolutionSuccessCallback final
+    : public ThenCallable<IDLAny, RunResolutionSuccessCallback> {
  public:
   explicit RunResolutionSuccessCallback(UnresolvedRunRequest* request)
       : request_(request) {}
 
   void Trace(Visitor* visitor) const final {
     visitor->Trace(request_);
-    ScriptFunction::Callable::Trace(visitor);
+    ThenCallable<IDLAny, RunResolutionSuccessCallback>::Trace(visitor);
   }
 
- private:
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+  void React(ScriptState*, ScriptValue) {
     std::move(request_->callback)
         .Run(/*success=*/true,
              /*error_message=*/g_empty_string);
-    return value;
+    std::move(request_->operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
   }
 
+ private:
   Member<UnresolvedRunRequest> request_;
 };
 
-class RunResolutionFailureCallback final : public ScriptFunction::Callable {
+class RunResolutionFailureCallback final
+    : public ThenCallable<IDLAny, RunResolutionFailureCallback> {
  public:
   explicit RunResolutionFailureCallback(UnresolvedRunRequest* request)
       : request_(request) {}
 
   void Trace(Visitor* visitor) const final {
     visitor->Trace(request_);
-    ScriptFunction::Callable::Trace(visitor);
+    ThenCallable<IDLAny, RunResolutionFailureCallback>::Trace(visitor);
+  }
+
+  void React(ScriptState* script_state, ScriptValue value) {
+    ScriptState::Scope scope(script_state);
+    v8::Local<v8::Value> v8_value = value.V8Value();
+    std::move(request_->callback)
+        .Run(/*success=*/false, ExceptionToString(script_state, v8_value));
+    std::move(request_->operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kUncaughtException);
   }
 
  private:
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
-    ScriptState::Scope scope(script_state);
-
-    v8::Local<v8::Value> v8_value = value.V8Value();
-
-    std::move(request_->callback)
-        .Run(/*success=*/false, ExceptionToString(script_state, v8_value));
-
-    return value;
-  }
-
   Member<UnresolvedRunRequest> request_;
 };
 
@@ -484,7 +491,8 @@ void SharedStorageWorkletGlobalScope::AddModule(
 
   CHECK(GetCodeCacheHost());
   code_cache_fetcher_ = CodeCacheFetcher::TryCreateAndStart(
-      *resource_request, *GetCodeCacheHost(),
+      *resource_request, GetCodeCacheHost(),
+      GetTaskRunner(blink::TaskType::kMiscPlatformAPI),
       WTF::BindOnce(&SharedStorageWorkletGlobalScope::DidReceiveCachedCode,
                     WrapWeakPersistent(this)));
 }
@@ -505,10 +513,8 @@ void SharedStorageWorkletGlobalScope::RunURLSelectionOperation(
     return;
   }
 
-  base::OnceClosure operation_completion_cb =
-      StartOperation(std::move(pa_operation_details));
-  RunURLSelectionOperationCallback combined_operation_completion_cb =
-      std::move(callback).Then(std::move(operation_completion_cb));
+  base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+      operation_completion_cb = StartOperation(std::move(pa_operation_details));
 
   DCHECK(operation_definition);
 
@@ -525,17 +531,19 @@ void SharedStorageWorkletGlobalScope::RunURLSelectionOperation(
       operation_definition->GetRunFunctionForSharedStorageSelectURLOperation();
 
   Vector<String> urls_param;
-  base::ranges::transform(urls, std::back_inserter(urls_param),
-                          [](const KURL& url) { return url.GetString(); });
+  std::ranges::transform(urls, std::back_inserter(urls_param),
+                         [](const KURL& url) { return url.GetString(); });
 
   base::ElapsedTimer deserialization_timer;
 
   std::optional<ScriptValue> data_param =
       Deserialize(isolate, /*execution_context=*/this, serialized_data);
   if (!data_param) {
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false, kSharedStorageCannotDeserializeDataErrorMessage,
-             /*index=*/0);
+    std::move(callback).Run(/*success=*/false,
+                            kSharedStorageCannotDeserializeDataErrorMessage,
+                            /*index=*/0);
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
     return;
   }
 
@@ -548,32 +556,36 @@ void SharedStorageWorkletGlobalScope::RunURLSelectionOperation(
 
   if (try_catch.HasCaught()) {
     v8::Local<v8::Value> exception = try_catch.Exception();
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false, ExceptionToString(script_state, exception),
-             /*index=*/0);
+    std::move(callback).Run(/*success=*/false,
+                            ExceptionToString(script_state, exception),
+                            /*index=*/0);
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kUncaughtException);
     return;
   }
 
   if (result.IsNothing()) {
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false, kSharedStorageEmptyScriptResultErrorMessage,
-             /*index=*/0);
+    std::move(callback).Run(/*success=*/false,
+                            kSharedStorageEmptyScriptResultErrorMessage,
+                            /*index=*/0);
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
     return;
   }
 
   auto* unresolved_request = MakeGarbageCollected<UnresolvedSelectURLRequest>(
-      urls.size(), std::move(combined_operation_completion_cb));
+      urls.size(), std::move(callback), std::move(operation_completion_cb));
 
   ScriptPromise<IDLAny> promise = result.FromJust();
 
-  auto* success_callback = MakeGarbageCollected<ScriptFunction>(
-      script_state, MakeGarbageCollected<SelectURLResolutionSuccessCallback>(
-                        unresolved_request));
-  auto* failure_callback = MakeGarbageCollected<ScriptFunction>(
-      script_state, MakeGarbageCollected<SelectURLResolutionFailureCallback>(
-                        unresolved_request));
+  auto* success_callback =
+      MakeGarbageCollected<SelectURLResolutionSuccessCallback>(
+          unresolved_request);
+  auto* failure_callback =
+      MakeGarbageCollected<SelectURLResolutionFailureCallback>(
+          unresolved_request);
 
-  promise.Then(success_callback, failure_callback);
+  promise.Then(script_state, success_callback, failure_callback);
 }
 
 void SharedStorageWorkletGlobalScope::RunOperation(
@@ -590,11 +602,8 @@ void SharedStorageWorkletGlobalScope::RunOperation(
     return;
   }
 
-  base::OnceClosure operation_completion_cb =
-      StartOperation(std::move(pa_operation_details));
-  mojom::blink::SharedStorageWorkletService::RunOperationCallback
-      combined_operation_completion_cb =
-          std::move(callback).Then(std::move(operation_completion_cb));
+  base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+      operation_completion_cb = StartOperation(std::move(pa_operation_details));
 
   DCHECK(operation_definition);
 
@@ -615,9 +624,10 @@ void SharedStorageWorkletGlobalScope::RunOperation(
   std::optional<ScriptValue> data_param =
       Deserialize(isolate, /*execution_context=*/this, serialized_data);
   if (!data_param) {
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false,
-             kSharedStorageCannotDeserializeDataErrorMessage);
+    std::move(callback).Run(/*success=*/false,
+                            kSharedStorageCannotDeserializeDataErrorMessage);
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
     return;
   }
 
@@ -629,30 +639,32 @@ void SharedStorageWorkletGlobalScope::RunOperation(
 
   if (try_catch.HasCaught()) {
     v8::Local<v8::Value> exception = try_catch.Exception();
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false, ExceptionToString(script_state, exception));
+    std::move(callback).Run(/*success=*/false,
+                            ExceptionToString(script_state, exception));
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kUncaughtException);
     return;
   }
 
   if (result.IsNothing()) {
-    std::move(combined_operation_completion_cb)
-        .Run(/*success=*/false, kSharedStorageEmptyScriptResultErrorMessage);
+    std::move(callback).Run(/*success=*/false,
+                            kSharedStorageEmptyScriptResultErrorMessage);
+    std::move(operation_completion_cb)
+        .Run(PrivateAggregation::TerminationStatus::kNoUncaughtException);
     return;
   }
 
   auto* unresolved_request = MakeGarbageCollected<UnresolvedRunRequest>(
-      std::move(combined_operation_completion_cb));
+      std::move(callback), std::move(operation_completion_cb));
 
   ScriptPromise<IDLAny> promise = result.FromJust();
 
-  auto* success_callback = MakeGarbageCollected<ScriptFunction>(
-      script_state,
-      MakeGarbageCollected<RunResolutionSuccessCallback>(unresolved_request));
-  auto* failure_callback = MakeGarbageCollected<ScriptFunction>(
-      script_state,
-      MakeGarbageCollected<RunResolutionFailureCallback>(unresolved_request));
+  auto* success_callback =
+      MakeGarbageCollected<RunResolutionSuccessCallback>(unresolved_request);
+  auto* failure_callback =
+      MakeGarbageCollected<RunResolutionFailureCallback>(unresolved_request);
 
-  promise.Then(success_callback, failure_callback);
+  promise.Then(script_state, success_callback, failure_callback);
 }
 
 SharedStorage* SharedStorageWorkletGlobalScope::sharedStorage(
@@ -717,26 +729,6 @@ SharedStorageWorkletGlobalScope::interestGroups(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
         "interestGroups() cannot be called during addModule().");
-    return EmptyPromise();
-  }
-
-  if (!permissions_policy_state_->join_ad_interest_group_allowed) {
-    RecordInterestGroupsResultStatusUma(
-        InterestGroupsResultStatus::kFailurePermissionsPolicyDenied);
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kInvalidAccessError,
-        "The \"join-ad-interest-group\" Permissions Policy denied the "
-        "interestGroups() method.");
-    return EmptyPromise();
-  }
-
-  if (!permissions_policy_state_->run_ad_auction_allowed) {
-    RecordInterestGroupsResultStatusUma(
-        InterestGroupsResultStatus::kFailurePermissionsPolicyDenied);
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kInvalidAccessError,
-        "The \"run-ad-auction\" Permissions Policy denied the interestGroups() "
-        "method.");
     return EmptyPromise();
   }
 
@@ -911,6 +903,22 @@ SharedStorageWorkletGlobalScope::interestGroups(
                         ->trusted_bidding_signals_coordinator->ToString());
               }
 
+              if (mojom_group->interest_group
+                      ->view_and_click_counts_providers) {
+                Vector<String> view_and_click_counts_providers;
+                view_and_click_counts_providers.reserve(
+                    mojom_group->interest_group->view_and_click_counts_providers
+                        ->size());
+                for (const scoped_refptr<const blink::SecurityOrigin>& origin :
+                     *mojom_group->interest_group
+                          ->view_and_click_counts_providers) {
+                  view_and_click_counts_providers.emplace_back(
+                      origin->ToString());
+                }
+                group->setViewAndClickCountsProviders(
+                    std::move(view_and_click_counts_providers));
+              }
+
               if (mojom_group->interest_group->user_bidding_signals) {
                 group->setUserBiddingSignals(JsonStringToScriptValue(
                     resolver->GetScriptState(),
@@ -983,13 +991,11 @@ SharedStorageWorkletGlobalScope::interestGroups(
               if (mojom_group->interest_group->additional_bid_key) {
                 Vector<char> original_additional_bid_key;
                 WTF::Base64Encode(
-                    base::make_span(
+                    base::span(
                         *mojom_group->interest_group->additional_bid_key),
                     original_additional_bid_key);
 
-                group->setAdditionalBidKey(
-                    String(original_additional_bid_key.data(),
-                           original_additional_bid_key.size()));
+                group->setAdditionalBidKey(String(original_additional_bid_key));
               }
 
               ProtectedAudiencePrivateAggregationConfig* pa_config =
@@ -1024,18 +1030,11 @@ SharedStorageWorkletGlobalScope::interestGroups(
                 {
                   auto context = resolver->GetScriptState()->GetContext();
 
-                  ExceptionState exception_state(
-                      isolate, v8::ExceptionContext::kUnknown, "", "");
-
                   v8::Local<v8::Object> ad_dict;
                   ScriptValueToObject(resolver->GetScriptState(),
-                                      ad_script_value, &ad_dict,
-                                      exception_state);
-                  DCHECK(!exception_state.HadException());
+                                      ad_script_value, &ad_dict);
 
                   v8::Local<v8::Value> v8_metadata_string;
-
-                  TryRethrowScope rethrow_scope(isolate, exception_state);
                   if (ad_dict->Get(context, V8AtomicString(isolate, "metadata"))
                           .ToLocal(&v8_metadata_string)) {
                     ScriptValue metadata_script_value = JsonStringToScriptValue(
@@ -1051,12 +1050,8 @@ SharedStorageWorkletGlobalScope::interestGroups(
                   }
                 }
 
-                ExceptionState exception_state(
-                    isolate, v8::ExceptionContext::kConstructor,
-                    "AuctionAdConstructor");
                 AuctionAd* ad = AuctionAd::Create(
-                    isolate, ad_script_value.V8Value(), exception_state);
-                DCHECK(!exception_state.HadException());
+                    isolate, ad_script_value.V8Value(), ASSERT_NO_EXCEPTION);
 
                 HeapVector<Member<V8UnionAuctionAdOrLongLong>> previous_win;
                 previous_wins.reserve(2);
@@ -1103,16 +1098,6 @@ SharedStorageWorkletGlobalScope::interestGroups(
 SharedStorageWorkletNavigator* SharedStorageWorkletGlobalScope::Navigator(
     ScriptState* script_state,
     ExceptionState& exception_state) {
-  if (!add_module_finished_) {
-    CHECK(!navigator_);
-
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kNotAllowedError,
-        "navigator cannot be accessed during addModule().");
-
-    return nullptr;
-  }
-
   if (!navigator_) {
     navigator_ = MakeGarbageCollected<SharedStorageWorkletNavigator>(
         GetExecutionContext());
@@ -1139,7 +1124,7 @@ void SharedStorageWorkletGlobalScope::OnModuleScriptDownloaded(
   module_script_downloader_.reset();
 
   // If we haven't received the code cache data, defer handing the response.
-  if (code_cache_fetcher_ && code_cache_fetcher_->is_waiting()) {
+  if (code_cache_fetcher_ && code_cache_fetcher_->IsWaiting()) {
     handle_script_download_response_after_code_cache_response_ = WTF::BindOnce(
         &SharedStorageWorkletGlobalScope::OnModuleScriptDownloaded,
         WrapPersistent(this), script_source_url, std::move(callback),
@@ -1289,7 +1274,8 @@ bool SharedStorageWorkletGlobalScope::PerformCommonOperationChecks(
   return true;
 }
 
-base::OnceClosure SharedStorageWorkletGlobalScope::StartOperation(
+base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+SharedStorageWorkletGlobalScope::StartOperation(
     mojom::blink::PrivateAggregationOperationDetailsPtr pa_operation_details) {
   CHECK(add_module_finished_);
   CHECK_EQ(!!pa_operation_details,
@@ -1315,10 +1301,13 @@ base::OnceClosure SharedStorageWorkletGlobalScope::StartOperation(
                        WrapPersistent(this), operation_id);
 }
 
-void SharedStorageWorkletGlobalScope::FinishOperation(int64_t operation_id) {
+void SharedStorageWorkletGlobalScope::FinishOperation(
+    int64_t operation_id,
+    PrivateAggregation::TerminationStatus termination_status) {
   if (ShouldDefinePrivateAggregationInSharedStorage()) {
     CHECK(private_aggregation_);
-    private_aggregation_->OnOperationFinished(operation_id);
+
+    private_aggregation_->OnOperationFinished(operation_id, termination_status);
   }
 }
 

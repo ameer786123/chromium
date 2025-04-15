@@ -46,7 +46,7 @@ RTCIceCandidatePlatform::RTCIceCandidatePlatform(
     String sdp_mid,
     std::optional<uint16_t> sdp_m_line_index,
     String username_fragment,
-    std::optional<String> url)
+    String url)
     : candidate_(std::move(candidate)),
       sdp_mid_(std::move(sdp_mid)),
       sdp_m_line_index_(std::move(sdp_m_line_index)),
@@ -85,7 +85,7 @@ void RTCIceCandidatePlatform::PopulateFields(bool use_username_from_candidate) {
   auto type = c.type_name();
   DCHECK(type == "host" || type == "srflx" || type == "prflx" ||
          type == "relay");
-  type_ = String(type.data(), type.size());
+  type_ = String(type);
   if (!c.tcptype().empty()) {
     tcp_type_ = String::FromUTF8(c.tcptype());
   }
@@ -94,7 +94,7 @@ void RTCIceCandidatePlatform::PopulateFields(bool use_username_from_candidate) {
     related_port_ = c.related_address().port();
   }
   // url_ is set only when the candidate was gathered locally.
-  if (type_ == "relay" && priority_ && url_) {
+  if (type_ == "relay" && priority_ && !url_.IsNull()) {
     relay_protocol_ = PriorityToRelayProtocol(*priority_);
   }
 

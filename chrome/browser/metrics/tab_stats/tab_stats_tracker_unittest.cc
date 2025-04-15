@@ -10,6 +10,7 @@
 #include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/power_monitor_test.h"
+#include "chrome/browser/resource_coordinator/test_lifecycle_unit.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
@@ -70,7 +71,7 @@ class TestTabStatsTracker : public TabStatsTracker {
   TestTabStatsTracker(const TestTabStatsTracker&) = delete;
   TestTabStatsTracker& operator=(const TestTabStatsTracker&) = delete;
 
-  ~TestTabStatsTracker() override {}
+  ~TestTabStatsTracker() override = default;
 
   // Helper functions to update the number of tabs/windows.
 
@@ -115,9 +116,20 @@ class TestTabStatsTracker : public TabStatsTracker {
   void DiscardedStateChange(ChromeRenderViewHostTestHarness* test_harness,
                             ::mojom::LifecycleUnitDiscardReason reason,
                             bool is_discarded) {
-    std::unique_ptr<content::WebContents> tab =
-        test_harness->CreateTestWebContents();
-    OnDiscardedStateChange(tab.get(), reason, is_discarded);
+    static constexpr auto kStateChangeReason =
+        ::mojom::LifecycleUnitStateChangeReason::BROWSER_INITIATED;
+
+    resource_coordinator::TestLifecycleUnit lifecycle_unit;
+    lifecycle_unit.SetDiscardReason(reason);
+    lifecycle_unit.SetState(is_discarded
+                                ? ::mojom::LifecycleUnitState::DISCARDED
+                                : ::mojom::LifecycleUnitState::ACTIVE,
+                            kStateChangeReason);
+    const auto previous_state = is_discarded
+                                    ? ::mojom::LifecycleUnitState::ACTIVE
+                                    : ::mojom::LifecycleUnitState::DISCARDED;
+    OnLifecycleUnitStateChanged(&lifecycle_unit, previous_state,
+                                kStateChangeReason);
   }
 
   void CheckDailyEventInterval() { daily_event_for_testing()->CheckInterval(); }
@@ -152,7 +164,7 @@ class TestTabStatsTracker : public TabStatsTracker {
 class TestUmaStatsReportingDelegate
     : public TestTabStatsTracker::UmaStatsReportingDelegate {
  public:
-  TestUmaStatsReportingDelegate() {}
+  TestUmaStatsReportingDelegate() = default;
 
   TestUmaStatsReportingDelegate(const TestUmaStatsReportingDelegate&) = delete;
   TestUmaStatsReportingDelegate& operator=(

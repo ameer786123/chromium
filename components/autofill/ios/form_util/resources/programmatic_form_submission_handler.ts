@@ -10,7 +10,7 @@
 
 // Requires functions from fill.ts, form.ts, and autofill_form_features.ts.
 
-import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
+import {gCrWebLegacy} from '//ios/web/public/js_messaging/resources/gcrweb.js';
 //
 ///**
 // * The name of the message handler in the browser layer which will process
@@ -34,8 +34,9 @@ HTMLFormElement.prototype.submit = function() {
   // Put the formSubmitted in a try catch to ensure the original function
   // is always called.
   try {
-    gCrWeb.form.formSubmitted(
+    gCrWebLegacy.form.formSubmitted(
         this, /* messageHandler= */ NATIVE_MESSAGE_HANDLER,
+        /* programmaticSubmission= */ true,
         /* includeRemoteFrameToken= */ true);
   } catch (e) {
   }

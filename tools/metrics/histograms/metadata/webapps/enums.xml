@@ -164,12 +164,6 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="Ambient badge dismissed"/>
 </enum>
 
-<enum name="InstallAmbientBadgeAppType">
-  <int value="0" label="Native app"/>
-  <int value="1" label="WebAPK"/>
-  <int value="2" label="Shortcut"/>
-</enum>
-
 <enum name="IsolatedWebAppCleanupOrphanedIWAsError">
   <int value="1" label="Could not delete all orphaned isolated web apps."/>
   <int value="2" label="Skipped execution during system shutdown."/>
@@ -224,6 +218,24 @@ chromium-metrics-reviews@google.com.
   <int value="10" label="Update apply failed"/>
 </enum>
 
+<enum name="IwaComponentUpdateError">
+  <int value="0" label="Stale version"/>
+  <int value="1" label="Component file not found"/>
+  <int value="2" label="Malformed protobuf"/>
+  <int value="3" label="Malformed base64 key"/>
+</enum>
+
+<enum name="IwaComponentUpdateSource">
+  <int value="0" label="Preloaded component"/>
+  <int value="1" label="Downloaded component"/>
+</enum>
+
+<enum name="KeyRotationInfoSource">
+  <int value="0" label="No component"/>
+  <int value="1" label="Preloaded component"/>
+  <int value="2" label="Downloaded component"/>
+</enum>
+
 <enum name="LaunchedAppType">
   <int value="0" label="DIY app launched"/>
   <int value="1" label="Crafted app launched"/>
@@ -232,6 +244,13 @@ chromium-metrics-reviews@google.com.
 <enum name="LaunchFromHomeScreen">
   <int value="0" label="Launched as standalone web app"/>
   <int value="1" label="Launched as a tab"/>
+</enum>
+
+<enum name="ManifestIconDownloaderResult">
+  <int value="0" label="No images were found while downloading"/>
+  <int value="1"
+      label="Images found did not match sizes specified in manifest"/>
+  <int value="2" label="Image download successful"/>
 </enum>
 
 <enum name="PreinstalledAppDisabledReason">
@@ -272,13 +291,6 @@ chromium-metrics-reviews@google.com.
   <int value="5"
       label="Run On OS Login command failed because OS Hooks were not
              properly set."/>
-</enum>
-
-<enum name="ServiceWorkerOfflineCapability">
-  <int value="0" label="kNoServiceWorker"/>
-  <int value="1" label="kServiceWorkerNoFetchHandler"/>
-  <int value="2" label="kServiceWorkerNoOfflineSupport"/>
-  <int value="3" label="kServiceWorkerWithOfflineSupport"/>
 </enum>
 
 <enum name="ShortcutsCreationResult">

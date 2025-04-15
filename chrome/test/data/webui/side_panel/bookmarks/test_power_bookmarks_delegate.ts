@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import type {BookmarkProductInfo} from '//resources/cr_components/commerce/shopping_service.mojom-webui.js';
+import type {BookmarkProductInfo} from '//resources/cr_components/commerce/shared.mojom-webui.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 export class TestPowerBookmarksDelegate extends TestBrowserProxy {
@@ -12,7 +12,7 @@ export class TestPowerBookmarksDelegate extends TestBrowserProxy {
       'setImageUrl',
       'onBookmarksLoaded',
       'onBookmarkChanged',
-      'onBookmarkCreated',
+      'onBookmarkAdded',
       'onBookmarkMoved',
       'onBookmarkRemoved',
       'getTrackedProductInfos',
@@ -34,14 +34,14 @@ export class TestPowerBookmarksDelegate extends TestBrowserProxy {
     this.methodCalled('onBookmarksLoaded');
   }
 
-  onBookmarkChanged(id: string, changedInfo: chrome.bookmarks.ChangeInfo) {
-    this.methodCalled('onBookmarkChanged', id, changedInfo);
+  onBookmarkChanged(id: string) {
+    this.methodCalled('onBookmarkChanged', id);
   }
 
-  onBookmarkCreated(
+  onBookmarkAdded(
       bookmark: chrome.bookmarks.BookmarkTreeNode,
       parent: chrome.bookmarks.BookmarkTreeNode) {
-    this.methodCalled('onBookmarkCreated', bookmark, parent);
+    this.methodCalled('onBookmarkAdded', bookmark, parent);
   }
 
   onBookmarkMoved(

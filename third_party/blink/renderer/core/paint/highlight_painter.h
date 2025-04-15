@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/core/paint/line_relative_rect.h"
 #include "third_party/blink/renderer/core/paint/text_decoration_info.h"
 #include "third_party/blink/renderer/core/paint/text_paint_style.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
@@ -36,7 +37,6 @@ class TextDecorationPainter;
 class TextPainter;
 struct LayoutSelectionStatus;
 struct PaintInfo;
-struct PhysicalOffset;
 struct TextFragmentPaintInfo;
 
 using HighlightLayer = HighlightOverlay::HighlightLayer;

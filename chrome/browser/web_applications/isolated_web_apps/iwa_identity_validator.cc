@@ -4,6 +4,8 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
 
+#include <variant>
+
 #include "base/base64.h"
 #include "base/containers/map_util.h"
 #include "base/no_destructor.h"
@@ -27,11 +29,11 @@ ValidateWebBundleIdentityAgainstKeyRotationInfo(
         web_bundle_id.c_str()));
   }
 
-  if (!base::ranges::any_of(public_keys, [&](const auto& public_key) {
-        return absl::visit(
+  if (!std::ranges::any_of(public_keys, [&](const auto& public_key) {
+        return std::visit(
             [&](const auto& public_key) {
-              return base::ranges::equal(public_key.bytes(),
-                                         *kr_info.public_key);
+              return std::ranges::equal(public_key.bytes(),
+                                        *kr_info.public_key);
             },
             public_key);
       })) {

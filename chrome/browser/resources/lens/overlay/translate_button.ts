@@ -23,6 +23,7 @@ import {UserAction} from './lens.mojom-webui.js';
 import {INVOCATION_SOURCE} from './lens_overlay_app.js';
 import {recordLensOverlayInteraction} from './metrics_utils.js';
 import {focusShimmerOnRegion, ShimmerControlRequester, unfocusShimmer} from './selection_utils.js';
+import type {Language} from './translate.mojom-webui.js';
 import {getTemplate} from './translate_button.html.js';
 
 // The language codes that are supported to be translated by the server.
@@ -39,6 +40,13 @@ const SUPPORTED_TRANSLATION_LANGUAGES = new Set([
   'uk',  'ur',  'ug',    'uz',    'vi', 'cy', 'xh', 'yi', 'yo', 'zu',
 ]);
 
+interface SearchedLanguage {
+  beforeHighlightText: string;
+  searchHighlightText: string;
+  afterHighlightText: string;
+  language: Language;
+}
+
 export interface TranslateState {
   translateModeEnabled: boolean;
   targetLanguage: string;
@@ -47,17 +55,31 @@ export interface TranslateState {
 
 export interface TranslateButtonElement {
   $: {
-    menuDetectedLanguage: HTMLDivElement,
-    languagePicker: HTMLDivElement,
+    allSourceLanguagesMenu: HTMLElement,
+    allTargetLanguagesMenu: HTMLElement,
+    menuDetectedLanguage: HTMLElement,
+    languagePicker: HTMLElement,
+    recentSourceLanguagesContainer: DomRepeat,
+    recentSourceLanguagesSection: HTMLElement,
+    recentTargetLanguagesContainer: DomRepeat,
+    recentTargetLanguagesSection: HTMLElement,
+    searchSourceLanguagesContainer: DomRepeat,
+    searchSourceLanguagePicker: HTMLElement,
+    searchTargetLanguagesContainer: DomRepeat,
+    searchTargetLanguagePicker: HTMLElement,
     sourceAutoDetectButton: CrButtonElement,
     sourceLanguageButton: CrButtonElement,
     sourceLanguagePickerBackButton: CrIconButtonElement,
     sourceLanguagePickerContainer: DomRepeat,
-    sourceLanguagePickerMenu: HTMLDivElement,
+    sourceLanguagePickerMenu: HTMLElement,
+    sourceLanguageSearchButton: CrIconButtonElement,
+    sourceLanguageSearchbox: HTMLInputElement,
     targetLanguageButton: CrButtonElement,
     targetLanguagePickerBackButton: CrIconButtonElement,
     targetLanguagePickerContainer: DomRepeat,
-    targetLanguagePickerMenu: HTMLDivElement,
+    targetLanguagePickerMenu: HTMLElement,
+    targetLanguageSearchButton: CrIconButtonElement,
+    targetLanguageSearchbox: HTMLInputElement,
     translateDisableButton: CrButtonElement,
     translateEnableButton: CrButtonElement,
   };
@@ -74,17 +96,31 @@ export class TranslateButtonElement extends PolymerElement {
 
   static get properties() {
     return {
+      clientSourceLanguageList: {type: Array},
+      clientTargetLanguageList: {type: Array},
       contentLanguage: {
         type: String,
         reflectToAttribute: true,
+        value: '',
       },
       isLensOverlayContextualSearchboxEnabled: {
         type: Boolean,
         reflectToAttribute: true,
       },
+      isSourceLanguageSearchboxOpen: {
+        type: Boolean,
+        reflectToAttribute: true,
+        value: false,
+      },
+      isTargetLanguageSearchboxOpen: {
+        type: Boolean,
+        reflectToAttribute: true,
+        value: false,
+      },
       isTranslateModeEnabled: {
         type: Boolean,
         reflectToAttribute: true,
+        value: false,
       },
       languagePickerButtonsVisible: {
         type: Boolean,
@@ -92,47 +128,144 @@ export class TranslateButtonElement extends PolymerElement {
               isTranslateModeEnabled, sourceLanguageMenuVisible,
               targetLanguageMenuVisible)`,
       },
+      recentSourceLanguages: {
+        type: Array,
+        value: () => [],
+      },
+      recentTargetLanguages: {
+        type: Array,
+        value: () => [],
+      },
+      shouldFetchSupportedLanguages: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('shouldFetchSupportedLanguages'),
+        readOnly: true,
+        reflectToAttribute: true,
+      },
+      shouldShowRecentSourceLanguages: {
+        type: Boolean,
+        computed: 'shouldShowRecentLanguages(recentSourceLanguages)',
+        reflectToAttribute: true,
+      },
+      shouldShowRecentTargetLanguages: {
+        type: Boolean,
+        computed: 'shouldShowRecentLanguages(recentTargetLanguages)',
+        reflectToAttribute: true,
+      },
+      searchboxHasText: {
+        type: Boolean,
+        reflectToAttribute: true,
+        value: false,
+      },
+      searchedLanguageList: {
+        type: Array,
+        value: () => [],
+      },
+      serverSourceLanguageList: {
+        type: Array,
+        value: () => [],
+      },
+      serverTargetLanguageList: {
+        type: Array,
+        value: () => [],
+      },
       shouldShowStarsIcon: {
         type: Boolean,
         computed: 'computeShouldShowStarsIcon(sourceLanguage)',
         reflectToAttribute: true,
       },
-      sourceLanguage: Object,
+      sourceLanguage: {
+        type: Object,
+        value: null,
+      },
+      sourceLanguageList: {
+        type: Array,
+        computed: `getSourceLanguageList(clientSourceLanguageList,
+                                   serverSourceLanguageList)`,
+      },
       sourceLanguageMenuVisible: {
         type: Boolean,
         reflectToAttribute: true,
+        value: false,
       },
-      targetLanguage: Object,
+      targetLanguage: {
+        type: Object,
+        value: null,
+      },
+      targetLanguageList: {
+        type: Array,
+        computed: `getTargetLanguageList(clientTargetLanguageList,
+                                   serverTargetLanguageList)`,
+      },
       targetLanguageMenuVisible: {
         type: Boolean,
         reflectToAttribute: true,
+        value: false,
       },
     };
   }
 
-  private eventTracker_: EventTracker = new EventTracker();
+  private eventTracker: EventTracker = new EventTracker();
   // Whether the lens overlay contextual searchbox is enabled. Passed in from
   // parent.
-  private isLensOverlayContextualSearchboxEnabled: boolean;
+  declare private isLensOverlayContextualSearchboxEnabled: boolean;
+  // Whether the source language searchbox is currently open.
+  declare private isSourceLanguageSearchboxOpen: boolean;
+  // Whether the target language searchbox is currently open.
+  declare private isTargetLanguageSearchboxOpen: boolean;
   // Whether the translate mode on the lens overlay has been enabled.
-  private isTranslateModeEnabled: boolean = false;
+  declare private isTranslateModeEnabled: boolean;
   // Whether the language picker buttons are currently visible.
-  private languagePickerButtonsVisible: boolean;
+  declare private languagePickerButtonsVisible: boolean;
+  // Whether the feature flag to enable fetching supported languages is enabled.
+  declare private shouldFetchSupportedLanguages: boolean;
+  // Whether either of the language picker searchboxes has text.
+  declare private searchboxHasText: boolean;
+  // The list of languages filtered by a search highlight. Uses a
+  // `SearchedLanguage` so we can bold the search highlight.
+  declare private searchedLanguageList: SearchedLanguage[];
   // Whether the stars icon is visible on the source language button.
-  private shouldShowStarsIcon: boolean;
+  declare private shouldShowStarsIcon: boolean;
+  declare private sourceLanguageList: Language[];
   // The currently selected source language to translate to. If null, we should
   // auto detect the language.
-  private sourceLanguage: chrome.languageSettingsPrivate.Language|null = null;
+  declare private sourceLanguage: Language|null;
+  declare private targetLanguageList: Language[];
   // The currently selected target language to translate to.
-  private targetLanguage: chrome.languageSettingsPrivate.Language;
+  declare private targetLanguage: Language|null;
   // Whether the source language menu picker is visible.
-  private sourceLanguageMenuVisible: boolean = false;
+  declare private sourceLanguageMenuVisible: boolean;
   // Whether the target language menu picker is visible.
-  private targetLanguageMenuVisible: boolean = false;
-  // The list of target languages provided by the chrome API.
-  private translateLanguageList: chrome.languageSettingsPrivate.Language[];
-  // The content language code received from the lext layer.
-  private contentLanguage: string = '';
+  declare private targetLanguageMenuVisible: boolean;
+  // The list of source translate language codes supported by Lens. This differs
+  // from the server source translate list because it is a list of language
+  // codes that can currently be reliably sent to Lens for translation.
+  private supportedSourceLanguages: Set<string> =
+      new Set(loadTimeData.getString('translateSourceLanguages').split(','));
+  // The list of target translate language codes supported by Lens. This differs
+  // from the server target translate list because it is a list of language
+  // codes that can currently be reliably sent to Lens for translation. This set
+  // needs to be combined with `supportedSourceLanguages` before use.
+  private supportedTargetLanguages: Set<string> =
+      new Set(loadTimeData.getString('translateTargetLanguages').split(','));
+  // The list of source translate languages provided by the chrome API.
+  declare private clientSourceLanguageList: Language[];
+  // The list of source translate languages provided by the chrome API.
+  declare private clientTargetLanguageList: Language[];
+  // The list of source translate languages provided by the server.
+  declare private serverSourceLanguageList: Language[];
+  // The list of target translate languages provided by the server.
+  declare private serverTargetLanguageList: Language[];
+  // The recent languages that the user has selected as source language.
+  declare private recentSourceLanguages: Language[];
+  // The recent languages that the user has selected as target language.
+  declare private recentTargetLanguages: Language[];
+  // Whether we should show the recent source languages in the picker.
+  declare private shouldShowRecentSourceLanguages: boolean;
+  // Whether we should show the recent target languages in the picker.
+  declare private shouldShowRecentTargetLanguages: boolean;
+  // The content language code received from the text layer.
+  declare private contentLanguage: string;
   // A browser proxy for communicating with the C++ Lens overlay controller.
   private browserProxy: BrowserProxy = BrowserProxyImpl.getInstance();
   // A browser proxy for fetching the language settings from the Chrome API.
@@ -144,9 +277,8 @@ export class TranslateButtonElement extends PolymerElement {
 
   override connectedCallback() {
     super.connectedCallback();
-    this.languageBrowserProxy.getLanguageList().then(
-        this.onLanguageListRetrieved.bind(this));
-    this.eventTracker_.add(
+    this.handleFetchLanguageList();
+    this.eventTracker.add(
         document, 'received-content-language', (e: CustomEvent) => {
           // Lens sends 'zh' and 'zh-Hant', which need to be converted to
           // 'zh-CN' and 'zh-TW' to match the language codes used by
@@ -159,7 +291,7 @@ export class TranslateButtonElement extends PolymerElement {
             this.contentLanguage = e.detail.contentLanguage;
           }
         });
-    this.eventTracker_.add(
+    this.eventTracker.add(
         this.$.sourceLanguagePickerMenu, 'focusout', (event: FocusEvent) => {
           const targetWithFocus = event.relatedTarget;
           if (!targetWithFocus || !(targetWithFocus instanceof Node) ||
@@ -167,7 +299,7 @@ export class TranslateButtonElement extends PolymerElement {
             this.hideLanguagePickerMenus(/*shouldFocus=*/ false);
           }
         });
-    this.eventTracker_.add(
+    this.eventTracker.add(
         this.$.targetLanguagePickerMenu, 'focusout', (event: FocusEvent) => {
           const targetWithFocus = event.relatedTarget;
           if (!targetWithFocus || !(targetWithFocus instanceof Node) ||
@@ -189,7 +321,7 @@ export class TranslateButtonElement extends PolymerElement {
     this.listenerIds.forEach(
         id => assert(this.browserProxy.callbackRouter.removeListener(id)));
     this.listenerIds = [];
-    this.eventTracker_.removeAll();
+    this.eventTracker.removeAll();
   }
 
   getTranslateEnableButton(): CrButtonElement {
@@ -197,6 +329,12 @@ export class TranslateButtonElement extends PolymerElement {
   }
 
   private handleLanguagePickerKeyDown(event: KeyboardEvent) {
+    // If the searchbox is open, then we should do nothing in this case.
+    if (this.isTargetLanguageSearchboxOpen ||
+        this.isSourceLanguageSearchboxOpen) {
+      return;
+    }
+
     // A language picker must be focused and visible in order to receive this
     // event.
     assert(this.sourceLanguageMenuVisible || this.targetLanguageMenuVisible);
@@ -205,11 +343,28 @@ export class TranslateButtonElement extends PolymerElement {
       return;
     }
 
+    // We should open the searchbox with the key if it is active.
+    if (this.shouldFetchSupportedLanguages) {
+      const isTarget = this.targetLanguageMenuVisible ? true : false;
+      if (isTarget) {
+        this.openTargetLanguageSearchbox();
+      } else {
+        this.openSourceLanguageSearchbox();
+      }
+      return;
+    }
+
+    // Get the appropriate language list by checking which language menu is
+    // visible.
+    const languageList = this.sourceLanguageMenuVisible ?
+        this.getSourceLanguageList() :
+        this.getTargetLanguageList();
+
     let scrollLanguageIndex = -1;
     const startingChar = event.key.toLowerCase();
-    for (let i = 0; i < this.translateLanguageList.length; i++) {
-      const language = this.translateLanguageList[i];
-      const languageStartingChar = language.displayName.charAt(0).toLowerCase();
+    for (let i = 0; i < languageList.length; i++) {
+      const language = languageList[i];
+      const languageStartingChar = language.name.charAt(0).toLowerCase();
       if (startingChar === languageStartingChar) {
         scrollLanguageIndex = i;
         break;
@@ -228,22 +383,118 @@ export class TranslateButtonElement extends PolymerElement {
     }
   }
 
-  private onLanguageListRetrieved(
-      languageList: chrome.languageSettingsPrivate.Language[]) {
-    this.translateLanguageList = languageList.filter((language) => {
-      return SUPPORTED_TRANSLATION_LANGUAGES.has(language.code);
+  private handleFetchLanguageList() {
+    if (this.shouldFetchSupportedLanguages) {
+      // Combine the source and target translate languages into one set.
+      this.supportedSourceLanguages.forEach(
+          (code: string) => this.supportedTargetLanguages.add(code));
+      this.languageBrowserProxy.getStoredServerLanguages(this.browserProxy)
+          .then(this.onServerLanguageListRetrieved.bind(this));
+    }
+
+    this.languageBrowserProxy.getClientLanguageList().then(
+        this.onClientLanguageListRetrieved.bind(this));
+  }
+
+  private onServerLanguageListRetrieved(
+      languages: {sourceLanguages: Language[], targetLanguages: Language[]}) {
+    this.serverSourceLanguageList =
+        languages.sourceLanguages.filter((language) => {
+          return this.supportedSourceLanguages.has(language.languageCode);
+        });
+
+    this.serverTargetLanguageList =
+        languages.targetLanguages.filter((language) => {
+          return this.supportedTargetLanguages.has(language.languageCode);
+        });
+
+    // Since we always want to use the server languages over the client
+    // languages, we set a variable to always override any existing language if
+    // the initial languages were already set.
+    this.maybeSetInitialLanguagesInPicker(/*overrideExisting=*/ true);
+  }
+
+  private onClientLanguageListRetrieved(languageList: Language[]) {
+    const supportedSourceTranslateLanguages =
+        this.shouldFetchSupportedLanguages ? this.supportedSourceLanguages :
+                                             SUPPORTED_TRANSLATION_LANGUAGES;
+    const supportedTargetTranslateLanguages =
+        this.shouldFetchSupportedLanguages ? this.supportedTargetLanguages :
+                                             SUPPORTED_TRANSLATION_LANGUAGES;
+    this.clientSourceLanguageList = languageList.filter((language) => {
+      return supportedSourceTranslateLanguages.has(language.languageCode);
+    });
+    this.clientTargetLanguageList = languageList.filter((language) => {
+      return supportedTargetTranslateLanguages.has(language.languageCode);
     });
 
-    // After receiving the language list, get the default translate target
-    // language. This needs to happen after fetching the language list so we can
-    //  use the list to fetch the language's display name.
+    this.maybeSetInitialLanguagesInPicker();
+  }
+
+  private maybeSetInitialLanguagesInPicker(overrideExisting = false) {
+    // If the target language was already set and we do not want to override
+    // anyway, then we should return early.
+    if (this.targetLanguage && !overrideExisting) {
+      return;
+    }
+
+    // Last used source and target languages are stored in local storage if
+    // feature enabled.
+    if (this.shouldFetchSupportedLanguages) {
+      // Set the recent languages for source and target language pickers. If
+      // there are none, this is a no-op.
+      this.maybeSetRecentLanguages();
+      const sourceLanguageCode =
+          this.languageBrowserProxy.getLastUsedSourceLanguage();
+      const targetLanguageCode =
+          this.languageBrowserProxy.getLastUsedTargetLanguage();
+      const initialSourceLanguage = this.getSourceLanguageList().find(
+          language => language.languageCode === sourceLanguageCode);
+      const initialTargetLanguage = this.getTargetLanguageList().find(
+          language => language.languageCode === targetLanguageCode);
+
+      this.sourceLanguage =
+          initialSourceLanguage ? initialSourceLanguage : null;
+      this.targetLanguage =
+          initialTargetLanguage ? initialTargetLanguage : null;
+      // If target language was still not set, then we still need to get the
+      // translate target language from the language browser proxy. Otherwise,
+      // return.
+      if (this.targetLanguage) {
+        return;
+      }
+    }
+
+    // Get the default translate target language. This needs to happen after
+    // fetching the language list so we can use the list to fetch the language's
+    // display name.
     this.languageBrowserProxy.getTranslateTargetLanguage().then(
         this.onTargetLanguageRetrieved.bind(this));
   }
 
-  private onTargetLanguageRetrieved(languageCode: string) {
-    const defaultLanguage = this.translateLanguageList.find(
-        language => language.code === languageCode);
+  private maybeSetRecentLanguages() {
+    const recentSourceLanguageCodes =
+        this.languageBrowserProxy.getRecentSourceLanguages();
+    if (recentSourceLanguageCodes.length > 0) {
+      this.recentSourceLanguages =
+          this.getSourceLanguageList().filter((language: Language) => {
+            return recentSourceLanguageCodes.includes(language.languageCode);
+          });
+    }
+
+    const recentTargetLanguageCodes =
+        this.languageBrowserProxy.getRecentTargetLanguages();
+    if (recentTargetLanguageCodes.length > 0) {
+      this.recentTargetLanguages =
+          this.getTargetLanguageList().filter((language: Language) => {
+            return recentTargetLanguageCodes.includes(language.languageCode);
+          });
+    }
+  }
+
+  private onTargetLanguageRetrieved(targetLanguageCode: string) {
+    const defaultLanguage = this.getTargetLanguageList().find(
+        language => language.languageCode === targetLanguageCode);
 
     // If the target language is set to one supported by Lens, then we set it
     // and are done.
@@ -253,11 +504,12 @@ export class TranslateButtonElement extends PolymerElement {
     }
 
     // Otherwise, we default to the first language in the list.
-    this.targetLanguage = this.translateLanguageList[0];
+    this.targetLanguage = this.getTargetLanguageList()[0];
   }
 
   private onAutoDetectMenuItemClick() {
     this.sourceLanguage = null;
+    this.languageBrowserProxy.storeLastUsedSourceLanguage(null);
     this.hideLanguagePickerMenus();
     this.maybeIssueTranslateRequest();
     recordLensOverlayInteraction(
@@ -288,7 +540,31 @@ export class TranslateButtonElement extends PolymerElement {
     assertInstanceof(event.target, HTMLElement);
     const newSourceLanguage =
         this.$.sourceLanguagePickerContainer.itemForElement(event.target);
-    this.sourceLanguage = newSourceLanguage;
+    this.setNewSourceLanguage(newSourceLanguage);
+  }
+
+  private onRecentSourceLanguageClick(event: PointerEvent) {
+    assertInstanceof(event.target, HTMLElement);
+    const newSourceLanguage =
+        this.$.recentSourceLanguagesContainer.itemForElement(event.target);
+    this.setNewSourceLanguage(newSourceLanguage);
+  }
+
+  private onSourceSearchLanguageItemClick(event: PointerEvent) {
+    assertInstanceof(event.target, HTMLElement);
+    const searchedLanguage =
+        this.$.searchSourceLanguagesContainer.itemForElement(event.target);
+    this.setNewSourceLanguage(searchedLanguage.language);
+  }
+
+  private setNewSourceLanguage(sourceLanguage: Language|null) {
+    this.sourceLanguage = sourceLanguage;
+    if (this.shouldFetchSupportedLanguages) {
+      this.languageBrowserProxy.storeLastUsedSourceLanguage(
+          sourceLanguage ? sourceLanguage.languageCode : null);
+      this.addRecentSourceLanguage(sourceLanguage);
+    }
+    this.clearSearchboxState();
     this.hideLanguagePickerMenus();
     this.maybeIssueTranslateRequest();
     recordLensOverlayInteraction(
@@ -299,22 +575,36 @@ export class TranslateButtonElement extends PolymerElement {
     assertInstanceof(event.target, HTMLElement);
     const newTargetLanguage =
         this.$.targetLanguagePickerContainer.itemForElement(event.target);
-    this.targetLanguage = newTargetLanguage;
+    this.setNewTargetLanguage(newTargetLanguage);
+  }
+
+  private onTargetSearchLanguageItemClick(event: PointerEvent) {
+    assertInstanceof(event.target, HTMLElement);
+    const searchedLanguage =
+        this.$.searchTargetLanguagesContainer.itemForElement(event.target);
+    this.setNewTargetLanguage(searchedLanguage.language);
+  }
+
+  private onRecentTargetLanguageClick(event: PointerEvent) {
+    assertInstanceof(event.target, HTMLElement);
+    const newTargetLanguage =
+        this.$.recentTargetLanguagesContainer.itemForElement(event.target);
+    this.setNewTargetLanguage(newTargetLanguage);
+  }
+
+  private setNewTargetLanguage(targetLanguage: Language) {
+    this.targetLanguage = targetLanguage;
+    if (this.shouldFetchSupportedLanguages) {
+      this.languageBrowserProxy.storeLastUsedTargetLanguage(
+          targetLanguage ? targetLanguage.languageCode : null);
+      this.addRecentTargetLanguage(targetLanguage);
+    }
+    this.clearSearchboxState();
     this.hideLanguagePickerMenus();
     this.maybeIssueTranslateRequest();
     recordLensOverlayInteraction(
         INVOCATION_SOURCE, UserAction.kTranslateTargetLanguageChanged);
-    // Dispatch event to let other components know the overlay translate mode
-    // state.
-    this.dispatchEvent(new CustomEvent('translate-mode-state-changed', {
-      bubbles: true,
-      composed: true,
-      detail: {
-        translateModeEnabled: this.isTranslateModeEnabled,
-        targetLanguage: this.targetLanguage.code,
-        shouldUnselectWords: true,
-      },
-    }));
+    this.updateTranslateModeState(true);
   }
 
   private onTranslateButtonClick() {
@@ -346,22 +636,14 @@ export class TranslateButtonElement extends PolymerElement {
 
     // Dispatch event to let other components know the overlay translate mode
     // state.
-    this.dispatchEvent(new CustomEvent('translate-mode-state-changed', {
-      bubbles: true,
-      composed: true,
-      detail: {
-        translateModeEnabled: this.isTranslateModeEnabled,
-        targetLanguage: this.targetLanguage.code,
-        shouldUnselectWords: true,
-      },
-    }));
+    this.updateTranslateModeState(true);
   }
 
   private maybeIssueTranslateRequest() {
     if (this.isTranslateModeEnabled && this.targetLanguage) {
       this.browserProxy.handler.issueTranslateFullPageRequest(
-          this.sourceLanguage ? this.sourceLanguage.code : 'auto',
-          this.targetLanguage.code);
+          this.sourceLanguage ? this.sourceLanguage.languageCode : 'auto',
+          this.targetLanguage.languageCode);
     }
   }
 
@@ -373,10 +655,10 @@ export class TranslateButtonElement extends PolymerElement {
 
     const newSourceLanguage = sourceLanguage === 'auto' ?
         null :
-        this.translateLanguageList.find(
-            language => language.code === sourceLanguage);
-    const newTargetLanguage = this.translateLanguageList.find(
-        language => language.code === targetLanguage);
+        this.getSourceLanguageList().find(
+            language => language.languageCode === sourceLanguage);
+    const newTargetLanguage = this.getTargetLanguageList().find(
+        language => language.languageCode === targetLanguage);
 
     // Do nothing if the languages set are not in the language list. Source
     // language can be null to indicate we should auto-detect source language.
@@ -399,15 +681,7 @@ export class TranslateButtonElement extends PolymerElement {
     }
     this.isTranslateModeEnabled = true;
     this.maybeIssueTranslateRequest();
-    this.dispatchEvent(new CustomEvent('translate-mode-state-changed', {
-      bubbles: true,
-      composed: true,
-      detail: {
-        translateModeEnabled: this.isTranslateModeEnabled,
-        targetLanguage: this.targetLanguage.code,
-        shouldUnselectWords: true,
-      },
-    }));
+    this.updateTranslateModeState(true);
   }
 
   private disableTranslateMode() {
@@ -417,15 +691,17 @@ export class TranslateButtonElement extends PolymerElement {
 
     this.isTranslateModeEnabled = false;
     unfocusShimmer(this, ShimmerControlRequester.TRANSLATE);
-    this.dispatchEvent(new CustomEvent('translate-mode-state-changed', {
-      bubbles: true,
-      composed: true,
-      detail: {
-        translateModeEnabled: this.isTranslateModeEnabled,
-        targetLanguage: this.targetLanguage.code,
-        shouldUnselectWords: false,
-      },
-    }));
+    this.updateTranslateModeState(false);
+  }
+
+  private handleBackButtonClick() {
+    if (this.isTargetLanguageSearchboxOpen ||
+        this.isSourceLanguageSearchboxOpen) {
+      this.clearSearchboxState();
+      return;
+    }
+
+    this.hideLanguagePickerMenus();
   }
 
   private hideLanguagePickerMenus(shouldFocus = true) {
@@ -448,17 +724,17 @@ export class TranslateButtonElement extends PolymerElement {
 
   private getSourceLanguageDisplayName(): string {
     if (this.sourceLanguage) {
-      return this.sourceLanguage.displayName;
+      return this.sourceLanguage.name;
     }
     // There is a race condition where the DOM can render before the language
     // browser proxy returns the language list. For this reason, we need to
     // check if the translate language list is present before attempting to find
     // the content language display name inside of it.
-    if (this.contentLanguage !== '' && this.translateLanguageList) {
-      const detectedLanguage = this.translateLanguageList.find(
-          language => language.code === this.contentLanguage);
+    if (this.contentLanguage !== '' && this.getSourceLanguageList()) {
+      const detectedLanguage = this.getSourceLanguageList().find(
+          language => language.languageCode === this.contentLanguage);
       if (detectedLanguage !== undefined) {
-        return detectedLanguage.displayName;
+        return detectedLanguage.name;
       }
     }
     return loadTimeData.getString('detectLanguage');
@@ -466,7 +742,7 @@ export class TranslateButtonElement extends PolymerElement {
 
   private getTargetLanguageDisplayName(): string {
     if (this.targetLanguage) {
-      return this.targetLanguage.displayName;
+      return this.targetLanguage.name;
     }
 
     return '';
@@ -477,11 +753,11 @@ export class TranslateButtonElement extends PolymerElement {
     // browser proxy returns the language list. For this reason, we need to
     // check if the translate language list is present before attempting to find
     // the content language display name inside of it.
-    if (this.contentLanguage !== '' && this.translateLanguageList) {
-      const detectedLanguage = this.translateLanguageList.find(
-          language => language.code === this.contentLanguage);
+    if (this.contentLanguage !== '' && this.getSourceLanguageList()) {
+      const detectedLanguage = this.getSourceLanguageList().find(
+          language => language.languageCode === this.contentLanguage);
       if (detectedLanguage !== undefined) {
-        return detectedLanguage.displayName;
+        return detectedLanguage.name;
       }
     }
     return '';
@@ -499,6 +775,93 @@ export class TranslateButtonElement extends PolymerElement {
       bubbles: true,
       composed: true,
     }));
+  }
+
+  private openSourceLanguageSearchbox() {
+    this.isSourceLanguageSearchboxOpen = true;
+    this.$.sourceLanguageSearchbox.focus();
+    this.onSourceSearchboxInputChange();
+  }
+
+  private openTargetLanguageSearchbox() {
+    this.isTargetLanguageSearchboxOpen = true;
+    this.$.targetLanguageSearchbox.focus();
+    this.onTargetSearchboxInputChange();
+  }
+
+  private onSourceSearchboxInputChange() {
+    const searchString = this.$.sourceLanguageSearchbox.value.trim();
+    this.updateSearchedListOnInputChanged(
+        this.getSourceLanguageList(), searchString);
+  }
+
+  private onTargetSearchboxInputChange() {
+    const searchString = this.$.targetLanguageSearchbox.value.trim();
+    this.updateSearchedListOnInputChanged(
+        this.getTargetLanguageList(), searchString);
+  }
+
+  private updateSearchedListOnInputChanged(
+      languageList: Language[], searchString: string) {
+    this.searchboxHasText = searchString.length > 0;
+    if (this.searchboxHasText) {
+      const lowerCaseSearchString = searchString.toLowerCase();
+      this.searchedLanguageList =
+          languageList
+              .filter((language: Language) => {
+                const lowerCaseLanguageName = language.name.toLowerCase();
+                return lowerCaseLanguageName.includes(lowerCaseSearchString);
+              })
+              .sort((previous: Language, next: Language) => {
+                const lowerCaseA = previous.name.toLowerCase();
+                const lowerCaseB = next.name.toLowerCase();
+                const startsWithA =
+                    lowerCaseA.startsWith(lowerCaseSearchString);
+                const startsWithB =
+                    lowerCaseB.startsWith(lowerCaseSearchString);
+
+                if (startsWithA && !startsWithB) {
+                  return -1;
+                } else if (!startsWithA && startsWithB) {
+                  return 1;
+                } else {
+                  return 0;
+                }
+              })
+              .map((language: Language) => {
+                const lowerCaseLanguageName = language.name.toLowerCase();
+                const startIndex =
+                    lowerCaseLanguageName.indexOf(lowerCaseSearchString);
+                if (startIndex !== -1) {
+                  const beforeSearch = language.name.substring(0, startIndex);
+                  const highlightText = language.name.substring(
+                      startIndex, startIndex + lowerCaseSearchString.length);
+                  const afterSearch = language.name.substring(
+                      startIndex + lowerCaseSearchString.length);
+                  return {
+                    beforeHighlightText: beforeSearch,
+                    searchHighlightText: highlightText,
+                    afterHighlightText: afterSearch,
+                    language,
+                  };
+                }
+                return {
+                  beforeHighlightText: language.name,
+                  searchHighlightText: '',
+                  afterHighlightText: '',
+                  language,
+                };
+              });
+    }
+  }
+
+  private clearSearchboxState() {
+    this.searchedLanguageList = [];
+    this.$.targetLanguageSearchbox.value = '';
+    this.$.sourceLanguageSearchbox.value = '';
+    this.searchboxHasText = false;
+    this.isSourceLanguageSearchboxOpen = false;
+    this.isTargetLanguageSearchboxOpen = false;
   }
 
   private computeShouldShowStarsIcon(): boolean {
@@ -528,8 +891,18 @@ export class TranslateButtonElement extends PolymerElement {
   }
 
   private getSourceLanguageButtonAriaLabel(): string {
+    let sourceLanguageAriaLabel = this.getSourceLanguageDisplayName();
+    // If the source language is set to auto detect language, the label should
+    // have both the source language display name (if found) and detect language
+    // string.
+    if (this.sourceLanguage === null &&
+        sourceLanguageAriaLabel !== loadTimeData.getString('detectLanguage')) {
+      sourceLanguageAriaLabel = `${this.getSourceLanguageDisplayName()}, ${
+          loadTimeData.getString('detectLanguage')}`;
+    }
+
     return loadTimeData.getStringF(
-        'sourceLanguageAriaLabel', this.getSourceLanguageDisplayName());
+        'sourceLanguageAriaLabel', sourceLanguageAriaLabel);
   }
 
   private getTargetLanguageButtonAriaLabel(): string {
@@ -537,15 +910,105 @@ export class TranslateButtonElement extends PolymerElement {
         'targetLanguageAriaLabel', this.getTargetLanguageDisplayName());
   }
 
-  private getAutoCheckedClass(
-      sourceLanguage: chrome.languageSettingsPrivate.Language): string {
+  private getAutoCheckedClass(sourceLanguage: Language): string {
     return sourceLanguage === null ? 'selected' : '';
   }
 
+  private getSearchedLanguageCheckedClass(
+      searchedLanguage: SearchedLanguage,
+      selectedLanguage: Language|null): string {
+    return this.getLanguageCheckedClass(
+        searchedLanguage.language, selectedLanguage);
+  }
+
   private getLanguageCheckedClass(
-      language: chrome.languageSettingsPrivate.Language,
-      selectedLanguage: chrome.languageSettingsPrivate.Language): string {
-    return selectedLanguage === language ? 'selected' : '';
+      language: Language, selectedLanguage: Language|null): string {
+    if (!selectedLanguage) {
+      return '';
+    }
+
+    return selectedLanguage.languageCode === language.languageCode ?
+        'selected' :
+        '';
+  }
+
+  private shouldShowRecentLanguages(recentLanguages: Language[]) {
+    return recentLanguages.length > 0;
+  }
+
+  private updateTranslateModeState(shouldUnselectWords: boolean) {
+    this.dispatchEvent(new CustomEvent('translate-mode-state-changed', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        translateModeEnabled: this.isTranslateModeEnabled,
+        targetLanguage: this.targetLanguage!.languageCode,
+        shouldUnselectWords: shouldUnselectWords,
+      },
+    }));
+  }
+
+  private addRecentSourceLanguage(language: Language|null) {
+    if (!language) {
+      return;
+    }
+    this.prepareRecentLanguageListForAddition(
+        this.recentSourceLanguages, language);
+
+    // This needs to happen this way in order for properties to properly update
+    // the HTML.
+    this.recentSourceLanguages = [language, ...this.recentSourceLanguages];
+    this.languageBrowserProxy.storeRecentSourceLanguages(
+        this.recentSourceLanguages.map((language: Language) => {
+          return language.languageCode;
+        }));
+  }
+
+  private addRecentTargetLanguage(language: Language) {
+    assert(language);
+    this.prepareRecentLanguageListForAddition(
+        this.recentTargetLanguages, language);
+
+    // This needs to happen this way in order for properties to properly update
+    // the HTML.
+    this.recentTargetLanguages = [language, ...this.recentTargetLanguages];
+    this.languageBrowserProxy.storeRecentTargetLanguages(
+        this.recentTargetLanguages.map((language: Language) => {
+          return language.languageCode;
+        }));
+  }
+
+  // Prepares the recent language list for addition by removing the language if
+  // it is already in the list or popping languages if its length is above the
+  // max.
+  private prepareRecentLanguageListForAddition(
+      languageList: Language[], language: Language) {
+    // If the language is already present in the queue, remove it and then
+    // re-add it so it's at the top. If the slots are full, then we should
+    // dequeue languages until it is not and then add the most recent language.
+    const index = languageList.findIndex(
+        (recentLanguage: Language) =>
+            recentLanguage.languageCode === language.languageCode);
+
+    if (index > -1) {
+      languageList.splice(index, 1);
+    }
+    while (languageList.length >=
+           loadTimeData.getInteger('recentLanguagesAmount')) {
+      languageList.pop();
+    }
+  }
+
+  private getSourceLanguageList(): Language[] {
+    return this.serverSourceLanguageList.length === 0 ?
+        this.clientSourceLanguageList :
+        this.serverSourceLanguageList;
+  }
+
+  private getTargetLanguageList(): Language[] {
+    return this.serverTargetLanguageList.length === 0 ?
+        this.clientTargetLanguageList :
+        this.serverTargetLanguageList;
   }
 }
 

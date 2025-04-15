@@ -53,6 +53,12 @@ class ZeroSuggestProvider : public BaseSearchProvider {
   static ZeroSuggestProvider* Create(AutocompleteProviderClient* client,
                                      AutocompleteProviderListener* listener);
 
+  // Returns an AutocompleteMatch for a navigational suggestion |navigation|.
+  static AutocompleteMatch NavigationToMatch(
+      AutocompleteProvider* provider,
+      AutocompleteProviderClient* client,
+      const SearchSuggestionParser::NavigationResult& navigation);
+
   // Registers a preference used to cache the zero suggest response.
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
@@ -78,6 +84,12 @@ class ZeroSuggestProvider : public BaseSearchProvider {
     return experiment_stats_v2s_;
   }
 
+  // Returns the list of GWS event ID hashes corresponding to `matches_`. Will
+  // be logged to SearchboxStats as needed.
+  const SearchSuggestionParser::GwsEventIdHashes& gws_event_id_hashes() const {
+    return gws_event_id_hashes_;
+  }
+
   ResultType GetResultTypeRunningForTesting() const {
     return result_type_running_;
   }
@@ -91,6 +103,10 @@ class ZeroSuggestProvider : public BaseSearchProvider {
   ~ZeroSuggestProvider() override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(ZeroSuggestProviderTest,
+                           TestCacheStateWithSRPPrefetchDisabled);
+  FRIEND_TEST_ALL_PREFIXES(ZeroSuggestProviderTest,
+                           TestCacheStateWithWebPrefetchDisabled);
   // BaseSearchProvider:
   bool ShouldAppendExtraParams(
       const SearchSuggestionParser::SuggestResult& result) const override;
@@ -118,10 +134,6 @@ class ZeroSuggestProvider : public BaseSearchProvider {
   // Called by `debouncer_`.
   void RunZeroSuggestPrefetch(const AutocompleteInput& input,
                               const ResultType result_type);
-
-  // Returns an AutocompleteMatch for a navigational suggestion |navigation|.
-  AutocompleteMatch NavigationToMatch(
-      const SearchSuggestionParser::NavigationResult& navigation);
 
   // Called either in Start() with |results| populated from the cached response,
   // where |matches_| are empty; or in OnURLLoadComplete() with |results|
@@ -154,6 +166,9 @@ class ZeroSuggestProvider : public BaseSearchProvider {
 
   // The list of experiment stats corresponding to |matches_|.
   SearchSuggestionParser::ExperimentStatsV2s experiment_stats_v2s_;
+
+  // The list of GWS event ID hashes corresponding to `matches_`.
+  SearchSuggestionParser::GwsEventIdHashes gws_event_id_hashes_;
 
   // For callbacks that may be run after destruction.
   base::WeakPtrFactory<ZeroSuggestProvider> weak_ptr_factory_{this};

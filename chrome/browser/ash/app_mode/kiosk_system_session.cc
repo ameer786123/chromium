@@ -14,8 +14,8 @@
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
-#include "base/notimplemented.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/ash/app_mode/app_launch_utils.h"
 #include "chrome/browser/ash/app_mode/auto_sleep/device_weekly_scheduled_suspend_controller.h"
@@ -69,19 +69,22 @@ bool IsOfflineEnabledForApp(const std::string& app_id, Profile* profile) {
 }  // namespace
 
 KioskSystemSession::KioskSystemSession(
+    PrefService& local_state,
     Profile* profile,
     const KioskAppId& kiosk_app_id,
     const std::optional<std::string>& app_name)
-    : profile_(profile),
+    : local_state_(local_state),
+      profile_(profile),
       browser_session_(profile),
       kiosk_app_id_(kiosk_app_id),
       network_metrics_service_(
-          std::make_unique<NetworkConnectivityMetricsService>()),
-      periodic_metrics_service_(std::make_unique<PeriodicMetricsService>(
-          g_browser_process->local_state())),
+          std::make_unique<NetworkConnectivityMetricsService>(local_state)),
+      periodic_metrics_service_(
+          std::make_unique<PeriodicMetricsService>(&local_state)),
       device_weekly_scheduled_suspend_controller_(
           std::make_unique<DeviceWeeklyScheduledSuspendController>(
-              g_browser_process->local_state())),
+              &local_state)),
+      low_disk_metrics_service_(local_state),
       network_state_observer_(profile->GetPrefs()) {
   switch (kiosk_app_id_.type) {
     case KioskAppType::kChromeApp:
@@ -91,8 +94,7 @@ KioskSystemSession::KioskSystemSession(
       InitForWebKiosk(app_name);
       break;
     case KioskAppType::kIsolatedWebApp:
-      // TODO(crbug.com/361017777): call InitForIwaKiosk or reus existing init.
-      NOTIMPLEMENTED();
+      InitForIwaKiosk(app_name);
       break;
   }
 }
@@ -102,24 +104,28 @@ KioskSystemSession::~KioskSystemSession() = default;
 void KioskSystemSession::InitForChromeAppKiosk() {
   const std::string& app_id = kiosk_app_id_.app_id.value();
   browser_session_.InitForChromeAppKiosk(app_id);
-  StartFloatingAccessibilityMenu();
   InitKioskAppUpdateService(app_id);
   SetRebootAfterUpdateIfNecessary();
-
-  periodic_metrics_service_->RecordPreviousSessionMetrics();
-  periodic_metrics_service_->StartRecordingPeriodicMetrics(
-      IsOfflineEnabledForApp(app_id, profile()));
+  InitCommon(IsOfflineEnabledForApp(app_id, profile()));
 }
 
 void KioskSystemSession::InitForWebKiosk(
     const std::optional<std::string>& app_name) {
   browser_session_.InitForWebKiosk(app_name);
+  InitCommon(/*is_offline_enabled=*/true);
+}
+
+void KioskSystemSession::InitForIwaKiosk(
+    const std::optional<std::string>& app_name) {
+  browser_session_.InitForIwaKiosk(app_name);
+  InitCommon(/*is_offline_enabled=*/true);
+}
+
+void KioskSystemSession::InitCommon(bool is_offline_enabled) {
   StartFloatingAccessibilityMenu();
 
   periodic_metrics_service_->RecordPreviousSessionMetrics();
-  // Web apps always support offline mode.
-  periodic_metrics_service_->StartRecordingPeriodicMetrics(
-      /*is_offline_enabled=*/true);
+  periodic_metrics_service_->StartRecordingPeriodicMetrics(is_offline_enabled);
 }
 
 void KioskSystemSession::ShuttingDown() {
@@ -142,8 +148,7 @@ void KioskSystemSession::SetRebootAfterUpdateIfNecessary() {
   policy::BrowserPolicyConnectorAsh* connector =
       g_browser_process->platform_part()->browser_policy_connector_ash();
   if (!connector->IsDeviceEnterpriseManaged()) {
-    PrefService* local_state = g_browser_process->local_state();
-    local_state->SetBoolean(::prefs::kRebootAfterUpdate, true);
+    local_state_->SetBoolean(::prefs::kRebootAfterUpdate, true);
     KioskModeIdleAppNameNotification::Initialize();
   }
 }

@@ -91,7 +91,6 @@ class SVGAnimatedPropertyBase : public GarbageCollectedMixin {
     kRemoved,
   };
   void BaseValueChanged(BaseValueChangeType);
-  void EnsureAnimValUpdated();
 
  protected:
   SVGAnimatedPropertyBase(AnimatedPropertyType,
@@ -138,6 +137,13 @@ class SVGAnimatedPropertyBase : public GarbageCollectedMixin {
 
   Member<SVGElement> context_element_;
   const QualifiedName& attribute_name_;
+};
+
+template <typename T>
+struct ThreadingTrait<
+    T,
+    std::enable_if_t<std::is_base_of_v<SVGAnimatedPropertyBase, T>>> {
+  static constexpr ThreadAffinity kAffinity = kMainThreadOnly;
 };
 
 template <typename Property>
@@ -222,7 +228,6 @@ class SVGAnimatedProperty : public SVGAnimatedPropertyCommon<Property> {
   }
 
   PrimitiveType animVal() {
-    this->EnsureAnimValUpdated();
     return this->CurrentValue()->Value();
   }
 

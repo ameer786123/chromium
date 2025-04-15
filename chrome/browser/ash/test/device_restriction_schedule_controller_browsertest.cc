@@ -36,7 +36,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
-#include "ui/strings/grit/ui_strings.h"
 
 namespace policy {
 
@@ -244,14 +243,19 @@ IN_PROC_BROWSER_TEST_F(DeviceRestrictionScheduleControllerTest,
   ash::OobeScreenWaiter(ash::DeviceDisabledScreenView::kScreenId).Wait();
 
   OobeJS().ExpectElementContainsText(
-      l10n_util::GetStringUTF8(IDS_TIME_TOMORROW), kBannerContents);
+      l10n_util::GetStringUTF8(
+          IDS_DEVICE_DISABLED_EXPLANATION_RESTRICTION_SCHEDULE_TOMORROW),
+      kBannerContents);
 
-  // Update the time to tomorrow and fire the mock timer.
-  test_clock.Advance(base::Days(1));
+  // Update the time to tomorrow and fire the mock timer (+6 hours to avoid any
+  // DST issues).
+  test_clock.Advance(base::Days(1) + base::Hours(6));
   mock_timer->FireNow();
 
   OobeJS().ExpectElementContainsText(
-      l10n_util::GetStringUTF8(IDS_PAST_TIME_TODAY), kBannerContents);
+      l10n_util::GetStringUTF8(
+          IDS_DEVICE_DISABLED_EXPLANATION_RESTRICTION_SCHEDULE_TODAY),
+      kBannerContents);
 
   // Reset the clocks back.
   SetClocks(*base::DefaultClock::GetInstance());

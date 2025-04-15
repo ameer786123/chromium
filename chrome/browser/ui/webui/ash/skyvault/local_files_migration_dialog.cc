@@ -24,26 +24,26 @@
 namespace policy::local_user_files {
 
 // Dialog size.
-constexpr gfx::Size kDialogSize{448, 360};
+constexpr gfx::Size kUploadDialogSize{448, 360};
+constexpr gfx::Size kDeleteDialogSize{448, 280};
 
 // static
-bool LocalFilesMigrationDialog::Show(CloudProvider cloud_provider,
+bool LocalFilesMigrationDialog::Show(MigrationDestination destination,
                                      base::Time migration_start_time,
                                      base::OnceClosure migration_callback) {
   ash::SystemWebDialogDelegate* existing_dialog =
       SystemWebDialogDelegate::FindInstance(
           chrome::kChromeUILocalFilesMigrationURL);
+  // TODO(368242690): Returning bool isn't needed now that we show a new dialog.
   if (existing_dialog) {
-    // TODO(crbug.com/368242690): Better handling for re-showing a dialog.
-    existing_dialog->StackAtTop();
-    SkyVaultMigrationDialogShownHistogram(cloud_provider, false);
-    return false;
+    existing_dialog->Close();
   }
   // This pointer is deleted in `SystemWebDialogDelegate::OnDialogClosed`.
   LocalFilesMigrationDialog* dialog = new LocalFilesMigrationDialog(
-      cloud_provider, migration_start_time, std::move(migration_callback));
+      destination, migration_start_time, std::move(migration_callback));
   dialog->ShowSystemDialog();
-  SkyVaultMigrationDialogShownHistogram(cloud_provider, true);
+  dialog->StackAtTop();
+  SkyVaultMigrationDialogShownHistogram(destination, true);
   return true;
 }
 
@@ -56,15 +56,17 @@ LocalFilesMigrationDialog* LocalFilesMigrationDialog::GetDialog() {
 }
 
 LocalFilesMigrationDialog::LocalFilesMigrationDialog(
-    CloudProvider cloud_provider,
+    MigrationDestination destination,
     base::Time migration_start_time,
     base::OnceClosure migration_callback)
     : SystemWebDialogDelegate(GURL(chrome::kChromeUILocalFilesMigrationURL),
                               /*title=*/std::u16string()),
-      cloud_provider_(cloud_provider),
+      destination_(destination),
       migration_start_time_(std::move(migration_start_time)),
       migration_callback_(std::move(migration_callback)) {
-  set_dialog_size(kDialogSize);
+  set_dialog_size(destination == MigrationDestination::kDelete
+                      ? kDeleteDialogSize
+                      : kUploadDialogSize);
 
   // This callback runs just before destroying this instance.
   RegisterOnDialogClosedCallback(
@@ -83,7 +85,7 @@ void LocalFilesMigrationDialog::OnDialogShown(content::WebUI* webui) {
   CHECK(migration_callback_);
   SystemWebDialogDelegate::OnDialogShown(webui);
   static_cast<LocalFilesMigrationUI*>(webui->GetController())
-      ->SetInitialDialogInfo(cloud_provider_, migration_start_time_);
+      ->SetInitialDialogInfo(destination_, migration_start_time_);
 }
 
 bool LocalFilesMigrationDialog::ShouldShowCloseButton() const {
@@ -99,7 +101,8 @@ void LocalFilesMigrationDialog::ProcessDialogClosing(
   // If closed because user clicked on "Upload now", start the migration.
   if (ret_value == kStartMigration) {
     if (!migration_callback_) {
-      LOG(ERROR) << "Upload now clicked, but migration callback is empty!";
+      LOG(ERROR)
+          << "Upload/Delete now clicked, but migration callback is empty!";
       return;
     }
     std::move(migration_callback_).Run();

@@ -145,6 +145,7 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
     _activityIndicatorColor = [UIColor colorNamed:kSolidWhiteColor];
     _confirmationButtonColor = [UIColor colorNamed:kBlue100Color];
     _confirmationCheckmarkColor = [UIColor colorNamed:kBlue700Color];
+    _imageBackgroundColor = [UIColor colorNamed:kBackgroundColor];
   }
   return self;
 }
@@ -180,8 +181,8 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
   }
 
   if (self.titleString.length) {
-    UILabel* title = [self createTitleLabel];
-    [stackSubviews addObject:title];
+    self.titleLabel = [self createTitleLabel];
+    [stackSubviews addObject:self.titleLabel];
   }
 
   if (self.secondaryTitleString.length) {
@@ -385,8 +386,8 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
 
   if (@available(iOS 17, *)) {
     NSArray<UITrait>* traits = @[
-      UITraitPreferredContentSizeCategory.self, UITraitHorizontalSizeClass.self,
-      UITraitVerticalSizeClass.self
+      UITraitPreferredContentSizeCategory.class,
+      UITraitHorizontalSizeClass.class, UITraitVerticalSizeClass.class
     ];
     auto* __weak weakSelf = self;
     id handler = ^(id<UITraitEnvironment> traitEnvironment,
@@ -537,8 +538,9 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
   // Make sure detent is not larger than 75% of the maximum detent value but at
   // least as large as a standard medium detent.
   height = MIN(height, 0.75 * context.maximumDetentValue);
-  CGFloat mediumDetentHeight = [UISheetPresentationControllerDetent.mediumDetent
-      resolvedValueInContext:context];
+  CGFloat mediumDetentHeight =
+      [[UISheetPresentationControllerDetent mediumDetent]
+          resolvedValueInContext:context];
   height = MAX(height, mediumDetentHeight);
   return height;
 }
@@ -677,7 +679,7 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
 
   UIView* frameView = [[UIView alloc] init];
   frameView.translatesAutoresizingMaskIntoConstraints = NO;
-  frameView.backgroundColor = [UIColor colorNamed:kBackgroundColor];
+  frameView.backgroundColor = _imageBackgroundColor;
   frameView.layer.cornerRadius = kFaviconCornerRadius;
   frameView.layer.shadowOffset =
       CGSizeMake(kFaviconShadowOffsetX, kFaviconShadowOffsetY);
@@ -792,7 +794,8 @@ UIImage* DefaultCheckmarkCircleFillSymbol(CGFloat point_size) {
   UITextView* subtitle = [self createTextView];
   subtitle.font = [UIFont preferredFontForTextStyle:self.subtitleTextStyle];
   subtitle.text = self.subtitleString;
-  subtitle.textColor = [UIColor colorNamed:kTextSecondaryColor];
+  subtitle.textColor =
+      self.subtitleTextColor ?: [UIColor colorNamed:kTextSecondaryColor];
   subtitle.accessibilityIdentifier =
       kConfirmationAlertSubtitleAccessibilityIdentifier;
   [self customizeSubtitle:subtitle];

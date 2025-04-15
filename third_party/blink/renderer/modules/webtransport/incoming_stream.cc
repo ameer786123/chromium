@@ -197,7 +197,7 @@ void IncomingStream::ProcessClose() {
   if (fin_received_.value()) {
     ScriptState::Scope scope(script_state_);
     // Ignore exception because stream will be errored soon.
-    CloseAbortAndReset(IGNORE_EXCEPTION);
+    CloseAbortAndReset(IgnoreException(script_state_->GetIsolate()));
   }
 
   ScriptValue error;
@@ -267,8 +267,7 @@ void IncomingStream::ReadFromPipeAndEnqueue(ExceptionState& exception_state) {
       return;
 
     default:
-      NOTREACHED_IN_MIGRATION() << "Unexpected result: " << result;
-      return;
+      NOTREACHED() << "Unexpected result: " << result;
   }
 }
 

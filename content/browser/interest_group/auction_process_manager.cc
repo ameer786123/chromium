@@ -13,6 +13,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -24,6 +25,8 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/browser/interest_group/interest_group_features.h"
+#include "content/browser/interest_group/trusted_signals_cache_impl.h"
+#include "content/browser/site_instance_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/render_frame_host.h"
@@ -50,6 +53,11 @@ void RecordRequestWorkletServiceOutcomeUMA(
                         : "Buyer.",
                     "RequestWorkletServiceOutcome"}),
       result);
+}
+
+void RecordIdleProcessExpiredUma(bool result) {
+  base::UmaHistogramBoolean("Ads.InterestGroup.Auction.IdleProcessExpired",
+                            result);
 }
 }  // namespace
 
@@ -93,9 +101,10 @@ AuctionProcessManager::WorkletProcess::WorkletProcess(
     remove_idle_process_from_manager_timer_.Start(
         FROM_HERE,
         features::kFledgeStartAnticipatoryProcessExpirationTime.Get(),
-        base::BindOnce(&WorkletProcess::RemoveFromProcessManager,
-                       base::Unretained(this),
-                       /*on_destruction=*/false));
+        base::BindOnce(&RecordIdleProcessExpiredUma, true)
+            .Then(base::BindOnce(&WorkletProcess::RemoveFromProcessManager,
+                                 base::Unretained(this),
+                                 /*on_destruction=*/false)));
   }
 }
 
@@ -155,14 +164,12 @@ void AuctionProcessManager::WorkletProcess::ActivateAndBindIfUnbound(
     CHECK_EQ(origin, origin_);
   } else {
     ReassignWorkletTypeAndOrigin(worklet_type, origin);
+    is_bound_to_origin_ = true;
+    OnBoundToOrigin();
   }
   is_idle_ = false;
-  is_bound_to_origin_ = true;
+  RecordIdleProcessExpiredUma(false);
   remove_idle_process_from_manager_timer_.Stop();
-}
-
-std::string AuctionProcessManager::WorkletProcess::ComputeDisplayName() const {
-  return AuctionProcessManager::ComputeDisplayName(worklet_type_, origin_);
 }
 
 void AuctionProcessManager::WorkletProcess::SetService(
@@ -188,6 +195,10 @@ void AuctionProcessManager::WorkletProcess::SetService(
       DCHECK(render_process_host_->GetProcess().IsValid());
       pid_ = render_process_host_->GetProcess().Pid();
     }
+  }
+
+  if (is_bound_to_origin_) {
+    OnBoundToOrigin();
   }
 }
 
@@ -235,6 +246,22 @@ void AuctionProcessManager::WorkletProcess::RemoveFromProcessManager(
 
 AuctionProcessManager::WorkletProcess::~WorkletProcess() {
   RemoveFromProcessManager(/*on_destruction=*/true);
+}
+
+void AuctionProcessManager::WorkletProcess::OnBoundToOrigin() {
+  DCHECK(is_bound_to_origin_);
+
+  // If the TrustedSignalsCache exists (and thus is enabled), pass a pipe to
+  // for KVv2 bidding signals fetches.
+  auto* trusted_signals_cache =
+      auction_process_manager_->trusted_signals_cache_.get();
+  if (trusted_signals_cache) {
+    service_->SetTrustedSignalsCache(trusted_signals_cache->CreateRemote(
+        worklet_type_ == WorkletType::kBidder
+            ? TrustedSignalsCacheImpl::SignalsType::kBidding
+            : TrustedSignalsCacheImpl::SignalsType::kScoring,
+        origin_));
+  }
 }
 
 AuctionProcessManager::ProcessHandle::ProcessHandle() = default;
@@ -552,22 +579,9 @@ bool AuctionProcessManager::TryToUseIdleProcessForHandle(
   return true;
 }
 
-AuctionProcessManager::AuctionProcessManager() = default;
-
-std::string AuctionProcessManager::ComputeDisplayName(
-    WorkletType worklet_type,
-    const url::Origin& origin) {
-  // Use origin and whether it's a buyer/seller in display in task manager,
-  // though admittedly, worklet processes should hopefully not be around too
-  // long.
-  std::string display_name;
-  if (worklet_type == WorkletType::kBidder) {
-    display_name = "Auction Bidder Worklet: ";
-  } else {
-    display_name = "Auction Seller Worklet: ";
-  }
-  return display_name + origin.Serialize();
-}
+AuctionProcessManager::AuctionProcessManager::AuctionProcessManager(
+    TrustedSignalsCacheImpl* trusted_signals_cache)
+    : trusted_signals_cache_(trusted_signals_cache) {}
 
 void AuctionProcessManager::RemovePendingProcessHandle(
     ProcessHandle* process_handle) {
@@ -701,7 +715,10 @@ bool AuctionProcessManager::HasAvailableProcessSlotForIdleProcess(
          kMaxSellerProcesses;
 }
 
-DedicatedAuctionProcessManager::DedicatedAuctionProcessManager() = default;
+DedicatedAuctionProcessManager::DedicatedAuctionProcessManager(
+    TrustedSignalsCacheImpl* trusted_signals_cache)
+    : AuctionProcessManager(trusted_signals_cache) {}
+
 DedicatedAuctionProcessManager::~DedicatedAuctionProcessManager() = default;
 
 AuctionProcessManager::WorkletProcess::ProcessContext
@@ -711,7 +728,7 @@ DedicatedAuctionProcessManager::CreateProcessInternal(
   content::ServiceProcessHost::Launch(
       service.InitWithNewPipeAndPassReceiver(),
       ServiceProcessHost::Options()
-          .WithDisplayName(worklet_process.ComputeDisplayName())
+          .WithDisplayName("Protected Audience JavaScript Process")
 #if BUILDFLAG(IS_MAC)
           // TODO(crbug.com/40812055) add a utility helper for Jit.
           .WithChildFlags(ChildProcessHost::CHILD_RENDERER)
@@ -751,7 +768,10 @@ bool DedicatedAuctionProcessManager::TryUseSharedProcess(
   return false;
 }
 
-InRendererAuctionProcessManager::InRendererAuctionProcessManager() = default;
+InRendererAuctionProcessManager::InRendererAuctionProcessManager(
+    TrustedSignalsCacheImpl* trusted_signals_cache)
+    : AuctionProcessManager(trusted_signals_cache) {}
+
 InRendererAuctionProcessManager::~InRendererAuctionProcessManager() = default;
 
 AuctionProcessManager::WorkletProcess::ProcessContext
@@ -771,7 +791,10 @@ InRendererAuctionProcessManager::CreateProcessInternal(
   }
 
   mojo::PendingRemote<auction_worklet::mojom::AuctionWorkletService> service;
-  site_instance->GetProcess()->Init();
+  static_cast<SiteInstanceImpl*>(site_instance)
+      ->GetOrCreateProcess(ProcessAllocationContext{
+          ProcessAllocationSource::kAuctionProcessManager})
+      ->Init();
   site_instance->GetProcess()->BindReceiver(
       service.InitWithNewPipeAndPassReceiver());
   return WorkletProcess::ProcessContext(std::move(service),

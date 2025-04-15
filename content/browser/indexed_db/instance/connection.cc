@@ -4,21 +4,44 @@
 
 #include "content/browser/indexed_db/instance/connection.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
-#include "base/functional/bind.h"
-#include "base/functional/callback_helpers.h"
+#include "base/check.h"
+#include "base/check_op.h"
+#include "base/feature_list.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
+#include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/sequence_checker.h"
+#include "base/stl_util.h"
+#include "base/time/time.h"
 #include "base/trace_event/base_tracing.h"
+#include "base/unguessable_token.h"
+#include "components/services/storage/indexed_db/locks/partitioned_lock_id.h"
+#include "components/services/storage/indexed_db/locks/partitioned_lock_manager.h"
 #include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom.h"
+#include "content/browser/indexed_db/instance/backing_store.h"
 #include "content/browser/indexed_db/instance/callback_helpers.h"
 #include "content/browser/indexed_db/instance/cursor.h"
 #include "content/browser/indexed_db/instance/database_callbacks.h"
 #include "content/browser/indexed_db/instance/lock_request_data.h"
 #include "content/browser/indexed_db/instance/transaction.h"
+#include "content/browser/indexed_db/status.h"
 #include "content/public/common/content_features.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "mojo/public/cpp/bindings/message.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
@@ -94,12 +117,13 @@ bool Connection::IsConnected() const {
 Transaction* Connection::CreateVersionChangeTransaction(
     int64_t id,
     const std::set<int64_t>& scope,
-    BackingStore::Transaction* backing_store_transaction) {
+    std::unique_ptr<BackingStore::Transaction> backing_store_transaction) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_EQ(GetTransaction(id), nullptr) << "Duplicate transaction id." << id;
   return (transactions_[id] = std::make_unique<Transaction>(
               id, this, scope, blink::mojom::IDBTransactionMode::VersionChange,
-              bucket_context_handle_, backing_store_transaction))
+              blink::mojom::IDBTransactionDurability::Strict,
+              bucket_context_handle_, std::move(backing_store_transaction)))
       .get();
 }
 
@@ -113,24 +137,49 @@ void Connection::DisallowInactiveClient(
     return;
   }
 
-  if (reason ==
-      storage::mojom::DisallowInactiveClientReason::kVersionChangeEvent) {
-    // It's only necessary to keep the client active under this scenario.
-    mojo::Remote<storage::mojom::IndexedDBClientKeepActive>
-        client_keep_active_remote;
-    client_state_checker_->DisallowInactiveClient(
-        reason, client_keep_active_remote.BindNewPipeAndPassReceiver(),
-        std::move(callback));
-    client_keep_active_remotes_.Add(std::move(client_keep_active_remote));
-  } else {
-    client_state_checker_->DisallowInactiveClient(reason, mojo::NullReceiver(),
-                                                  std::move(callback));
-  }
+  mojo::Remote<storage::mojom::IndexedDBClientKeepActive>
+      client_keep_active_remote;
+  client_state_checker_->DisallowInactiveClient(
+      reason, client_keep_active_remote.BindNewPipeAndPassReceiver(),
+      std::move(callback));
+  client_keep_active_remotes_.Add(std::move(client_keep_active_remote));
 }
 
 void Connection::RemoveTransaction(int64_t id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  transactions_.erase(id);
+
+  size_t removed = transactions_.erase(id);
+  if (!removed) {
+    return;
+  }
+
+  base::TimeTicks start = base::TimeTicks::Now();
+  bool can_go_inactive = true;
+
+  // If this client is still blocking other clients, leave the keep-actives
+  // alive.
+  for (const auto& [_, transaction] : transactions_) {
+    if (transaction->state() == Transaction::State::STARTED &&
+        transaction->IsTransactionBlockingOtherClients(
+            /*consider_priority=*/true)) {
+      can_go_inactive = false;
+      break;
+    }
+  }
+  base::TimeDelta duration = base::TimeTicks::Now() - start;
+  if (duration > base::Milliseconds(2)) {
+    base::UmaHistogramTimes("IndexedDB.RemoveTransactionLongTimes", duration);
+    base::UmaHistogramCounts100000(
+        "IndexedDB.RemoveTransactionRequestQueueSize",
+        bucket_context_handle_->lock_manager().RequestsWaitingForMetrics());
+    base::UmaHistogramCounts100000(
+        "IndexedDB.RemoveTransactionConnectionTxnCount", transactions_.size());
+  }
+
+  // Safe to make this client inactive.
+  if (can_go_inactive) {
+    client_keep_active_remotes_.Clear();
+  }
 }
 
 void Connection::AbortTransactionAndTearDownOnError(
@@ -224,12 +273,11 @@ void Connection::CreateTransaction(
   }
 
   std::set<int64_t> scope(object_store_ids.begin(), object_store_ids.end());
-  BackingStore::Transaction* backing_store_transaction =
-      database_->backing_store()->CreateTransaction(durability, mode).release();
   Transaction* transaction =
       (transactions_[transaction_id] = std::make_unique<Transaction>(
-           transaction_id, this, std::move(scope), mode, bucket_context_handle_,
-           backing_store_transaction))
+           transaction_id, this, std::move(scope), mode, durability,
+           bucket_context_handle_,
+           database_->backing_store()->CreateTransaction(durability, mode)))
           .get();
 
   transaction->BindReceiver(std::move(transaction_receiver));
@@ -295,8 +343,9 @@ void Connection::GetAll(int64_t transaction_id,
                         int64_t object_store_id,
                         int64_t index_id,
                         const IndexedDBKeyRange& key_range,
-                        bool key_only,
+                        blink::mojom::IDBGetAllResultType result_type,
                         int64_t max_count,
+                        blink::mojom::IDBCursorDirection direction,
                         blink::mojom::IDBDatabase::GetAllCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -337,9 +386,7 @@ void Connection::GetAll(int64_t transaction_id,
 
   transaction->ScheduleTask(database_->CreateGetAllOperation(
       object_store_id, index_id, std::make_unique<IndexedDBKeyRange>(key_range),
-      key_only ? indexed_db::CursorType::kKeyOnly
-               : indexed_db::CursorType::kKeyAndValue,
-      max_count, std::move(callback), transaction));
+      result_type, max_count, direction, std::move(callback), transaction));
 }
 
 void Connection::SetIndexKeys(
@@ -749,6 +796,11 @@ void Connection::UpdatePriority(int new_priority) {
     transaction->OnSchedulingPriorityUpdated(new_priority);
   }
 
+  // Null after `AbortTransactionsAndClose()`.
+  if (bucket_context()) {
+    bucket_context()->OnConnectionPriorityUpdated();
+  }
+
   // TODO(crbug.com/359623664): consider reordering transactions already in the
   // queue. For now the priority change will only impact where new transactions
   // are placed (whether they skip past the existing ones).
@@ -868,6 +920,18 @@ bool Connection::HasHigherPriorityThan(const PartitionedLockHolder* this_one,
 
   return this_lock_request_data->scheduling_priority <
          other_lock_request_data->scheduling_priority;
+}
+
+bool Connection::IsHoldingLocks(
+    const std::vector<PartitionedLockId>& lock_ids) const {
+  return std::ranges::any_of(
+      transactions_,
+      [&](const std::pair<const int64_t, std::unique_ptr<Transaction>>&
+              existing_transaction) {
+        return !base::STLSetIntersection<std::vector<PartitionedLockId>>(
+                    lock_ids, existing_transaction.second->lock_ids())
+                    .empty();
+      });
 }
 
 }  // namespace content::indexed_db

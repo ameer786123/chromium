@@ -14,8 +14,8 @@
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/scoped_observation.h"
-#include "components/autofill/core/browser/autofill_plus_address_delegate.h"
-#include "components/autofill/core/browser/password_form_classification.h"
+#include "components/autofill/core/browser/integrators/password_form_classification.h"
+#include "components/autofill/core/browser/integrators/plus_addresses/autofill_plus_address_delegate.h"
 #include "components/plus_addresses/affiliations/plus_address_affiliation_match_helper.h"
 #include "components/plus_addresses/metrics/plus_address_submission_logger.h"
 #include "components/plus_addresses/plus_address_cache.h"
@@ -54,8 +54,7 @@ class PlusAddressSettingService;
 // Not intended for widespread use.
 class PlusAddressServiceImpl : public PlusAddressService,
                                public signin::IdentityManager::Observer,
-                               public PlusAddressWebDataService::Observer,
-                               public WebDataServiceConsumer {
+                               public PlusAddressWebDataService::Observer {
  public:
   using FeatureEnabledForProfileCheck =
       base::RepeatingCallback<bool(const base::Feature&)>;
@@ -72,8 +71,11 @@ class PlusAddressServiceImpl : public PlusAddressService,
 
   // autofill::AutofillPlusAddressDelegate:
   bool IsPlusAddress(const std::string& potential_plus_address) const override;
+  bool MatchesPlusAddressFormat(const std::u16string& value) const override;
   bool IsPlusAddressFillingEnabled(const url::Origin& origin) const override;
   bool IsPlusAddressFullFormFillingEnabled() const override;
+  bool IsFieldEligibleForPlusAddress(
+      const autofill::AutofillField& field) const override;
   void GetAffiliatedPlusAddresses(
       const url::Origin& origin,
       base::OnceCallback<void(std::vector<std::string>)> callback) override;
@@ -82,10 +84,10 @@ class PlusAddressServiceImpl : public PlusAddressService,
       const url::Origin& origin,
       bool is_off_the_record,
       const autofill::FormData& focused_form,
+      const autofill::FormFieldData& focused_field,
       const base::flat_map<autofill::FieldGlobalId, autofill::FieldTypeGroup>&
           form_field_type_groups,
       const autofill::PasswordFormClassification& focused_form_classification,
-      const autofill::FieldGlobalId& focused_field_id,
       autofill::AutofillSuggestionTriggerSource trigger_source) override;
   autofill::Suggestion GetManagePlusAddressSuggestion() const override;
   void RecordAutofillSuggestionEvent(SuggestionEvent suggestion_event) override;
@@ -96,6 +98,8 @@ class PlusAddressServiceImpl : public PlusAddressService,
       SuggestionContext suggestion_context,
       autofill::PasswordFormClassification::Type form_type,
       autofill::SuggestionType suggestion_type) override;
+  void DidFillPlusAddress() override;
+  size_t GetPlusAddressesCount() override;
   void OnClickedRefreshInlineSuggestion(
       const url::Origin& last_committed_primary_main_frame_origin,
       base::span<const autofill::Suggestion> current_suggestions,
@@ -115,15 +119,14 @@ class PlusAddressServiceImpl : public PlusAddressService,
       ShowAffiliationErrorDialogCallback show_affiliation_error_dialog,
       ShowErrorDialogCallback show_error_dialog,
       base::OnceClosure reshow_suggestions) override;
+  std::map<std::string, std::string> GetPlusAddressHatsData() const override;
 
   // PlusAddressWebDataService::Observer:
   void OnWebDataChangedBySync(
       const std::vector<PlusAddressDataChange>& changes) override;
 
-  // WebDataServiceConsumer:
-  void OnWebDataServiceRequestDone(
-      WebDataServiceBase::Handle handle,
-      std::unique_ptr<WDTypedResult> result) override;
+  void OnWebDataServiceRequestDone(WebDataServiceBase::Handle handle,
+                                   std::unique_ptr<WDTypedResult> result);
 
   // PlusAddressService:
   void AddObserver(PlusAddressService::Observer* o) override;
@@ -169,8 +172,8 @@ class PlusAddressServiceImpl : public PlusAddressService,
       const PlusProfileOrError& maybe_profile);
 
   // Checks whether the `origin` supports plus address.
-  // Returns `true` when origin is not opaque, not excluded, and scheme is http
-  // or https.
+  // Returns `true` when origin is not opaque, not excluded, and scheme is
+  // http or https.
   bool IsSupportedOrigin(const url::Origin& origin) const;
 
   // Reacts to the server response for confirming a plus address from an inline
@@ -232,7 +235,7 @@ class PlusAddressServiceImpl : public PlusAddressService,
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<PlusAddressServiceImpl> weak_factory_{this};
+  base::WeakPtrFactory<PlusAddressServiceImpl> weak_ptr_factory_{this};
 };
 
 }  // namespace plus_addresses

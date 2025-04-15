@@ -15,6 +15,7 @@
 #include "base/time/time.h"
 #include "base/tuple.h"
 #include "components/commerce/core/proto/parcel.pb.h"
+#include "components/commerce/core/proto/price_tracking.pb.h"
 #include "components/commerce/core/proto/product_category.pb.h"
 #include "url/gurl.h"
 
@@ -35,16 +36,22 @@ enum class DiscountClusterType {
   kPageLevel = 2,
   kMaxValue = kPageLevel,
 };
-// LINT.ThenChange(/tools/metrics/histograms/enums.xml:DiscountClusterType)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/commerce/enums.xml:DiscountClusterType)
 
 // Discount types.
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.commerce.core
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(DiscountType)
 enum class DiscountType {
   kUnspecified = 0,
   kFreeListingWithCode = 1,
-  kMaxValue = kFreeListingWithCode,
+  kCrawledPromotion = 2,
+  kMaxValue = kCrawledPromotion,
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/commerce/enums.xml:DiscountType)
 
 // Information returned by the discount APIs.
 struct DiscountInfo {
@@ -62,7 +69,7 @@ struct DiscountInfo {
   std::optional<std::string> discount_code;
   uint64_t id = 0;
   bool is_merchant_wide = false;
-  double expiry_time_sec = 0;
+  std::optional<double> expiry_time_sec;
   uint64_t offer_id = 0;
 };
 
@@ -131,6 +138,9 @@ struct ProductInfo {
   std::optional<int64_t> previous_amount_micros;
   std::string country_code;
   CategoryData category_data;
+  std::optional<BuyableProduct_PriceDisplayRecommendation>
+      price_display_recommendation;
+  std::vector<PriceSummary> price_summary;
 
  private:
   friend class ShoppingService;
@@ -148,7 +158,8 @@ struct UrlInfo {
   UrlInfo(const GURL& url,
           const std::u16string& title,
           const std::optional<GURL> favicon_url = std::nullopt,
-          const std::optional<GURL> thumbnail_url = std::nullopt);
+          const std::optional<GURL> thumbnail_url = std::nullopt,
+          const std::optional<std::string> previewText = std::nullopt);
   UrlInfo(const UrlInfo&);
   UrlInfo& operator=(const UrlInfo&);
   bool operator==(const UrlInfo& other) const {
@@ -160,6 +171,7 @@ struct UrlInfo {
   std::u16string title;
   std::optional<GURL> favicon_url;
   std::optional<GURL> thumbnail_url;
+  std::optional<std::string> previewText;
 };
 
 // Information provided by the product specifications backend.
@@ -238,22 +250,6 @@ struct ProductSpecifications {
   std::vector<Product> products;
 };
 
-// Information returned by Parcels API.
-struct ParcelTrackingStatus {
- public:
-  ParcelTrackingStatus();
-  explicit ParcelTrackingStatus(const ParcelStatus&);
-  ParcelTrackingStatus(const ParcelTrackingStatus&);
-  ParcelTrackingStatus& operator=(const ParcelTrackingStatus&);
-  ~ParcelTrackingStatus();
-
-  ParcelIdentifier::Carrier carrier = ParcelIdentifier::UNKNOWN;
-  std::string tracking_id;
-  ParcelStatus::ParcelState state = ParcelStatus::UNKNOWN;
-  GURL tracking_url;
-  std::optional<base::Time> estimated_delivery_time;
-};
-
 // Class representing the tap strip entry point.
 struct EntryPointInfo {
   EntryPointInfo(const std::string& title,
@@ -282,14 +278,13 @@ using PriceInsightsInfoCallback =
 using ProductInfoCallback =
     base::OnceCallback<void(const GURL&,
                             const std::optional<const ProductInfo>&)>;
+using ProductInfoBatchCallback =
+    base::OnceCallback<void(const std::map<GURL, std::optional<ProductInfo>>)>;
 using ProductSpecificationsCallback =
     base::OnceCallback<void(std::vector<uint64_t>,
                             std::optional<ProductSpecifications>)>;
 using IsShoppingPageCallback =
     base::OnceCallback<void(const GURL&, std::optional<bool>)>;
-using GetParcelStatusCallback = base::OnceCallback<
-    void(bool /*success*/, std::unique_ptr<std::vector<ParcelTrackingStatus>>)>;
-using StopParcelTrackingCallback = base::OnceCallback<void(bool /*success*/)>;
 }  // namespace commerce
 
 #endif  // COMPONENTS_COMMERCE_CORE_COMMERCE_TYPES_H_

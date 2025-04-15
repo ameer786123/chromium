@@ -16,18 +16,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.blink.mojom.DisplayMode;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.customtabs.BaseCustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CloseButtonVisibilityManager;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
 import org.chromium.chrome.browser.customtabs.content.TabObserverRegistrar;
@@ -42,22 +43,19 @@ import org.chromium.components.security_state.SecurityStateModelJni;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TrustedWebActivityBrowserControlsVisibilityManagerTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock public TabObserverRegistrar mTabObserverRegistrar;
     @Mock public CustomTabActivityTabProvider mTabProvider;
     @Mock public Tab mTab;
     @Mock SecurityStateModel.Natives mSecurityStateMocks;
     @Mock public CustomTabToolbarCoordinator mToolbarCoordinator;
     @Mock public CloseButtonVisibilityManager mCloseButtonVisibilityManager;
-    @Mock public BaseCustomTabActivity mActivity;
 
     @Mock TrustedWebActivityBrowserControlsVisibilityManager mController;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        SecurityStateModelJni.TEST_HOOKS.setInstanceForTesting(mSecurityStateMocks);
-        when(mActivity.getCustomTabActivityTabProvider()).thenReturn(mTabProvider);
-        when(mActivity.getTabObserverRegistrar()).thenReturn(mTabObserverRegistrar);
+        SecurityStateModelJni.setInstanceForTesting(mSecurityStateMocks);
         when(mTabProvider.getTab()).thenReturn(mTab);
         doReturn(Tab.INVALID_TAB_ID).when(mTab).getParentId();
         setTabSecurityLevel(ConnectionSecurityLevel.NONE);
@@ -139,7 +137,8 @@ public class TrustedWebActivityBrowserControlsVisibilityManagerTest {
             BrowserServicesIntentDataProvider intentDataProvider) {
         return spy(
                 new TrustedWebActivityBrowserControlsVisibilityManager(
-                        mActivity,
+                        mTabObserverRegistrar,
+                        mTabProvider,
                         mToolbarCoordinator,
                         mCloseButtonVisibilityManager,
                         intentDataProvider));

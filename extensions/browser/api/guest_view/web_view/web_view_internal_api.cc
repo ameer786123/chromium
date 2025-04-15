@@ -26,6 +26,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/stop_find_action.h"
+#include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/guest_view/web_view/controlled_frame_embedder_url_fetcher.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
@@ -33,9 +34,9 @@
 #include "extensions/common/api/web_view_internal.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/mojom/match_origin_as_fallback.mojom-shared.h"
 #include "extensions/common/mojom/run_location.mojom-shared.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "extensions/common/script_constants.h"
 #include "extensions/common/user_script.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -53,15 +54,15 @@ namespace web_view_internal = extensions::api::web_view_internal;
 
 namespace {
 
-const char kCacheKey[] = "cache";
-const char kCookiesKey[] = "cookies";
-const char kSessionCookiesKey[] = "sessionCookies";
-const char kPersistentCookiesKey[] = "persistentCookies";
-const char kFileSystemsKey[] = "fileSystems";
-const char kIndexedDBKey[] = "indexedDB";
-const char kLocalStorageKey[] = "localStorage";
-const char kWebSQLKey[] = "webSQL";
-const char kSinceKey[] = "since";
+constexpr std::string_view kCacheKey = "cache";
+constexpr std::string_view kCookiesKey = "cookies";
+constexpr std::string_view kSessionCookiesKey = "sessionCookies";
+constexpr std::string_view kPersistentCookiesKey = "persistentCookies";
+constexpr std::string_view kFileSystemsKey = "fileSystems";
+constexpr std::string_view kIndexedDBKey = "indexedDB";
+constexpr std::string_view kLocalStorageKey = "localStorage";
+constexpr std::string_view kWebSQLKey = "webSQL";
+constexpr std::string_view kSinceKey = "since";
 const char kLoadFileError[] = "Failed to load file: \"*\". ";
 const char kHostIDError[] = "Failed to generate HostID.";
 const char kViewInstanceIdError[] = "view_instance_id is missing.";
@@ -70,23 +71,31 @@ const char kDuplicatedContentScriptNamesError[] =
 
 const char kGeneratedScriptFilePrefix[] = "generated_script_file:";
 
-uint32_t MaskForKey(const char* key) {
-  if (strcmp(key, kCacheKey) == 0)
+uint32_t MaskForKey(std::string_view key) {
+  if (key == kCacheKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_CACHE;
-  if (strcmp(key, kSessionCookiesKey) == 0)
+  }
+  if (key == kSessionCookiesKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_SESSION_COOKIES;
-  if (strcmp(key, kPersistentCookiesKey) == 0)
+  }
+  if (key == kPersistentCookiesKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_PERSISTENT_COOKIES;
-  if (strcmp(key, kCookiesKey) == 0)
+  }
+  if (key == kCookiesKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_COOKIES;
-  if (strcmp(key, kFileSystemsKey) == 0)
+  }
+  if (key == kFileSystemsKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_FILE_SYSTEMS;
-  if (strcmp(key, kIndexedDBKey) == 0)
+  }
+  if (key == kIndexedDBKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_INDEXEDDB;
-  if (strcmp(key, kLocalStorageKey) == 0)
+  }
+  if (key == kLocalStorageKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_LOCAL_STORAGE;
-  if (strcmp(key, kWebSQLKey) == 0)
+  }
+  if (key == kWebSQLKey) {
     return webview::WEB_VIEW_REMOVE_DATA_MASK_WEBSQL;
+  }
   return 0;
 }
 
@@ -213,9 +222,9 @@ std::unique_ptr<extensions::UserScript> ParseContentScript(
   if (script_value.match_about_blank) {
     script->set_match_origin_as_fallback(
         *script_value.match_about_blank
-            ? extensions::MatchOriginAsFallbackBehavior::
+            ? extensions::mojom::MatchOriginAsFallbackBehavior::
                   kMatchForAboutSchemeAndClimbTree
-            : extensions::MatchOriginAsFallbackBehavior::kNever);
+            : extensions::mojom::MatchOriginAsFallbackBehavior::kNever);
   }
 
   // css:
@@ -513,6 +522,13 @@ WebViewInternalExecuteCodeFunction::GetScriptExecutor(std::string* error) {
 
 bool WebViewInternalExecuteCodeFunction::IsWebView() const {
   return true;
+}
+
+int WebViewInternalExecuteCodeFunction::GetRootFrameId() const {
+  WebViewGuest* guest =
+      WebViewGuest::FromInstanceID(source_process_id(), guest_instance_id_);
+  CHECK(guest);
+  return ExtensionApiFrameIdMap::GetFrameId(guest->GetGuestMainFrame());
 }
 
 const GURL& WebViewInternalExecuteCodeFunction::GetWebViewSrc() const {
@@ -1138,8 +1154,9 @@ uint32_t WebViewInternalClearDataFunction::GetRemovalMask() {
       bad_message_ = true;
       return 0;
     }
-    if (kv.second.GetBool())
-      remove_mask |= MaskForKey(kv.first.c_str());
+    if (kv.second.GetBool()) {
+      remove_mask |= MaskForKey(kv.first);
+    }
   }
 
   return remove_mask;

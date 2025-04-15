@@ -5,11 +5,13 @@
 #include "chrome/browser/web_applications/web_app_icon_operations.h"
 
 #include <set>
+#include <variant>
 #include <vector>
 
 #include "base/containers/contains.h"
 #include "base/containers/extend.h"
 #include "base/containers/flat_set.h"
+#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/browser/web_applications/web_app_icon_generator.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
@@ -126,7 +128,7 @@ std::vector<IconUrlWithSize> GetHomeTabIcons(
     return urls;
   }
 
-  const auto& home_tab = absl::get<blink::Manifest::HomeTabParams>(
+  const auto& home_tab = std::get<blink::Manifest::HomeTabParams>(
       web_app_info.tab_strip.value().home_tab);
 
   for (const auto& icon : home_tab.icons) {

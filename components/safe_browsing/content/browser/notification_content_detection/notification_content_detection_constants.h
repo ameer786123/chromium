@@ -11,7 +11,17 @@ namespace safe_browsing {
 extern const char kSuspiciousVerdictLabel[];
 
 // Histogram names.
+extern const char kAllowlistCheckLatencyHistogram[];
 extern const char kSuspiciousScoreHistogram[];
+
+// Website setting value key for user's allowlist.
+extern const char kIsAllowlistedByUserKey[];
+
+// MQLS metadata dictionary.
+extern const char kMetadataDictionaryKey[];
+extern const char kMetadataSuspiciousKey[];
+extern const char kMetadataIsOriginOnGlobalCacheListKey[];
+extern const char kMetadataIsOriginAllowlistedByUserKey[];
 
 }  // namespace safe_browsing
 

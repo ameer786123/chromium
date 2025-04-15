@@ -25,14 +25,12 @@ ci.defaults.set(
     os = os.WINDOWS_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
+    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
     main_console_view = "main",
     contact_team_email = "chrome-desktop-engprod@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    experiments = {
-        # crbug.com/355218109
-        "chromium.use_per_builder_build_dir_name": 100,
-    },
     health_spec = health_spec.DEFAULT,
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -130,8 +128,9 @@ ci.builder(
         ],
     ),
     builderless = False,
-    cores = 32,
+    cores = 16,
     os = os.WINDOWS_ANY,
+    ssd = True,
     console_view_entry = consoles.console_view_entry(
         category = "release|builder",
         short_name = "32",
@@ -169,9 +168,9 @@ ci.builder(
             "all",
         ],
     ),
-    builderless = True,
-    cores = 32,
+    cores = 16,
     os = os.WINDOWS_ANY,
+    ssd = True,
     console_view_entry = consoles.console_view_entry(
         category = "debug|builder",
         short_name = "64",
@@ -213,6 +212,12 @@ ci.builder(
             "blink_wpt_tests": targets.remove(
                 reason = "Not enabled on dbg due to resource limits.",
             ),
+            "chrome_wpt_tests": targets.remove(
+                reason = "Not enabled on dbg due to resource limits.",
+            ),
+            "headless_shell_wpt_tests": targets.remove(
+                reason = "Not enabled on dbg due to resource limits.",
+            ),
             "browser_tests": targets.remove(
                 reason = "Disabled due to failing test suites (crbug/40565753)",
             ),
@@ -223,13 +228,6 @@ ci.builder(
                 swarming = targets.swarming(
                     shards = 2,
                 ),
-            ),
-            "content_browsertests": targets.mixin(
-                # crbug.com/868082
-                args = [
-                    "--disable-features=WebRTC-H264WithOpenH264FFmpeg",
-                ],
-                experiment_percentage = 100,
             ),
             "content_shell_crash_test": targets.mixin(
                 # https://crbug.com/861730
@@ -310,8 +308,9 @@ ci.builder(
         ],
     ),
     builderless = False,
-    cores = 32,
+    cores = 16,
     os = os.WINDOWS_ANY,
+    ssd = True,
     console_view_entry = consoles.console_view_entry(
         category = "debug|builder",
         short_name = "32",
@@ -370,8 +369,9 @@ ci.builder(
         ],
     ),
     builderless = False,
-    cores = 32,
+    cores = 16,
     os = os.WINDOWS_ANY,
+    ssd = True,
     console_view_entry = consoles.console_view_entry(
         category = "release|builder",
         short_name = "64",
@@ -406,6 +406,7 @@ ci.builder(
         targets = [
             "chromium_win10_gtests",
             "chromium_win_rel_isolated_scripts_once",
+            "gtests_once",
         ],
         mixins = [
             "x86-64",
@@ -415,24 +416,19 @@ ci.builder(
         per_test_modifications = {
             "blink_web_tests": targets.mixin(
                 swarming = targets.swarming(
-                    # blink_web_tests has issues on non-broadwell machines.
+                    # blink_web_tests has issues when mixing different CPUs.
                     # see https://crbug.com/1458859
+                    # As of 2024 Q4, all e2 machines in chromium.tests use
+                    # x86-64-Broadwell_GCE. But, the situation may change when
+                    # GCE replaces the hardwares. If that happens, it needs to
+                    # be updated to run on the most popular CPU platform.
                     dimensions = {
                         "cpu": "x86-64-Broadwell_GCE",
                     },
                     shards = 12,
                 ),
             ),
-            "blink_wpt_tests": targets.mixin(
-                swarming = targets.swarming(
-                    shards = 18,
-                ),
-            ),
             "browser_tests": targets.mixin(
-                # crbug.com/868082
-                args = [
-                    "--disable-features=WebRTC-H264WithOpenH264FFmpeg",
-                ],
                 # Only retry the individual failed tests instead of rerunning
                 # entire shards.
                 # crbug.com/1473501
@@ -448,10 +444,6 @@ ci.builder(
                 isolate_profile_data = False,
             ),
             "content_browsertests": targets.mixin(
-                # crbug.com/868082
-                args = [
-                    "--disable-features=WebRTC-H264WithOpenH264FFmpeg",
-                ],
                 # Only retry the individual failed tests instead of rerunning
                 # entire shards.
                 # crbug.com/1475852
@@ -526,16 +518,7 @@ ci.thin_tester(
                     shards = 12,
                 ),
             ),
-            "blink_wpt_tests": targets.mixin(
-                swarming = targets.swarming(
-                    shards = 18,
-                ),
-            ),
             "browser_tests": targets.mixin(
-                # crbug.com/868082
-                args = [
-                    "--disable-features=WebRTC-H264WithOpenH264FFmpeg",
-                ],
                 swarming = targets.swarming(
                     # This is for slow test execution that often becomes a
                     # critical path of swarming jobs. crbug.com/868114
@@ -547,12 +530,6 @@ ci.thin_tester(
             ),
             "components_browsertests_no_field_trial": targets.remove(
                 reason = "crbug/40630866",
-            ),
-            "content_browsertests": targets.mixin(
-                # crbug.com/868082
-                args = [
-                    "--disable-features=WebRTC-H264WithOpenH264FFmpeg",
-                ],
             ),
             "interactive_ui_tests_no_field_trial": targets.remove(
                 reason = "crbug/40630866",
@@ -681,6 +658,10 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-win-archive",
     ),
+    builder_config_settings = builder_config.ci_settings(
+        retry_failed_shards = True,
+        retry_invalid_shards = True,
+    ),
     targets = targets.bundle(
         targets = [
             "chromium_win10_gtests",
@@ -690,11 +671,6 @@ ci.thin_tester(
             "win-arm64",
         ],
         per_test_modifications = {
-            "blink_wpt_tests": targets.mixin(
-                swarming = targets.swarming(
-                    shards = 18,
-                ),
-            ),
             "browser_tests": targets.mixin(
                 swarming = targets.swarming(
                     # This is for slow test execution that often becomes a
@@ -740,6 +716,9 @@ ci.thin_tester(
             "telemetry_unittests": targets.remove(
                 reason = "Disabled on similar Windows testers due to crbug/40622135.",
             ),
+            "webui_resources_tools_python_unittests": targets.remove(
+                reason = "Unneeded; only run on non-cross-compiling bots",
+            ),
         },
     ),
     tree_closing = False,
@@ -784,9 +763,9 @@ ci.builder(
             "all",
         ],
     ),
-    builderless = True,
-    cores = 32,
+    cores = 16,
     os = os.WINDOWS_DEFAULT,
+    ssd = True,
     tree_closing = True,
     console_view_entry = consoles.console_view_entry(
         category = "debug|builder",
@@ -830,6 +809,12 @@ ci.thin_tester(
                 reason = "Not enabled on dbg due to resource limits.",
             ),
             "blink_wpt_tests": targets.remove(
+                reason = "Not enabled on dbg due to resource limits.",
+            ),
+            "chrome_wpt_tests": targets.remove(
+                reason = "Not enabled on dbg due to resource limits.",
+            ),
+            "headless_shell_wpt_tests": targets.remove(
                 reason = "Not enabled on dbg due to resource limits.",
             ),
             "browser_tests": targets.remove(
@@ -882,6 +867,7 @@ ci.builder(
     ),
     builderless = False,
     cores = 32,
+    ssd = True,
     console_view_entry = consoles.console_view_entry(
         category = "misc",
         short_name = "det",
@@ -890,6 +876,8 @@ ci.builder(
     reclient_bootstrap_env = {
         "RBE_ip_timeout": "10m",
     },
+    # TODO: crbug.com/379584977 - Remove this after fixing the recipe. https://crrev.com/c/6242260
+    reclient_enabled = True,
 )
 
 ci.builder(
@@ -910,6 +898,7 @@ ci.builder(
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
+            host_platform = builder_config.host_platform.LINUX,
         ),
         build_gs_bucket = "chromium-win-archive",
     ),
@@ -979,6 +968,9 @@ ci.builder(
             "telemetry_unittests": targets.remove(
                 reason = "Shadow Win10 Tests x64.",
             ),
+            "webui_resources_tools_python_unittests": targets.remove(
+                reason = "Unneeded; only run on non-cross-compiling bots",
+            ),
         },
     ),
     cores = 32,
@@ -989,4 +981,57 @@ ci.builder(
         short_name = "lxw",
     ),
     contact_team_email = "chrome-build-team@google.com",
+)
+
+ci.builder(
+    name = "win-no-safe-browsing-rel",
+    description_html = "Builds for Windows with `safe_browsing_mode = 0`.",
+    builder_spec = builder_config.builder_spec(
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = [
+                "win",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = ["mb"],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 64,
+            target_platform = builder_config.target_platform.WIN,
+        ),
+        build_gs_bucket = "chromium-win-archive",
+    ),
+    gn_args = gn_args.config(
+        configs = [
+            "no_safe_browsing",
+            "release_builder",
+            "remoteexec",
+            "x86",
+            "no_symbols",
+            "win",
+        ],
+    ),
+    targets = targets.bundle(
+        targets = [
+            "browser_tests",
+            "components_unittests",
+            "unit_tests",
+        ],
+        additional_compile_targets = [
+            "chrome",
+        ],
+        mixins = [
+            "win10",
+            "x86-64",
+        ],
+    ),
+    gardener_rotations = args.ignore_default(None),
+    # TODO(crbug.com/405140662): Promote when stable.
+    tree_closing = False,
+    console_view_entry = consoles.console_view_entry(
+        category = "misc",
+        short_name = "nosb",
+    ),
+    contact_team_email = "chrome-counter-abuse-core@google.com",
 )

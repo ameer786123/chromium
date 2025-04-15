@@ -20,13 +20,13 @@
 #include <string>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -77,7 +77,7 @@ template <typename T>
 bool BinaryRead(T* data, size_t offset, const std::vector<uint8_t>& blob) {
   if (offset + sizeof(T) > blob.size())
     return false;
-  memcpy(data, &blob[offset], sizeof(T));
+  UNSAFE_TODO(memcpy(data, &blob[offset], sizeof(T)));
   return true;
 }
 
@@ -461,7 +461,7 @@ void IEImporter::StartImport(const importer::SourceProfile& source_profile,
   bridge_->NotifyEnded();
 }
 
-IEImporter::~IEImporter() {}
+IEImporter::~IEImporter() = default;
 
 void IEImporter::ImportFavorites() {
   FavoritesInfo info;
@@ -715,8 +715,8 @@ void IEImporter::ParseFavoritesFolder(
     entry.creation_time = GetFileCreationTime(shortcut);
     if (!relative_path.empty()) {
       std::vector<std::wstring> wide_components = relative_path.GetComponents();
-      base::ranges::transform(wide_components, std::back_inserter(entry.path),
-                              &base::AsString16);
+      std::ranges::transform(wide_components, std::back_inserter(entry.path),
+                             &base::AsString16);
     }
 
     // Add the bookmark.

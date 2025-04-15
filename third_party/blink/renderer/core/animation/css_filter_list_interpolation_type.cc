@@ -24,13 +24,12 @@ namespace {
 const FilterOperations& GetFilterList(const CSSProperty& property,
                                       const ComputedStyle& style) {
   switch (property.PropertyID()) {
-    default:
-      NOTREACHED_IN_MIGRATION();
-      [[fallthrough]];
     case CSSPropertyID::kBackdropFilter:
       return style.BackdropFilter();
     case CSSPropertyID::kFilter:
       return style.Filter();
+    default:
+      NOTREACHED();
   }
 }
 
@@ -45,8 +44,7 @@ void SetFilterList(const CSSProperty& property,
       builder.SetFilter(filter_operations);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -183,7 +181,7 @@ InterpolationValue CSSFilterListInterpolationType::MaybeConvertInherit(
 
 InterpolationValue CSSFilterListInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState* state,
+    const StyleResolverState& state,
     ConversionCheckers&) const {
   auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
   if (identifier_value && identifier_value->GetValueID() == CSSValueID::kNone) {
@@ -198,14 +196,8 @@ InterpolationValue CSSFilterListInterpolationType::MaybeConvertValue(
   wtf_size_t length = list.length();
   auto* interpolable_list = MakeGarbageCollected<InterpolableList>(length);
   for (wtf_size_t i = 0; i < length; i++) {
-    mojom::blink::ColorScheme color_scheme =
-        state ? state->StyleBuilder().UsedColorScheme()
-              : mojom::blink::ColorScheme::kLight;
-    const ui::ColorProvider* color_provider =
-        state ? state->GetDocument().GetColorProviderForPainting(color_scheme)
-              : nullptr;
-    InterpolableFilter* result = InterpolableFilter::MaybeConvertCSSValue(
-        list.Item(i), color_scheme, color_provider);
+    InterpolableFilter* result =
+        InterpolableFilter::MaybeConvertCSSValue(list.Item(i), state);
     if (!result) {
       return nullptr;
     }

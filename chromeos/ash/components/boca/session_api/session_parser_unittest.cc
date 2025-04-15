@@ -4,7 +4,9 @@
 
 #include "chromeos/ash/components/boca/session_api/session_parser.h"
 
+#include "ash/constants/ash_features.h"
 #include "base/memory/values_equivalent.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
 #include "chromeos/ash/components/boca/session_api/constants.h"
@@ -41,14 +43,23 @@ constexpr char kFullSessionResponse[] = R"(
           "kDummyDeviceId":
          {
             "info": {"device_id":"kDummyDeviceId"},
-            "state":"ACTIVE",
+            "state":"INACTIVE",
             "activity": {
               "activeTab": {
                 "title": "google"
                 }
+              },
+              "viewScreenConfig": {
+                "viewScreenState": "AVAILABLE",
+                "connectionParam": {
+                  "connectionCode": "0123456789"
+                }
               }
          }
         }
+    },
+    "22": {
+      "state": "ADDED"
     }
   },
   "roster": {
@@ -115,7 +126,8 @@ constexpr char kFullSessionResponse[] = R"(
               "url": "https://youtube.com"
             }
           ],
-          "locked": true
+          "locked": true,
+          "lockToAppHome": true
         }
       }
     }
@@ -136,7 +148,27 @@ constexpr char kPartialResponse[] = R"(
     "duration": {
         "seconds": 120
     },
-    "studentStatuses": {},
+    "studentStatuses": {
+      "3": {
+        "state": "ACTIVE",
+        "devices":
+          {
+            "kDummyDeviceId":
+          {
+              "info": {"device_id":"kDummyDeviceId"},
+              "state":"INACTIVE",
+              "activity": {
+                "activeTab": {
+                  "title": "google"
+                  }
+                },
+              "viewScreenConfig": {
+                "viewScreenState": "REQUESTED"
+              }
+          }
+          }
+      }
+    },
     "roster": {
         "studentGroups": []
     },
@@ -166,6 +198,7 @@ class SessionParserTest : public testing::Test {
     session_full = std::make_unique<::boca::Session>();
     session_partial = std::make_unique<::boca::Session>();
   }
+  base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<::boca::Session> session_full;
   std::unique_ptr<::boca::Session> session_partial;
   std::unique_ptr<base::Value> session_dict_full;
@@ -273,6 +306,12 @@ TEST_F(SessionParserTest, TestParseSessionConfigProtoFromJson) {
                   .active_bundle()
                   .locked());
 
+  EXPECT_TRUE(session_full->student_group_configs()
+                  .at(kMainStudentGroupName)
+                  .on_task_config()
+                  .active_bundle()
+                  .lock_to_app_home());
+
   auto content_config = std::move(session_full->student_group_configs()
                                       .at(kMainStudentGroupName)
                                       .on_task_config()
@@ -320,11 +359,12 @@ TEST_F(SessionParserTest, TestParseSessionConfigProtoFromJson) {
 }
 
 TEST_F(SessionParserTest, TestParseStudentStatusProtoFromJson) {
+  scoped_feature_list_.InitWithFeatures({::ash::features::kBocaSpotlight}, {});
   // Student status depends on roster info.
   ParseRosterProtoFromJson(session_dict_full->GetIfDict(), session_full.get());
   ParseStudentStatusProtoFromJson(session_dict_full->GetIfDict(),
-                                  session_full.get());
-  ASSERT_EQ(2u, session_full->student_statuses().size());
+                                  session_full.get(), true);
+  ASSERT_EQ(3u, session_full->student_statuses().size());
   EXPECT_EQ(::boca::StudentStatus::ADDED,
             session_full->student_statuses().at("2").state());
   EXPECT_EQ(::boca::StudentStatus::ACTIVE,
@@ -337,9 +377,46 @@ TEST_F(SessionParserTest, TestParseStudentStatusProtoFromJson) {
                           .activity()
                           .active_tab()
                           .title());
+  EXPECT_EQ(::boca::ViewScreenConfig::AVAILABLE,
+            session_full->student_statuses()
+                .at("3")
+                .devices()
+                .at("kDummyDeviceId")
+                .view_screen_config()
+                .view_screen_state());
+  EXPECT_EQ("0123456789", session_full->student_statuses()
+                              .at("3")
+                              .devices()
+                              .at("kDummyDeviceId")
+                              .view_screen_config()
+                              .connection_param()
+                              .connection_code());
+  EXPECT_EQ(::boca::StudentStatus::ADDED,
+            session_full->student_statuses().at("22").state());
   ParseStudentStatusProtoFromJson(session_dict_partial->GetIfDict(),
-                                  session_partial.get());
-  EXPECT_EQ(0u, session_partial->student_statuses().size());
+                                  session_partial.get(), false);
+  EXPECT_EQ(::boca::StudentStatus::ACTIVE,
+            session_partial->student_statuses().at("3").state());
+
+  EXPECT_EQ("google", session_partial->student_statuses()
+                          .at("3")
+                          .devices()
+                          .at("kDummyDeviceId")
+                          .activity()
+                          .active_tab()
+                          .title());
+  EXPECT_EQ(::boca::StudentDevice::INACTIVE, session_partial->student_statuses()
+                                                 .at("3")
+                                                 .devices()
+                                                 .at("kDummyDeviceId")
+                                                 .state());
+  EXPECT_EQ(::boca::ViewScreenConfig::REQUESTED,
+            session_partial->student_statuses()
+                .at("3")
+                .devices()
+                .at("kDummyDeviceId")
+                .view_screen_config()
+                .view_screen_state());
 }
 }  // namespace
 }  // namespace ash::boca

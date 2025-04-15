@@ -26,7 +26,6 @@ All changes to this list should go through Blink's feature review process: http:
     -webkit-mask-position-y
     -webkit-perspective-origin-x
     -webkit-perspective-origin-y
-    -webkit-print-color-adjust
     -webkit-rtl-ordering
     -webkit-ruby-position
     -webkit-tap-highlight-color
@@ -63,6 +62,12 @@ All changes to this list should go through Blink's feature review process: http:
     animation-range-start
     animation-timeline
     animation-timing-function
+    animation-trigger-exit-range-end
+    animation-trigger-exit-range-start
+    animation-trigger-range-end
+    animation-trigger-range-start
+    animation-trigger-timeline
+    animation-trigger-type
     app-region
     appearance
     aspect-ratio
@@ -142,11 +147,13 @@ All changes to this list should go through Blink's feature review process: http:
     column-count
     column-fill
     column-gap
+    column-height
     column-rule-color
     column-rule-style
     column-rule-width
     column-span
     column-width
+    column-wrap
     contain
     contain-intrinsic-block-size
     contain-intrinsic-height
@@ -156,6 +163,14 @@ All changes to this list should go through Blink's feature review process: http:
     container-type
     content
     content-visibility
+    corner-bottom-left-shape
+    corner-bottom-right-shape
+    corner-end-end-shape
+    corner-end-start-shape
+    corner-start-end-shape
+    corner-start-start-shape
+    corner-top-left-shape
+    corner-top-right-shape
     counter-increment
     counter-reset
     counter-set
@@ -225,8 +240,12 @@ All changes to this list should go through Blink's feature review process: http:
     inset-block-start
     inset-inline-end
     inset-inline-start
+    interactivity
+    interest-target-hide-delay
+    interest-target-show-delay
     interpolate-size
     isolation
+    item-tolerance
     justify-content
     justify-items
     justify-self
@@ -258,7 +277,9 @@ All changes to this list should go through Blink's feature review process: http:
     mask-repeat
     mask-size
     mask-type
-    masonry-slack
+    masonry-auto-tracks
+    masonry-direction
+    masonry-fill
     masonry-template-tracks
     masonry-track-end
     masonry-track-start
@@ -315,17 +336,17 @@ All changes to this list should go through Blink's feature review process: http:
     perspective
     perspective-origin
     pointer-events
-    popover-hide-delay
-    popover-show-delay
     position
     position-anchor
     position-area
     position-try-fallbacks
     position-try-order
     position-visibility
+    print-color-adjust
     quotes
     r
     reading-flow
+    reading-order
     resize
     right
     rotate
@@ -336,6 +357,7 @@ All changes to this list should go through Blink's feature review process: http:
     ry
     scale
     scroll-behavior
+    scroll-initial-target
     scroll-margin-block-end
     scroll-margin-block-start
     scroll-margin-bottom
@@ -344,6 +366,7 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-margin-left
     scroll-margin-right
     scroll-margin-top
+    scroll-marker-contain
     scroll-marker-group
     scroll-padding-block-end
     scroll-padding-block-start
@@ -358,7 +381,6 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-snap-type
     scroll-start-block
     scroll-start-inline
-    scroll-start-target
     scroll-start-x
     scroll-start-y
     scroll-timeline-axis
@@ -478,6 +500,19 @@ All changes to this list should go through Blink's feature review process: http:
     animation-range
         animation-range-end
         animation-range-start
+    animation-trigger
+        animation-trigger-exit-range-end
+        animation-trigger-exit-range-start
+        animation-trigger-range-end
+        animation-trigger-range-start
+        animation-trigger-timeline
+        animation-trigger-type
+    animation-trigger-exit-range
+        animation-trigger-exit-range-end
+        animation-trigger-exit-range-start
+    animation-trigger-range
+        animation-trigger-range-end
+        animation-trigger-range-start
     background
         background-attachment
         background-clip
@@ -615,6 +650,11 @@ All changes to this list should go through Blink's feature review process: http:
     container
         container-name
         container-type
+    corner-shape
+        corner-bottom-left-shape
+        corner-bottom-right-shape
+        corner-top-left-shape
+        corner-top-right-shape
     flex
         flex-basis
         flex-grow
@@ -689,6 +729,9 @@ All changes to this list should go through Blink's feature review process: http:
     inset-inline
         inset-inline-end
         inset-inline-start
+    interest-target-delay
+        interest-target-hide-delay
+        interest-target-show-delay
     list-style
         list-style-image
         list-style-position
@@ -721,6 +764,9 @@ All changes to this list should go through Blink's feature review process: http:
     mask-position
         -webkit-mask-position-x
         -webkit-mask-position-y
+    masonry-flow
+        masonry-direction
+        masonry-fill
     masonry-track
         masonry-track-end
         masonry-track-start
@@ -1020,6 +1066,8 @@ All changes to this list should go through Blink's feature review process: http:
         perspective
     -webkit-perspective-origin
         perspective-origin
+    -webkit-print-color-adjust
+        print-color-adjust
     -webkit-shape-image-threshold
         shape-image-threshold
     -webkit-shape-margin

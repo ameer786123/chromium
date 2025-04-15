@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.toolbar;
 
 import android.view.View;
+import android.widget.FrameLayout;
 
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 
@@ -69,6 +70,20 @@ public interface ControlContainer {
      * method.
      */
     CoordinatorLayout.LayoutParams mutateLayoutParams();
+
+    /**
+     * Returns an instance of the hairline view's layout params that can be mutated; changes will
+     * take effect with the next layout pass. A layout pass is requested with each call to this
+     * method.
+     */
+    FrameLayout.LayoutParams mutateHairlineLayoutParams();
+
+    /**
+     * Returns an instance of the toolbar view's layout params that can be mutated; changes will
+     * take effect with the next layout pass. A layout pass is requested with each call to this
+     * method.
+     */
+    FrameLayout.LayoutParams mutateToolbarLayoutParams();
 
     /**
      * Destroys the control container, causing it to release any owned native resources and cancel

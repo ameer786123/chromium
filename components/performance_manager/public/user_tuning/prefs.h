@@ -90,6 +90,17 @@ inline constexpr char kDiscardRingTreatmentEnabled[] =
 inline constexpr char kPerformanceInterventionNotificationEnabled[] =
     "performance_tuning.intervention_notification.enabled";
 
+// The pref storing when was the last time the performance intervention
+// notification was shown.
+inline constexpr char kPerformanceInterventionNotificationLastShown[] =
+    "performance_tuning.intervention_notification.last_shown";
+
+// The pref storing a boolean list which keeps track whether the user has
+// accepted performance intervention with a true value and false if the
+// intervention was rejected.
+inline constexpr char kPerformanceInterventionNotificationAcceptHistory[] =
+    "performance_tuning.intervention_notification.accept_history";
+
 void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
@@ -119,11 +130,6 @@ void MigrateMemorySaverModePref(PrefService* pref_service);
 // of Memory Saver. But this mode got migrated in to what is now called
 // KEnabled.
 void MigrateMultiStateMemorySaverModePref(PrefService* pref_service);
-
-// This function migrates the old, list tab discarding exceptions preference to
-// the new, dictionary one that includes the time of the last edit of the
-// preference. This is done once at startup.
-void MigrateTabDiscardingExceptionsPref(PrefService* pref_service);
 
 // Returns if the given site is in the discard exception list
 bool IsSiteInTabDiscardExceptionsList(PrefService* pref_service,

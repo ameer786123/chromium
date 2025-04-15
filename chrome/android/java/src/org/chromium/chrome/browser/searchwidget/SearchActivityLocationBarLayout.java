@@ -13,7 +13,9 @@ import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
+import androidx.core.content.ContextCompat;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.lens.LensEntryPoint;
@@ -32,7 +34,6 @@ import org.chromium.chrome.browser.toolbar.top.ToolbarPhone;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.IntentOrigin;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityPreferencesManager;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.widget.Toast;
 
@@ -41,6 +42,7 @@ public class SearchActivityLocationBarLayout extends LocationBarLayout {
     private boolean mPendingSearchPromoDecision;
     private boolean mPendingBeginQuery;
     private boolean mInteractionFromWidget;
+    private boolean mIsIncognito;
 
     public SearchActivityLocationBarLayout(Context context, AttributeSet attrs) {
         super(context, attrs, R.layout.location_bar_base);
@@ -57,7 +59,7 @@ public class SearchActivityLocationBarLayout extends LocationBarLayout {
                 urlCoordinator,
                 statusCoordinator,
                 locationBarDataProvider);
-
+        mIsIncognito = locationBarDataProvider.isIncognitoBranded();
         mPendingSearchPromoDecision = LocaleManager.getInstance().needToCheckForSearchEnginePromo();
         mAutocompleteCoordinator.setShouldPreventOmniboxAutocomplete(mPendingSearchPromoDecision);
         findViewById(R.id.url_action_container).setVisibility(View.VISIBLE);
@@ -65,8 +67,7 @@ public class SearchActivityLocationBarLayout extends LocationBarLayout {
         GradientDrawable backgroundDrawable =
                 ToolbarPhone.createModernLocationBarBackground(getContext());
         backgroundDrawable.setTint(
-                ChromeColors.getSurfaceColor(
-                        getContext(), R.dimen.omnibox_suggestion_bg_elevation));
+                ContextCompat.getColor(getContext(), R.color.omnibox_suggestion_bg));
         backgroundDrawable.setCornerRadius(
                 getResources()
                         .getDimensionPixelSize(R.dimen.omnibox_suggestion_bg_round_corner_radius));
@@ -125,18 +126,28 @@ public class SearchActivityLocationBarLayout extends LocationBarLayout {
             @Nullable String optionalText,
             @NonNull WindowAndroid windowAndroid) {
 
+        // TODO(crbug.com/372036449): Move setting the hint text from the layout to using the URL
+        // bar view binder and model properties.
         if (origin == IntentOrigin.CUSTOM_TAB) {
             mUrlBar.setHint(R.string.omnibox_on_cct_empty_hint);
+        } else if (origin == IntentOrigin.HUB) {
+            @StringRes
+            int hintTextRes =
+                    mIsIncognito
+                            ? R.string.hub_search_empty_hint_incognito
+                            : R.string.hub_search_empty_hint;
+            mUrlBar.setHint(hintTextRes);
         } else {
             mUrlBar.setHint(R.string.omnibox_empty_hint);
         }
+
         // Clear the text regardless of the promo decision.  This allows the user to enter text
         // before native has been initialized and have it not be cleared one the delayed beginQuery
         // logic is performed.
         mUrlCoordinator.setUrlBarData(
                 UrlBarData.forNonUrlText(optionalText == null ? "" : optionalText),
                 UrlBar.ScrollType.NO_SCROLL,
-                SelectionState.SELECT_ALL);
+                SelectionState.SELECT_END);
 
         if (mPendingSearchPromoDecision || (searchType != SearchType.TEXT && !mNativeInitialized)) {
             mPendingBeginQuery = true;
@@ -196,6 +207,11 @@ public class SearchActivityLocationBarLayout extends LocationBarLayout {
 
     void clearOmniboxFocus() {
         mUrlBar.clearFocus();
+    }
+
+    @Override
+    public boolean shouldClearTextOnFocus() {
+        return false;
     }
 
     @Override

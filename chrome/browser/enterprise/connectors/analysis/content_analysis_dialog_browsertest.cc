@@ -20,14 +20,18 @@
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_browsertest_base.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 #include "chrome/browser/enterprise/connectors/test/fake_content_analysis_delegate.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
+#include "chrome/browser/ui/webui/chrome_web_contents_handler.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/download/public/common/mock_download_item.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -39,61 +43,12 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/textarea/textarea.h"
 #include "ui/views/controls/throbber.h"
+#include "ui/views/controls/webview/web_dialog_view.h"
 #include "ui/views/test/ax_event_counter.h"
 #include "ui/views/test/views_test_utils.h"
+#include "ui/web_dialogs/test/test_web_dialog_delegate.h"
 
 namespace enterprise_connectors {
-
-namespace {
-
-constexpr base::TimeDelta kNoDelay = base::Seconds(0);
-constexpr base::TimeDelta kSmallDelay = base::Milliseconds(300);
-constexpr base::TimeDelta kNormalDelay = base::Milliseconds(500);
-
-constexpr char kBlockingScansForDlpAndMalware[] = R"(
-{
-  "service_provider": "google",
-  "enable": [
-    {
-      "url_list": ["*"],
-      "tags": ["dlp", "malware"]
-    }
-  ],
-  "block_until_verdict": 1
-})";
-
-constexpr char kBlockingScansForDlp[] = R"(
-{
-  "service_provider": "google",
-  "enable": [
-    {
-      "url_list": ["*"],
-      "tags": ["dlp"]
-    }
-  ],
-  "block_until_verdict": 1
-})";
-
-constexpr char kBlockingScansForDlpAndMalwareWithCustomMessage[] = R"(
-{
-  "service_provider": "google",
-  "enable": [
-    {
-      "url_list": ["*"],
-      "tags": ["dlp", "malware"]
-    }
-  ],
-  "block_until_verdict": 1,
-  "custom_messages": [{
-    "message": "Custom message",
-    "learn_more_url": "http://www.example.com/",
-    "tag": "dlp"
-  }]
-})";
-
-std::string text() {
-  return std::string(100, 'a');
-}
 
 // Tests the behavior of the dialog in the following ways:
 // - It shows the appropriate buttons depending on its state.
@@ -109,7 +64,7 @@ class ContentAnalysisDialogBehaviorBrowserTest
           std::tuple<bool, bool, base::TimeDelta>> {
  public:
   ContentAnalysisDialogBehaviorBrowserTest()
-      : ax_event_counter_(views::AXEventManager::Get()) {
+      : ax_event_counter_(views::AXUpdateNotifier::Get()) {
     ContentAnalysisDialog::SetObserverForTesting(this);
 
     expected_scan_result_ = dlp_success() && malware_success();
@@ -275,7 +230,36 @@ class ContentAnalysisDialogBehaviorBrowserTest
 
   base::TimeDelta response_delay() const { return std::get<2>(GetParam()); }
 
+  void SetUpOnMainThread() override {
+    ui::test::TestWebDialogDelegate* delegate =
+        new ui::test::TestWebDialogDelegate(GURL(url::kAboutBlankURL));
+    delegate->SetDeleteOnClosedAndObserve(&web_dialog_delegate_destroyed_);
+
+    auto view = std::make_unique<views::WebDialogView>(
+        browser()->profile(), delegate,
+        std::make_unique<ChromeWebContentsHandler>());
+    view->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
+    gfx::NativeView parent_view =
+        browser()->tab_strip_model()->GetActiveWebContents()->GetNativeView();
+    view_ = view.get();
+    view_tracker_.SetView(view_);
+
+    auto* widget =
+        views::Widget::CreateWindowWithParent(std::move(view), parent_view);
+    widget->Show();
+
+    EXPECT_TRUE(content::WaitForLoadStop(view_->web_contents()));
+  }
+
+  content::WebContents* GetWebViewDialogContents() {
+    return view_->web_contents();
+  }
+
  private:
+  views::ViewTracker view_tracker_;
+  raw_ptr<views::WebDialogView, DisableDanglingPtrDetection> view_ = nullptr;
+  bool web_dialog_delegate_destroyed_ = false;
+
   raw_ptr<ContentAnalysisDialog, DanglingUntriaged> dialog_;
 
   base::TimeTicks ctor_called_timestamp_;
@@ -293,6 +277,57 @@ class ContentAnalysisDialogBehaviorBrowserTest
   int ax_events_count_when_first_shown_ = 0;
   views::test::AXEventCounter ax_event_counter_;
 };
+
+namespace {
+
+constexpr base::TimeDelta kNoDelay = base::Seconds(0);
+constexpr base::TimeDelta kSmallDelay = base::Milliseconds(300);
+constexpr base::TimeDelta kNormalDelay = base::Milliseconds(500);
+
+constexpr char kBlockingScansForDlpAndMalware[] = R"(
+{
+  "service_provider": "google",
+  "enable": [
+    {
+      "url_list": ["*"],
+      "tags": ["dlp", "malware"]
+    }
+  ],
+  "block_until_verdict": 1
+})";
+
+constexpr char kBlockingScansForDlp[] = R"(
+{
+  "service_provider": "google",
+  "enable": [
+    {
+      "url_list": ["*"],
+      "tags": ["dlp"]
+    }
+  ],
+  "block_until_verdict": 1
+})";
+
+constexpr char kBlockingScansForDlpAndMalwareWithCustomMessage[] = R"(
+{
+  "service_provider": "google",
+  "enable": [
+    {
+      "url_list": ["*"],
+      "tags": ["dlp", "malware"]
+    }
+  ],
+  "block_until_verdict": 1,
+  "custom_messages": [{
+    "message": "Custom message",
+    "learn_more_url": "http://www.example.com/",
+    "tag": "dlp"
+  }]
+})";
+
+std::string text() {
+  return std::string(100, 'a');
+}
 
 // Tests the behavior of the dialog in the following ways:
 // - It closes when the "Cancel" button is clicked.
@@ -587,6 +622,43 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDialogBehaviorBrowserTest, Test) {
       safe_browsing::DeepScanAccessPoint::UPLOAD);
   run_loop.Run();
   EXPECT_TRUE(called);
+}
+
+IN_PROC_BROWSER_TEST_P(ContentAnalysisDialogBehaviorBrowserTest,
+                       NoWebContentsModalDialogManager) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+
+  // Setup policies to enable deep scanning, its UI and the responses to be
+  // simulated.
+  enterprise_connectors::test::SetAnalysisConnector(
+      browser()->profile()->GetPrefs(), FILE_ATTACHED,
+      kBlockingScansForDlpAndMalware);
+  SetStatusCallbackResponse(
+      safe_browsing::SimpleContentAnalysisResponseForTesting(
+          dlp_success(), malware_success(), /*has_custom_rule_message=*/false));
+
+  // Set up delegate test values.
+  test::FakeContentAnalysisDelegate::SetResponseDelay(response_delay());
+  SetUpDelegate();
+
+  base::RunLoop run_loop;
+  ContentAnalysisDelegate::Data data;
+  CreateFilesForTest({"foo.doc"}, {"content"}, &data);
+  ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(
+      browser()->profile(), GURL(kTestUrl), &data,
+      enterprise_connectors::AnalysisConnector::FILE_ATTACHED));
+
+  ContentAnalysisDelegate::CreateForWebContents(
+      GetWebViewDialogContents(), std::move(data),
+      base::BindOnce(
+          [](base::OnceClosure quit_closure,
+             const ContentAnalysisDelegate::Data& data,
+             ContentAnalysisDelegate::Result& result) {
+            std::move(quit_closure).Run();
+          },
+          run_loop.QuitClosure()),
+      safe_browsing::DeepScanAccessPoint::UPLOAD);
+  run_loop.Run();
 }
 
 // The scan type controls if DLP, malware or both are enabled via policies. The

@@ -4,6 +4,7 @@
 
 #include "device/bluetooth/emulation/fake_central.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -11,7 +12,6 @@
 
 #include "base/functional/bind.h"
 #include "base/location.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -201,8 +201,31 @@ void FakeCentral::SetNextGATTDiscoveryResponse(
   std::move(callback).Run(true);
 }
 
+void FakeCentral::SimulateGATTOperationResponse(
+    mojom::GATTOperationType type,
+    const std::string& address,
+    uint16_t code,
+    SimulateGATTOperationResponseCallback callback) {
+  FakePeripheral* fake_peripheral = GetFakePeripheral(address);
+  if (fake_peripheral == nullptr) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  switch (type) {
+    case mojom::GATTOperationType::kConnect:
+      fake_peripheral->SimulateGATTConnectionResponse(code);
+      std::move(callback).Run(true);
+      break;
+    case mojom::GATTOperationType::kDiscovery:
+      fake_peripheral->SimulateGATTDiscoveryResponse(code);
+      std::move(callback).Run(true);
+      break;
+  }
+}
+
 bool FakeCentral::AllResponsesConsumed() {
-  return base::ranges::all_of(devices_, [](const auto& e) {
+  return std::ranges::all_of(devices_, [](const auto& e) {
     // static_cast is safe because the parent class's devices_ is only
     // populated via this FakeCentral, and only with FakePeripherals.
     return static_cast<FakePeripheral*>(e.second.get())->AllResponsesConsumed();
@@ -638,13 +661,11 @@ std::vector<device::BluetoothAdapter::BluetoothRole>
 FakeCentral::GetSupportedRoles() {
   NOTREACHED();
 }
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 void FakeCentral::SetStandardChromeOSAdapterName() {
   NOTREACHED();
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 base::WeakPtr<device::BluetoothAdapter> FakeCentral::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -772,6 +793,20 @@ FakeRemoteGattDescriptor* FakeCentral::GetFakeRemoteGattDescriptor(
   // with FakeRemoteGattDescriptors.
   return static_cast<FakeRemoteGattDescriptor*>(
       fake_remote_gatt_characteristic->GetDescriptor(descriptor_id));
+}
+
+void FakeCentral::DispatchGATTOperationEvent(
+    mojom::GATTOperationType type,
+    const std::string& peripheral_address) {
+  if (client_.is_bound()) {
+    client_->DispatchGATTOperationEvent(type, peripheral_address);
+  }
+}
+
+void FakeCentral::SetClient(
+    ::mojo::PendingAssociatedRemote<mojom::FakeCentralClient> client) {
+  CHECK(!client_.is_bound());
+  client_.Bind(std::move(client));
 }
 
 }  // namespace bluetooth

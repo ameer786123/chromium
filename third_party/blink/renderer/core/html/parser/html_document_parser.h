@@ -30,6 +30,7 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/rand_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/common/features.h"
@@ -128,6 +129,8 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
 
   static void ResetCachedFeaturesForTesting();
   static void FlushPreloadScannerThreadForTesting();
+
+  bool HasPendingPreloads();
 
  protected:
   void insert(const String&) final;
@@ -239,8 +242,6 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
       scoped_refptr<base::SequencedTaskRunner> task_runner,
       std::unique_ptr<PendingPreloadData> preload_data);
 
-  bool HasPendingPreloads();
-
   // Returns true if the data should be processed (tokenizer pumped) now. If
   // this returns false, SchedulePumpTokenizer() should be called. This is
   // called when data is available.
@@ -307,6 +308,8 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   // yet). This is used to compare the number of seen tags with the number of
   // processed CSP tags in order to decide if resources can be preloaded.
   int seen_csp_meta_tags_ = 0;
+
+  base::MetricsSubSampler metrics_sub_sampler_;
 };
 
 }  // namespace blink

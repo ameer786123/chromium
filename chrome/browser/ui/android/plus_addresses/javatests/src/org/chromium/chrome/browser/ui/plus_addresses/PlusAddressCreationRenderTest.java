@@ -35,13 +35,12 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.night_mode.ChromeNightModeTestUtils;
-import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetTestSupport;
+import org.chromium.components.plus_addresses.PlusAddressCreationBottomSheetErrorType;
 import org.chromium.ui.test.util.RenderTestRule.Component;
 import org.chromium.ui.widget.LoadingView;
 import org.chromium.url.GURL;
@@ -93,8 +92,6 @@ public class PlusAddressCreationRenderTest {
                     .build();
 
     @Mock private LayoutStateProvider mLayoutStateProvider;
-    @Mock private TabModel mTabModel;
-    @Mock private TabModelSelector mTabModelSelector;
     @Mock private PlusAddressCreationViewBridge mBridge;
 
     private BottomSheetController mBottomSheetController;
@@ -128,13 +125,16 @@ public class PlusAddressCreationRenderTest {
     private void openBottomSheet(String description, boolean refreshSupported, String notice) {
         runOnUiThreadBlocking(
                 () -> {
+                    var cta = mActivityTestRule.getActivity();
+                    var tabModelSelector = cta.getTabModelSelectorSupplier().get();
+                    var tabModel = tabModelSelector.getModel(/* incognito= */ false);
                     mCoordinator =
                             new PlusAddressCreationCoordinator(
                                     mActivityTestRule.getActivity(),
                                     mBottomSheetController,
                                     mLayoutStateProvider,
-                                    mTabModel,
-                                    mTabModelSelector,
+                                    tabModel,
+                                    tabModelSelector,
                                     mBridge,
                                     new PlusAddressCreationNormalStateInfo(
                                             "Modal title",

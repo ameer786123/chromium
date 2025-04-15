@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_unittest.h"
 
+#include <algorithm>
+
 #include "base/command_line.h"
 #include "base/containers/to_vector.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -18,8 +19,10 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "extensions/test/permissions_manager_waiter.h"
 #include "ui/events/base_event_utils.h"
@@ -29,11 +32,19 @@
 using PermissionsManager = extensions::PermissionsManager;
 using SitePermissionsHelper = extensions::SitePermissionsHelper;
 
-ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest() = default;
+ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest() {
+  // Allow unpacked extensions without developer mode for testing.
+  scoped_feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
+}
 
 ExtensionsToolbarUnitTest::ExtensionsToolbarUnitTest(
     base::test::TaskEnvironment::TimeSource time_source)
-    : TestWithBrowserView(time_source) {}
+    : TestWithBrowserView(time_source) {
+  // Allow unpacked extensions without developer mode for testing.
+  scoped_feature_list_.InitAndDisableFeature(
+      extensions_features::kExtensionDisableUnsupportedDeveloper);
+}
 
 ExtensionsToolbarUnitTest::~ExtensionsToolbarUnitTest() = default;
 
@@ -127,7 +138,7 @@ void ExtensionsToolbarUnitTest::UninstallExtension(
   // race with a bunch of things, and extension uninstall is just one of them.
   // See crbug.com/1191455.
   base::RunLoop run_loop;
-  extension_service()->UninstallExtension(
+  extension_registrar()->UninstallExtension(
       extension_id, extensions::UninstallReason::UNINSTALL_REASON_FOR_TESTING,
       nullptr, run_loop.QuitClosure());
   run_loop.Run();
@@ -182,20 +193,20 @@ void ExtensionsToolbarUnitTest::UpdateUserSiteSetting(
   waiter.WaitForUserPermissionsSettingsChange();
 }
 
-void ExtensionsToolbarUnitTest::AddSiteAccessRequest(
+void ExtensionsToolbarUnitTest::AddHostAccessRequest(
     const extensions::Extension& extension,
     content::WebContents* web_contents,
     const std::optional<URLPattern>& filter) {
   int tab_id = extensions::ExtensionTabUtil::GetTabId(web_contents);
-  permissions_manager_->AddSiteAccessRequest(web_contents, tab_id, extension,
+  permissions_manager_->AddHostAccessRequest(web_contents, tab_id, extension,
                                              filter);
 }
 
-void ExtensionsToolbarUnitTest::RemoveSiteAccessRequest(
+void ExtensionsToolbarUnitTest::RemoveHostAccessRequest(
     const extensions::Extension& extension,
     content::WebContents* web_contents) {
   int tab_id = extensions::ExtensionTabUtil::GetTabId(web_contents);
-  permissions_manager_->RemoveSiteAccessRequest(tab_id, extension.id());
+  permissions_manager_->RemoveHostAccessRequest(tab_id, extension.id());
 }
 
 PermissionsManager::UserSiteSetting
@@ -232,8 +243,9 @@ ExtensionsToolbarUnitTest::GetPinnedExtensionViews() {
 #else
       const bool is_visible = action->GetVisible();
 #endif
-      if (is_visible)
+      if (is_visible) {
         result.push_back(action);
+      }
     }
   }
   return result;

@@ -59,7 +59,7 @@ ClipStrategy DetermineClipStrategy(const SVGGraphicsElement& element) {
     return ClipStrategy::kNone;
   const ComputedStyle& style = layout_object->StyleRef();
   if (style.Display() == EDisplay::kNone ||
-      style.UsedVisibility() != EVisibility::kVisible) {
+      style.Visibility() != EVisibility::kVisible) {
     return ClipStrategy::kNone;
   }
   ClipStrategy strategy = ClipStrategy::kNone;
@@ -122,7 +122,7 @@ LayoutSVGResourceClipper::~LayoutSVGResourceClipper() = default;
 void LayoutSVGResourceClipper::RemoveAllClientsFromCache() {
   NOT_DESTROYED();
   clip_content_path_validity_ = kClipContentPathUnknown;
-  clip_content_path_.Clear();
+  clip_content_path_ = Path();
   cached_paint_record_ = std::nullopt;
   local_clip_bounds_ = gfx::RectF();
   MarkAllClientsForInvalidation(kClipCacheInvalidation | kPaintInvalidation);

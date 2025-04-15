@@ -8,6 +8,7 @@
 #include "ash/public/mojom/input_device_settings.mojom.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/input_device_settings/input_device_settings_utils.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -21,6 +22,12 @@
 namespace ash {
 
 namespace {
+
+// Set of Device IDs (Vendor ID:Product ID) for devices with companion apps.
+constexpr auto kDevicesWithCompanionApps =
+    base::MakeFixedFlatSet<std::string_view>(
+        {"1038:1824", "1038:1830", "1038:1836", "1038:1838", "1038:1850",
+         "1038:1852", "1038:1858", "0111:185a", "1b1c:1b79"});
 
 std::vector<mojom::ButtonRemappingPtr> GetDefaultButtonRemappingList() {
   return {};
@@ -251,6 +258,11 @@ const base::flat_map<VendorProductId, MouseMetadata>& GetMouseMetadataList() {
           {{0x046d, 0x405e},
            {mojom::CustomizationRestriction::kAllowTabEventRewrites,
             mojom::MouseButtonConfig::kNoConfig, "M720 Triathlon"}},
+          // Logitech MX Anywhere 2
+          {{0x046d, 0x4063},
+           {mojom::CustomizationRestriction::
+                kAllowHorizontalScrollWheelRewrites,
+            mojom::MouseButtonConfig::kNoConfig}},
           // Logitech MX Anywhere 2S (USB Dongle)
           {{0x046d, 0x406a},
            {mojom::CustomizationRestriction::
@@ -489,10 +501,6 @@ const base::flat_map<VendorProductId, MouseMetadata>& GetMouseMetadataList() {
             mojom::MouseButtonConfig::kNoConfig}},
           // Logitech M557
           {{0x046d, 0xb010},
-           {mojom::CustomizationRestriction::kDisableKeyEventRewrites,
-            mojom::MouseButtonConfig::kNoConfig}},
-          // Logitech MX Anywhere 2
-          {{0x046d, 0xb018},
            {mojom::CustomizationRestriction::kDisableKeyEventRewrites,
             mojom::MouseButtonConfig::kNoConfig}},
           // Logitech G9 Laser Mouse
@@ -1490,6 +1498,8 @@ const base::flat_map<VendorProductId, VendorProductId>& GetVidPidAliasList() {
       vid_pid_alias_list({
           // Logitech ERGO M575 (Bluetooth -> USB Dongle)
           {{0x46d, 0xb027}, {0x46d, 0x4096}},
+          // Logitech Mx Anywhere 2 (Bluetooth -> USB Dongle)
+          {{0x046d, 0xb018}, {0x046d, 0x4063}},
           // Logitech MX Master 2S (Bluetooth -> USB Dongle)
           {{0x046d, 0xb019}, {0x046d, 0x4069}},
           // Logitech MX Anywhere 2S (Bluetooth -> USB Dongle)
@@ -1665,6 +1675,10 @@ const GraphicsTabletMetadata* GetGraphicsTabletMetadata(
   }
 
   return nullptr;
+}
+
+bool DeviceHasCompanionAppAvailable(const std::string& device_key) {
+  return kDevicesWithCompanionApps.contains(device_key);
 }
 
 const KeyboardMetadata* GetKeyboardMetadata(const ui::InputDevice& device) {

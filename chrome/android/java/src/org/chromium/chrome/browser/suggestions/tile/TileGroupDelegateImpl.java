@@ -8,6 +8,7 @@ import android.content.Context;
 
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp.NewTabPageUma;
@@ -16,11 +17,15 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.suggestions.SuggestionsDependencyFactory;
 import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegate;
 import org.chromium.chrome.browser.suggestions.mostvisited.MostVisitedSites;
+import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditCoordinator;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager.SnackbarController;
 import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
+import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 import org.chromium.url.GURL;
 
@@ -46,6 +51,8 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
     private final SuggestionsNavigationDelegate mNavigationDelegate;
     private final MostVisitedSites mMostVisitedSites;
 
+    private @Nullable ModalDialogManager mModalDialogManager;
+
     private boolean mIsDestroyed;
     private SnackbarController mTileRemovedSnackbarController;
 
@@ -62,6 +69,32 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
                 SuggestionsDependencyFactory.getInstance().createMostVisitedSites(profile);
     }
 
+    // CustomLinkOperations -> TileGroup.Delegate implementation.
+    @Override
+    public boolean addCustomLink(String name, @Nullable GURL url) {
+        assert !mIsDestroyed;
+        return mMostVisitedSites.addCustomLink(name, url);
+    }
+
+    @Override
+    public boolean assignCustomLink(GURL keyUrl, String name, @Nullable GURL url) {
+        assert !mIsDestroyed;
+        return mMostVisitedSites.assignCustomLink(keyUrl, name, url);
+    }
+
+    @Override
+    public boolean deleteCustomLink(GURL keyUrl) {
+        assert !mIsDestroyed;
+        return mMostVisitedSites.deleteCustomLink(keyUrl);
+    }
+
+    @Override
+    public boolean hasCustomLink(GURL keyUrl) {
+        assert !mIsDestroyed;
+        return mMostVisitedSites.hasCustomLink(keyUrl);
+    }
+
+    // TileGroup.Delegate implementation.
     @Override
     public void removeMostVisitedItem(Tile item, Callback<GURL> removalUndoneCallback) {
         assert !mIsDestroyed;
@@ -78,7 +111,6 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
 
         GURL url = item.getUrl();
 
-        // TODO(treib): Should we call recordOpenedMostVisitedItem here?
         if (windowDisposition != WindowOpenDisposition.NEW_WINDOW) {
             recordOpenedTile(item);
         }
@@ -131,6 +163,17 @@ public class TileGroupDelegateImpl implements TileGroup.Delegate {
         if (mNavigationDelegate != null) {
             mNavigationDelegate.initAndroidPrerenderManager(androidPrerenderManager);
         }
+    }
+
+    @Override
+    public CustomTileEditCoordinator createCustomTileEditCoordinator(@Nullable Tile originalTile) {
+        assert !mIsDestroyed;
+
+        if (mModalDialogManager == null) {
+            mModalDialogManager =
+                    new ModalDialogManager(new AppModalPresenter(mContext), ModalDialogType.APP);
+        }
+        return CustomTileEditCoordinator.make(mModalDialogManager, mContext, originalTile);
     }
 
     @Override

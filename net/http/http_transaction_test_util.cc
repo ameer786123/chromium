@@ -16,6 +16,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -25,6 +26,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/load_timing_internal_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_isolation_key.h"
 #include "net/base/proxy_chain.h"
@@ -61,10 +63,10 @@ void RemoveMockTransaction(const MockTransaction* trans) {
 }  // namespace
 
 TransportInfo DefaultTransportInfo() {
-  return TransportInfo(TransportType::kDirect,
-                       IPEndPoint(IPAddress::IPv4Localhost(), 80),
-                       /*accept_ch_frame_arg=*/"",
-                       /*cert_is_issued_by_known_root=*/false, kProtoUnknown);
+  return TransportInfo(
+      TransportType::kDirect, IPEndPoint(IPAddress::IPv4Localhost(), 80),
+      /*accept_ch_frame_arg=*/"",
+      /*cert_is_issued_by_known_root=*/false, NextProto::kProtoUnknown);
 }
 
 //-----------------------------------------------------------------------------
@@ -323,7 +325,7 @@ void TestTransactionConsumer::OnIOComplete(int result) {
       DidRead(result);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 
@@ -487,6 +489,11 @@ bool MockNetworkTransaction::GetLoadTimingInfo(
   return true;
 }
 
+void MockNetworkTransaction::PopulateLoadTimingInternalInfo(
+    LoadTimingInternalInfo* load_timing_internal_info) const {
+  load_timing_internal_info->initialize_stream_delay = base::TimeDelta();
+}
+
 bool MockNetworkTransaction::GetRemoteEndpoint(IPEndPoint* endpoint) const {
   *endpoint = IPEndPoint(IPAddress(127, 0, 0, 1), 80);
   return true;
@@ -639,8 +646,10 @@ int MockNetworkTransaction::DoSendRequest() {
   }
 
   response_.response_time = transaction_factory_->Now();
-  if (!t->response_time.is_null())
+  if (!t->response_time.is_null()) {
     response_.response_time = t->response_time;
+    response_.original_response_time = t->response_time;
+  }
 
   response_.headers = base::MakeRefCounted<HttpResponseHeaders>(header_data);
   response_.ssl_info.cert = t->cert;
@@ -728,9 +737,7 @@ int MockNetworkTransaction::DoLoop(int result) {
         rv = DoReadHeadersComplete(rv);
         break;
       default:
-        NOTREACHED_IN_MIGRATION() << "bad state";
-        rv = ERR_FAILED;
-        break;
+        NOTREACHED() << "bad state";
     }
   } while (rv != ERR_IO_PENDING && next_state_ != State::NONE);
 

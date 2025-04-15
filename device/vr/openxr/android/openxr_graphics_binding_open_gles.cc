@@ -41,7 +41,9 @@ void OpenXrGraphicsBinding::GetRequiredExtensions(
   extensions.push_back(XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME);
 }
 
-OpenXrGraphicsBindingOpenGLES::OpenXrGraphicsBindingOpenGLES() = default;
+OpenXrGraphicsBindingOpenGLES::OpenXrGraphicsBindingOpenGLES(
+    const OpenXrExtensionEnumeration* extension_enum)
+    : OpenXrGraphicsBinding(extension_enum) {}
 OpenXrGraphicsBindingOpenGLES::~OpenXrGraphicsBindingOpenGLES() {
   if (back_buffer_fbo_) {
     glDeleteFramebuffersEXT(1, &back_buffer_fbo_);
@@ -199,8 +201,13 @@ base::span<SwapChainInfo> OpenXrGraphicsBindingOpenGLES::GetSwapChainImages() {
   return color_swapchain_images_;
 }
 
+base::span<const SwapChainInfo>
+OpenXrGraphicsBindingOpenGLES::GetSwapChainImages() const {
+  return color_swapchain_images_;
+}
+
 bool OpenXrGraphicsBindingOpenGLES::CanUseSharedImages() const {
-  return XrImageTransportBase::UseSharedBuffer();
+  return true;
 }
 
 // This is more or less copied from XrImageTransportBase::ResizeSharedBuffer,
@@ -285,8 +292,7 @@ void OpenXrGraphicsBindingOpenGLES::ResizeSharedBuffer(
     return;
   }
 
-  swap_chain_info.shared_buffer_texture.target =
-      XrImageTransportBase::SharedBufferTextureTarget();
+  swap_chain_info.shared_buffer_texture.target = GL_TEXTURE_2D;
   glGenTextures(1, &swap_chain_info.shared_buffer_texture.id);
   glBindTexture(swap_chain_info.shared_buffer_texture.target,
                 swap_chain_info.shared_buffer_texture.id);
@@ -369,9 +375,16 @@ bool OpenXrGraphicsBindingOpenGLES::Render(
     }
 
     if (!overlay_texture_.id) {
-      overlay_texture_.target =
-          XrImageTransportBase::SharedBufferTextureTarget();
+      overlay_texture_.target = GL_TEXTURE_2D;
       glGenTextures(1, &overlay_texture_.id);
+    }
+
+    // If the image is going to be flipped during compositing then the overlay
+    // needs to be rendered flipped as well.
+    if (ShouldFlipSubmittedImage()) {
+      transform.Translate(0, 1);
+      transform.Scale(1, -1);
+      transform.GetColMajorF(transform_floats);
     }
 
     glBindTexture(overlay_texture_.target, overlay_texture_.id);
@@ -395,7 +408,7 @@ bool OpenXrGraphicsBindingOpenGLES::WaitOnFence(gfx::GpuFence& gpu_fence) {
   return true;
 }
 
-bool OpenXrGraphicsBindingOpenGLES::ShouldFlipSubmittedImage() {
+bool OpenXrGraphicsBindingOpenGLES::ShouldFlipSubmittedImage() const {
   // WebGPU produces textures that are y-flipped relative to WebGL, which needs
   // to be accounted for during frame submission.
   return IsWebGPUSession();

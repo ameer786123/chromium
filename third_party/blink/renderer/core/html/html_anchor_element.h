@@ -109,12 +109,7 @@ class CORE_EXPORT HTMLAnchorElementBase : public HTMLElement,
 
   void SendPings(const KURL& destination_url) const;
 
-  // Element overrides:
-  void SetHovered(bool hovered) override;
-
-  Element* interestTargetElement() override;
-
-  AtomicString interestAction() const override;
+  Element* InterestTargetElement() const override;
 
   void Trace(Visitor*) const override;
 
@@ -131,7 +126,7 @@ class CORE_EXPORT HTMLAnchorElementBase : public HTMLElement,
   bool ShouldHaveFocusAppearance() const final;
   FocusableState IsFocusableState(
       UpdateBehavior update_behavior) const override;
-  bool IsKeyboardFocusable(UpdateBehavior update_behavior) const override;
+  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior) const override;
   void DefaultEventHandler(Event&) final;
   bool HasActivationBehavior() const override;
   void SetActive(bool active) final;
@@ -160,6 +155,16 @@ class CORE_EXPORT HTMLAnchorElement : public HTMLAnchorElementBase {
 
  public:
   explicit HTMLAnchorElement(Document& document);
+
+  void AttachLayoutTree(AttachContext& context) override;
+  void DetachLayoutTree(bool performing_reattach) override;
+
+  // Gets the element which is referenced by this anchor fragment
+  // (#scroll-target), or nullptr if not found.
+  Element* ScrollTargetElement() const;
+  // Gets the closest ancestor scrollable area of this anchors scroll target
+  // element.
+  PaintLayerScrollableArea* AncestorScrollableAreaOfScrollTargetElement() const;
 };
 
 template <>

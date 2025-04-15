@@ -38,6 +38,7 @@
 #include "extensions/browser/extension_system.h"
 #include "facegaze_settings_event_handler.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "services/accessibility/public/mojom/assistive_technology_type.mojom.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
 #include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/base/ime/ash/input_method_manager.h"
@@ -45,13 +46,6 @@
 #include "ui/events/devices/input_device_event_observer.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/wm/core/coordinate_conversion.h"
-
-// Matches 'supports_os_accessibility_service` in
-// //services/accessibility/buildflags.gni.
-#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/common/extensions/api/accessibility_private.h"
-#include "services/accessibility/public/mojom/assistive_technology_type.mojom.h"
-#endif  // BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace content {
 struct FocusedNodeDetails;
@@ -183,6 +177,9 @@ class AccessibilityManager
   // Returns true if the Sticky Keys is enabled, or false if not.
   bool IsStickyKeysEnabled() const;
 
+  // Returns true if the built-in touchpad is disabled, or false if not.
+  bool IsTouchpadDisabled() const;
+
   // Enables or disables spoken feedback. Enabling spoken feedback installs the
   // ChromeVox component extension.
   void EnableSpokenFeedback(bool enabled);
@@ -212,17 +209,24 @@ class AccessibilityManager
   // Returns true if ReducedAnimations is enabled.
   bool IsReducedAnimationsEnabled() const;
 
-  // Enables or disables overlay scrollbar.
-  void EnableOverlayScrollbar(bool enabled);
+  // Enables or disables the always show scrollbars feature.
+  void EnableAlwaysShowScrollbars(bool enabled);
 
-  // Returns true if overlay scrollbar is enabled.
-  bool IsOverlayScrollbarEnabled() const;
+  // Returns true if the always show scrollbars feature is enabled.
+  bool IsAlwaysShowScrollbarsEnabled() const;
 
   // Enables or disables FaceGaze.
   void EnableFaceGaze(bool enabled);
 
   // Returns true if FaceGaze is enabled.
   bool IsFaceGazeEnabled() const;
+
+  // Called from settings to turn FaceGaze on/off.
+  void RequestEnableFaceGaze(bool enable);
+
+  // Called when the FaceGaze disable dialog is accepted/rejected so that the
+  // settings UI can be properly updated.
+  void SendFaceGazeDisableDialogResultToSettings(bool accepted);
 
   // Adds the FaceGazeSettingsEventHandler to process events from FaceGaze.
   void AddFaceGazeSettingsEventHandler(FaceGazeSettingsEventHandler* handler);

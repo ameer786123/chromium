@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/web_applications/web_app_metrics.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -15,7 +15,6 @@
 #include "base/observer_list.h"
 #include "base/one_shot_event.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "chrome/browser/after_startup_task_utils.h"
@@ -30,7 +29,6 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
-#include "chrome/common/chrome_features.h"
 #include "components/site_engagement/content/engagement_type.h"
 #include "components/site_engagement/content/site_engagement_service.h"
 #include "content/public/browser/web_contents.h"
@@ -73,8 +71,7 @@ WebAppMetrics::WebAppMetrics(Profile* profile)
           site_engagement::SiteEngagementService::Get(profile)),
       profile_(profile),
       icon_health_checks_(profile) {
-  if (base::FeatureList::IsEnabled(features::kDesktopPWAsIconHealthChecks) &&
-      !g_disable_automatic_icon_health_checks_for_testing) {
+  if (!g_disable_automatic_icon_health_checks_for_testing) {
     AfterStartupTaskUtils::PostTask(
         FROM_HERE, base::SequencedTaskRunner::GetCurrentDefault(),
         base::BindOnce(&WebAppIconHealthChecks::Start,
@@ -97,16 +94,19 @@ void WebAppMetrics::OnEngagementEvent(
     double old_score,
     site_engagement::EngagementType engagement_type,
     const std::optional<webapps::AppId>& app_id) {
-  if (!web_contents)
+  if (!web_contents) {
     return;
+  }
 
   Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  if (!browser)
+  if (!browser) {
     return;
+  }
 
   // Number of apps is not yet counted.
-  if (num_user_installed_apps_ == kNumUserInstalledAppsNotCounted)
+  if (num_user_installed_apps_ == kNumUserInstalledAppsNotCounted) {
     return;
+  }
 
   // The engagement broken down by the number of apps installed must be recorded
   // for all engagement events, not just web apps.

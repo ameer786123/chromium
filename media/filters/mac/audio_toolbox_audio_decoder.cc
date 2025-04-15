@@ -9,6 +9,7 @@
 
 #include "media/filters/mac/audio_toolbox_audio_decoder.h"
 
+#include <algorithm>
 #include <optional>
 
 #include "base/apple/osstatus_logging.h"
@@ -16,7 +17,6 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/bind_post_task.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_codecs.h"
@@ -75,7 +75,7 @@ OSStatus ProvideInputCallback(AudioConverterRef decoder,
 
   // No const version of this API unfortunately, so we need const_cast().
   buffer_list->mBuffers[0].mData =
-      const_cast<uint8_t*>(input_data->buffer->data());
+      const_cast<uint8_t*>(base::span(*input_data->buffer).data());
 
   if (packets)
     *packets = &input_data->packet;
@@ -92,8 +92,7 @@ OSStatus ProvideInputCallback(AudioConverterRef decoder,
 AudioConverterRef
 AudioToolboxAudioDecoder::ScopedAudioConverterRefTraits::Retain(
     AudioConverterRef converter) {
-  NOTREACHED_IN_MIGRATION() << "Only compatible with ASSUME policy";
-  return converter;
+  NOTREACHED() << "Only compatible with ASSUME policy";
 }
 
 // static
@@ -270,8 +269,7 @@ bool AudioToolboxAudioDecoder::CreateDecoder(const AudioDecoderConfig& config) {
       break;
 #endif
     default:
-      NOTREACHED_IN_MIGRATION() << "Unsupported codec: " << config.codec();
-      return false;
+      NOTREACHED() << "Unsupported codec: " << config.codec();
   }
 
   // Output is float planar.

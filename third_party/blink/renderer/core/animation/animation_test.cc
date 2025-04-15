@@ -78,10 +78,13 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
+namespace {
 
 void ExpectRelativeErrorWithinEpsilon(double expected, double observed) {
   EXPECT_NEAR(1.0, observed / expected, std::numeric_limits<double>::epsilon());
 }
+
+}  // namespace
 
 class AnimationAnimationTestNoCompositing : public PaintTestConfigurations,
                                             public RenderingTest {
@@ -1409,9 +1412,61 @@ TEST_P(AnimationAnimationTestCompositing, PreCommitWithUnresolvedStartTimes) {
   // synced, no update is pending.
   EXPECT_FALSE(animation->CompositorPending());
 
-  // At this point, a call to PreCommit should bail out and tell us to wait for
-  // next commit because there are no resolved start times.
-  EXPECT_FALSE(animation->PreCommit(0, nullptr, true));
+  int initial_compositor_group = animation->CompositorGroup();
+  int next_compositor_group = initial_compositor_group + 1;
+
+  // The animation is missing a start time, but does not require a restart.
+  //  * PreCommit returns false to defer the animation.
+  //  * Update returns true signalling that we need to service animations on the
+  //    next frame.
+  EXPECT_FALSE(animation->PreCommit(next_compositor_group++, nullptr, true));
+  EXPECT_TRUE(GetDocument().GetPendingAnimations().Update(nullptr, true));
+  EXPECT_EQ(initial_compositor_group, animation->CompositorGroup());
+  EXPECT_FALSE(animation->CompositorPending());
+  EXPECT_TRUE(animation->pending());
+  EXPECT_FALSE(animation->StartTimeInternal());
+
+  // Introduce a change that does not invalidate the pending start time, but
+  // forces a restart to pick up revised keyframes. After restarting, the
+  // animation has the same compositor group to avoid a stuttered start.
+  animation->SetCompositorPending(
+      Animation::CompositorPendingReason::kPendingEffectChange);
+  EXPECT_TRUE(animation->CompositorPending());
+  EXPECT_TRUE(animation->PreCommit(next_compositor_group++, nullptr, true));
+  EXPECT_TRUE(GetDocument().GetPendingAnimations().Update(nullptr, true));
+  EXPECT_TRUE(animation->CompositorPending());
+  EXPECT_FALSE(animation->StartTimeInternal());
+  EXPECT_TRUE(animation->pending());
+  EXPECT_EQ(initial_compositor_group, animation->CompositorGroup());
+
+  // Introduce a change that invalidates the pending start time. PreCommit
+  // cancels and restarts the animation.
+  animation->SetCurrentTimeInternal(ANIMATION_TIME_DELTA_FROM_SECONDS(0.2));
+  animation->SetCompositorPending(
+      Animation::CompositorPendingReason::kPendingUpdate);
+  EXPECT_TRUE(animation->CompositorPending());
+  EXPECT_TRUE(animation->PreCommit(next_compositor_group++, nullptr, true));
+  EXPECT_TRUE(GetDocument().GetPendingAnimations().Update(nullptr, true));
+  EXPECT_TRUE(animation->CompositorPending());
+  EXPECT_FALSE(animation->StartTimeInternal());
+  EXPECT_TRUE(animation->pending());
+  EXPECT_NE(initial_compositor_group, animation->CompositorGroup());
+
+  // Still waiting on start time, but no change the the animation.
+  // Defer the animation.
+  EXPECT_FALSE(animation->PreCommit(next_compositor_group++, nullptr, true));
+  EXPECT_TRUE(GetDocument().GetPendingAnimations().Update(nullptr, true));
+  EXPECT_TRUE(animation->CompositorPending());
+  EXPECT_FALSE(animation->StartTimeInternal());
+  EXPECT_TRUE(animation->pending());
+
+  // crbug.com/396115932: Call PreCommit/Update with start_on_compositor=false.
+  // Animation can no longer be deferred.
+  EXPECT_TRUE(animation->PreCommit(next_compositor_group++, nullptr, false));
+  EXPECT_FALSE(GetDocument().GetPendingAnimations().Update(nullptr, false));
+  EXPECT_FALSE(animation->CompositorPending());
+  EXPECT_TRUE(animation->StartTimeInternal());
+  EXPECT_FALSE(animation->pending());
 }
 
 // Cancel is synchronous on the main thread, but asynchronously deferred on the
@@ -1422,11 +1477,13 @@ TEST_P(AnimationAnimationTestCompositing, AsynchronousCancel) {
   ASSERT_TRUE(animation->HasActiveAnimationsOnCompositor());
 
   animation->cancel();
-  EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
+  EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_TRUE(animation->CompositorPending());
   EXPECT_TRUE(animation->CompositorPendingCancel());
 
-  GetDocument().GetPendingAnimations().Update(nullptr, false);
+  // Do not need to service animations on the next frame since the pending
+  // animation has been cancelled.
+  EXPECT_FALSE(GetDocument().GetPendingAnimations().Update(nullptr, false));
   EXPECT_FALSE(animation->CompositorPending());
   EXPECT_FALSE(animation->CompositorPendingCancel());
   EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
@@ -1628,9 +1685,8 @@ TEST_P(AnimationAnimationTestCompositing,
   keyframe_effect->UpdateBoxSizeAndCheckTransformAxisAlignment(
       gfx::SizeF(200, 200));
   // Cancel is deferred to PreCommit.
-  EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_TRUE(animation->CompositorPendingCancel());
-
+  EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
   GetDocument().GetPendingAnimations().Update(nullptr, true);
   EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_FALSE(animation->CompositorPendingCancel());
@@ -1639,7 +1695,9 @@ TEST_P(AnimationAnimationTestCompositing,
   keyframe_effect->UpdateBoxSizeAndCheckTransformAxisAlignment(
       gfx::SizeF(200, 300));
   EXPECT_TRUE(animation->CompositorPendingCancel());
+  EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
   GetDocument().GetPendingAnimations().Update(nullptr, true);
+  EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_FALSE(animation->CompositorPendingCancel());
 }
 
@@ -1681,9 +1739,8 @@ TEST_P(AnimationAnimationTestCompositing,
   // Width change forces a restart.
   keyframe_effect->UpdateBoxSizeAndCheckTransformAxisAlignment(
       gfx::SizeF(200, 300));
-  EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_TRUE(animation->CompositorPendingCancel());
-
+  EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
   GetDocument().GetPendingAnimations().Update(nullptr, true);
   EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_FALSE(animation->CompositorPendingCancel());
@@ -1726,7 +1783,7 @@ TEST_P(AnimationAnimationTestCompositing,
   // Height change forces a restart.
   keyframe_effect->UpdateBoxSizeAndCheckTransformAxisAlignment(
       gfx::SizeF(300, 400));
-  EXPECT_TRUE(animation->HasActiveAnimationsOnCompositor());
+  EXPECT_FALSE(animation->HasActiveAnimationsOnCompositor());
   EXPECT_TRUE(animation->CompositorPending());
   EXPECT_TRUE(animation->CompositorPendingCancel());
 
@@ -1797,6 +1854,12 @@ TEST_P(AnimationAnimationTestCompositing,
 
   UpdateAllLifecyclePhasesForTest();
   scroll_animation->play();
+
+  EXPECT_FALSE(GetDocument().GetPendingAnimations().Update(nullptr, true));
+  EXPECT_FALSE(scroll_animation->CompositorPending());
+  EXPECT_TRUE(scroll_animation->pending());
+  EXPECT_FALSE(scroll_animation->StartTimeInternal());
+
   scroll_animation->SetDeferredStartTimeForTesting();
   EXPECT_EQ(scroll_animation->CheckCanStartAnimationOnCompositor(nullptr),
             CompositorAnimations::kNoFailure);
@@ -2090,11 +2153,13 @@ TEST_P(AnimationAnimationTestNoCompositing,
   SimulateFrame(2000);
   EXPECT_TRUE(animation->HasPendingActivity());
   // Cancel rejects the finished promise and creates a new pending finished
-  // promise.
-  // TODO(crbug.com/960944): Investigate if this should return false to prevent
-  // holding onto the animation indefinitely.
+  // promise. Though the new finished promise is not resolved, it should not
+  // indicate that we have pending activity as a canceled animation will never
+  // finish. Playing or pausing the cancelled animation will trigger having
+  // pending activity. If cancel were to trigger pending activity we would
+  // have a memory leak.
   animation->cancel();
-  EXPECT_TRUE(animation->HasPendingActivity());
+  EXPECT_FALSE(animation->HasPendingActivity());
 }
 
 class MockEventListener final : public NativeEventListener {
@@ -2144,6 +2209,116 @@ TEST_P(AnimationAnimationTestNoCompositing,
   EXPECT_EQ("idle", animation->playState());
   EXPECT_FALSE(animation->Update(kTimingUpdateForAnimationFrame));
   EXPECT_FALSE(animation->HasPendingActivity());
+}
+
+TEST_P(AnimationAnimationTestNoCompositing, PendingActivityWithOnceTrigger) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      @keyframes myAnim {
+        from { transform: scaleX(1); }
+        to { transform: scaleX(5); }
+      }
+      .subject {
+        height: 50px;
+        width: 50px;
+        animation: myAnim linear 0.5s none;
+        animation-trigger: scroll() once 50px 100px;
+      }
+     .scroller {
+        overflow-y: scroll;
+        height: 500px;
+        width: 500px;
+        border: solid 1px;
+        position: relative;
+      }
+      #space {
+        width: 50px;
+        height: 600px;
+      }
+    </style>
+    <div id="scroller" class="scroller">
+      <div id="space"></div>
+      <div id="target" class="subject"></div>
+      <div id="space"></div>
+    </div>
+  )HTML");
+  Element* target = GetDocument().getElementById(AtomicString("target"));
+  ElementAnimations* animations = target->GetElementAnimations();
+  animation = (*animations->Animations().begin()).key;
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kIdle);
+  EXPECT_TRUE(animation->HasPendingActivity());
+
+  Element* scroller = GetDocument().getElementById(AtomicString("scroller"));
+
+  scroller->scrollTo(0, 75);
+  UpdateAllLifecyclePhasesForTest();
+
+  animation->trigger()->ActionAnimation(animation);
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kPrimary);
+  // Finish the animation.
+  animation->finish();
+
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kPrimary);
+  EXPECT_FALSE(animation->HasPendingActivity());
+}
+
+TEST_P(AnimationAnimationTestNoCompositing, PendingActivityWithRepeatTrigger) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      @keyframes myAnim {
+        from { transform: scaleX(1); }
+        to { transform: scaleX(5); }
+      }
+      .subject {
+        height: 50px;
+        width: 50px;
+        animation: myAnim linear 0.5s none;
+        animation-trigger: scroll() repeat 50px 100px;
+      }
+     .scroller {
+        overflow-y: scroll;
+        height: 500px;
+        width: 500px;
+        border: solid 1px;
+        position: relative;
+      }
+      #space {
+        width: 50px;
+        height: 600px;
+      }
+    </style>
+    <div id="scroller" class="scroller">
+      <div id="space"></div>
+      <div id="target" class="subject"></div>
+      <div id="space"></div>
+    </div>
+  )HTML");
+  Element* target = GetDocument().getElementById(AtomicString("target"));
+  ElementAnimations* animations = target->GetElementAnimations();
+  animation = (*animations->Animations().begin()).key;
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kIdle);
+  EXPECT_TRUE(animation->HasPendingActivity());
+
+  Element* scroller = GetDocument().getElementById(AtomicString("scroller"));
+
+  scroller->scrollTo(0, 75);
+  UpdateAllLifecyclePhasesForTest();
+
+  animation->trigger()->ActionAnimation(animation);
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kPrimary);
+  // Finish the animation.
+  animation->finish();
+
+  UpdateAllLifecyclePhasesForTest();
+
+  EXPECT_EQ(animation->GetTriggerState(), AnimationTriggerState::kPrimary);
+  EXPECT_TRUE(animation->HasPendingActivity());
 }
 
 TEST_P(AnimationAnimationTestCompositing, InvalidExecutionContext) {

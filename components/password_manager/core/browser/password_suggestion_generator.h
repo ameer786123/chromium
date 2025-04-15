@@ -5,11 +5,12 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_SUGGESTION_GENERATOR_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_SUGGESTION_GENERATOR_H_
 
+#include <string>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/types/optional_ref.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/ui/credential_ui_entry.h"
@@ -28,6 +29,18 @@ using ShowWebAuthnCredentials =
 using IsTriggeredOnPasswordForm =
     base::StrongAlias<class IsTriggeredOnPasswordFormTag, bool>;
 using IsCrossDomain = base::StrongAlias<class IsCrossDomainTag, bool>;
+
+extern const char kReauthPromoHistogramName[];
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class FillingReauthPromoShown {
+  kNotShown,
+  kShownWithOtherSuggestions,
+  kShownAlone,
+
+  kMaxValue = kShownAlone
+};
 
 // Helper class to generate password suggestions. Calls to the generation do not
 // modify the state of this class.

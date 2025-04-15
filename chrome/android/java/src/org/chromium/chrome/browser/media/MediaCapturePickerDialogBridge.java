@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.media;
 import android.app.Activity;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.content_public.browser.WebContents;
@@ -40,18 +41,27 @@ public class MediaCapturePickerDialogBridge {
      * Shows the media capture picker dialog.
      *
      * @param windowAndroid Window to show the dialog on.
+     * @param appName Name of the app that wants to share content.
+     * @param requestAudio True if audio sharing is also requested.
      */
     @CalledByNative
-    public void showDialog(WindowAndroid windowAndroid) {
+    public void showDialog(
+            WindowAndroid windowAndroid,
+            @JniType("std::u16string") String appName,
+            boolean requestAudio) {
         Activity activity = windowAndroid.getActivity().get();
         MediaCapturePickerDialog.showDialog(
+                activity,
                 ((ModalDialogManagerHolder) activity).getModalDialogManager(),
-                (webContents) -> {
+                appName,
+                requestAudio,
+                (webContents, audioShare) -> {
                     // We know `mNativeMediaCapturePickerDialogBridge` is non-zero because
                     // `destroy` will only be called after the dialog is dismissed.
                     assert mNativeMediaCapturePickerDialogBridge != 0;
                     MediaCapturePickerDialogBridgeJni.get()
-                            .onResult(mNativeMediaCapturePickerDialogBridge, webContents);
+                            .onResult(
+                                    mNativeMediaCapturePickerDialogBridge, webContents, audioShare);
                 });
     }
 
@@ -62,6 +72,9 @@ public class MediaCapturePickerDialogBridge {
 
     @NativeMethods
     interface Natives {
-        void onResult(long nativeMediaCapturePickerDialogBridge, WebContents webContents);
+        void onResult(
+                long nativeMediaCapturePickerDialogBridge,
+                WebContents webContents,
+                boolean audioShare);
     }
 }

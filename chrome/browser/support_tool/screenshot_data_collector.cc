@@ -15,6 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/strings/strcat.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -209,8 +210,7 @@ void ScreenshotDataCollector::OnSourceSelected(const std::string& err,
       break;
     }
     default: {
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     }
   }
   const gfx::Rect bounds(window->bounds().width(), window->bounds().height());
@@ -251,7 +251,7 @@ void ScreenshotDataCollector::OnSourceSelected(const std::string& err,
       break;
     }
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   desktop_capturer_->Start(this);
   if (!desktop_capturer_->SelectSource(id.id)) {

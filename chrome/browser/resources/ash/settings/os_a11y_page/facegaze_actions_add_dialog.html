@@ -13,7 +13,7 @@
     padding-inline-end: var(--dialog-horizontal-padding);
     padding-inline-start: var(--dialog-horizontal-padding);
     padding-bottom: 16px;
-    line-height: 1;
+    font-size: 14px;
   }
 
   cr-dialog [slot=body] {
@@ -47,7 +47,7 @@
     padding-inline-start: 0;
   }
 
-  iron-icon[icon='settings:check-circle'] {
+  iron-icon[icon='cr:check-circle'] {
     --iron-icon-fill-color: var(--cr-link-color);
     margin-inline-end: 26px;
   }
@@ -123,6 +123,10 @@
 
   #faceGazeGestureCount {
     text-align: center;
+    font-size: 14px;
+    color: var(--cros-sys-on_surface);
+    padding-bottom: 0px;
+    padding-top: 16px;
   }
 
   #cameraPreviewContainer {
@@ -153,19 +157,32 @@
     margin-inline-end: 10px;
   }
 
-  iron-icon[icon='cr:warning'] {
-    fill: var(--cros-icon-color-warning);
+  iron-icon[icon='cr20:warning'] {
+    --iron-icon-fill-color: var(--cros-sys-on_warning_container);
   }
 
-  #headerContainer {
-    align-items: center;
-    display: flex;
-    gap: 4px;
-  }
-
-  #conflictingGestureContainer {
+  #warningContainer {
+    background-color: var(--icon-holder-bg, var(--cros-sys-warning_container));
     display: flex;
     gap: 8px;
+  }
+
+  #warningText {
+    color: var(--cros-sys-on_surface);
+  }
+
+  iron-icon[icon='cr:info-outline'] {
+    --iron-icon-fill-color: var(--cros-sys-on_secondary_container);
+  }
+
+  #complexActionContainer {
+    background-color: var(--cros-sys-secondary_container);
+    display: flex;
+    gap: 8px;
+  }
+
+  #complexActionText {
+    color: var(--cros-sys-on_secondary_container);
   }
 
 </style>
@@ -190,7 +207,7 @@
             <div class="flex padded" aria-hidden="true">
               [[getActionDisplayText_(item)]]
             </div>
-            <iron-icon icon="settings:check-circle" hidden="[[!selected]]">
+            <iron-icon icon="cr:check-circle" hidden="[[!selected]]">
             </iron-icon>
           </div>
         </template>
@@ -206,6 +223,15 @@
         $i18n{next}
       </cr-button>
     </div>
+    <template is="dom-if"
+        if="[[getComplexActionDisplayText_(selectedAction_)]]" restamp>
+      <div id="complexActionContainer" tabindex="-1" slot="footer">
+        <iron-icon icon="cr:info-outline"></iron-icon>
+        <div id="complexActionText">
+          [[getComplexActionDisplayText_(selectedAction_)]]
+        </div>
+      </div>
+    </template>
   </template>
 
   <template is="dom-if" if="[[showCustomKeyboard_]]"
@@ -260,10 +286,6 @@
     <div id="title" tabindex="-1" slot="title">
       [[localizedSelectGestureTitle_]]
     </div>
-    <div id="headerContainer" slot="header">
-      <iron-icon icon="cr:warning"></iron-icon>
-      <div>$i18n{faceGazeActionsDialogSelectGestureSubtitle}</div>
-    </div>
     <div id="dialogBody" slot="body" scrollable>
       <iron-list id="faceGazeAvailableGesturesList"
           scroll-target="dialogBody"
@@ -281,7 +303,7 @@
               </iron-icon>
               [[getGestureDisplayText_(item)]]
             </div>
-            <iron-icon icon="settings:check-circle" hidden="[[!selected]]">
+            <iron-icon icon="cr:check-circle" hidden="[[!selected]]">
             </iron-icon>
           </div>
         </template>
@@ -308,12 +330,11 @@
         </cr-button>
       </div>
     </div>
-
     <template is="dom-if"
-        if="[[getConflictingGestureDisplayText_(selectedGesture_)]]" restamp>
-      <div id="conflictingGestureContainer" tabindex="-1" slot="footer">
-        <iron-icon icon="cr:warning"></iron-icon>
-        <div>[[getConflictingGestureDisplayText_(selectedGesture_)]]</div>
+        if="[[getWarningDisplayText_(selectedGesture_)]]" restamp>
+      <div id="warningContainer" tabindex="-1" slot="footer">
+        <iron-icon icon="cr20:warning"></iron-icon>
+        <div id="warningText">[[getWarningDisplayText_(selectedGesture_)]]</div>
       </div>
     </template>
   </template>
@@ -330,6 +351,11 @@
       $i18n{faceGazeActionsDialogGestureThresholdSubtitle}
     </div>
     <div slot="body">
+      <div id="faceGazeGestureCount"
+          class="start settings-box-text"
+          aria-live="polite">
+        [[localizedGestureCountLabel_]]
+      </div>
       <div id="cameraPreviewContainer" class="gesture-not-detected">
         <video class="preview" id="cameraStream" autoplay playsinline></video>
       </div>
@@ -357,11 +383,6 @@
             aria-label="$i18n{faceGazeActionsDialogGestureThresholdIncreaseButtonLabel}"
             on-click="onIncreaseThresholdButtonClick_">
         </cr-icon-button>
-      </div>
-      <div id="faceGazeGestureCount"
-          class="start settings-box-text"
-          aria-live="polite">
-        [[localizedGestureCountLabel_]]
       </div>
     </div>
     <div slot="button-container" class="justify-space-between">

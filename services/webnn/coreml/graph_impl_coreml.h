@@ -17,6 +17,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/types/expected.h"
+#include "mojo/public/cpp/base/big_buffer.h"
 #include "services/webnn/coreml/graph_builder_coreml.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom-forward.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom.h"
@@ -40,6 +41,7 @@ class ContextImplCoreml;
 class API_AVAILABLE(macos(14.0)) GraphImplCoreml final : public WebNNGraphImpl {
  public:
   static void CreateAndBuild(
+      mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
       ContextImplCoreml* context,
       mojom::GraphInfoPtr graph_info,
       ComputeResourceInfo compute_resource_info,
@@ -89,7 +91,9 @@ class API_AVAILABLE(macos(14.0)) GraphImplCoreml final : public WebNNGraphImpl {
     MLModel* __strong ml_model;
   };
 
-  GraphImplCoreml(ContextImplCoreml* context, std::unique_ptr<Params> params);
+  GraphImplCoreml(mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
+                  ContextImplCoreml* context,
+                  std::unique_ptr<Params> params);
 
   static MLFeatureValue* CreateMultiArrayFeatureValueFromBytes(
       MLMultiArrayConstraint* multi_array_constraint,
@@ -117,17 +121,13 @@ class API_AVAILABLE(macos(14.0)) GraphImplCoreml final : public WebNNGraphImpl {
       NSError* error);
 
   static void DidCreateAndBuild(
+      mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
       base::WeakPtr<WebNNContextImpl> context,
       WebNNContextImpl::CreateGraphImplCallback callback,
       base::expected<std::unique_ptr<Params>, mojom::ErrorPtr> result);
 
-  // Execute the compiled platform graph asynchronously. The `named_inputs` were
-  // validated in base class so we can use them to compute directly, the result
-  // of execution will be returned to renderer process with the `callback`.
-  void ComputeImpl(
-      base::flat_map<std::string, mojo_base::BigBuffer> named_inputs,
-      mojom::WebNNGraph::ComputeCallback callback) override;
-
+  // Execute the compiled platform graph asynchronously. The inputs were
+  // validated in base class so we can use them to compute directly.
   void DispatchImpl(
       const base::flat_map<std::string_view, WebNNTensorImpl*>& named_inputs,
       const base::flat_map<std::string_view, WebNNTensorImpl*>& named_outputs)

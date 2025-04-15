@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/i18n/time_formatting.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/history_clusters/core/history_clusters_util.h"
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "components/history_embeddings/history_embeddings_service.h"
 #include "components/omnibox/browser/autocomplete_input.h"
@@ -70,15 +72,17 @@ void HistoryEmbeddingsProvider::Start(const AutocompleteInput& input,
   // Remove the keyword from input if we're in keyword mode for a starter pack
   // engine.
   const auto [adjusted_input, starter_pack_engine] =
-      KeywordProvider::AdjustInputForStarterPackEngines(
-          input, client()->GetTemplateURLService());
+      AdjustInputForStarterPackKeyword(input,
+                                       client()->GetTemplateURLService());
   input_ = adjusted_input;
   starter_pack_engine_ = starter_pack_engine;
 
   int num_terms =
-      history_embeddings::CountWords(base::UTF16ToUTF8(adjusted_input.text()));
-  if (num_terms < history_embeddings::kSearchQueryMinimumWordCount.Get())
+      history_embeddings::CountWords(base::UTF16ToUTF8(input_.text()));
+  if (num_terms < history_embeddings::GetFeatureParameters()
+                      .search_query_minimum_word_count) {
     return;
+  }
 
   history_embeddings::HistoryEmbeddingsService* service =
       client()->GetHistoryEmbeddingsService();
@@ -87,8 +91,8 @@ void HistoryEmbeddingsProvider::Start(const AutocompleteInput& input,
   client()->GetOmniboxTriggeredFeatureService()->FeatureTriggered(
       metrics::OmniboxEventProto_Feature_HISTORY_EMBEDDINGS_FEATURE);
   service->Search(
-      nullptr, base::UTF16ToUTF8(adjusted_input.text()), {},
-      provider_max_matches_,
+      nullptr, base::UTF16ToUTF8(input_.text()), {}, provider_max_matches_,
+      /*skip_answering=*/false,
       base::BindRepeating(&HistoryEmbeddingsProvider::OnReceivedSearchResult,
                           weak_factory_.GetWeakPtr()));
 }
@@ -101,7 +105,15 @@ void HistoryEmbeddingsProvider::Stop(bool clear_cached_results,
   //   controller that they expect a slow response and the controller to
   //   accommodate it by updating its stop, debounce, and cache timers'
   //   behaviors.
-  // done_ = true;
+  if (!due_to_user_inactivity && !done_) {
+    done_ = true;
+    size_t erased_count = std::erase_if(matches_, [&](const auto& match) {
+      return match.type == AutocompleteMatchType::HISTORY_EMBEDDINGS_ANSWER;
+    });
+    CHECK_LE(erased_count, 1u);
+    if (erased_count)
+      NotifyListeners(!matches_.empty());
+  }
 
   // TODO(b/333770460): Once `HistoryEmbeddingsService` has a stop API, we
   //   should call it here.
@@ -128,8 +140,9 @@ void HistoryEmbeddingsProvider::OnReceivedSearchResult(
     matches_.push_back(CreateMatch(scored_url_row));
   }
 
-  bool answers_enabled = history_embeddings::kAnswersInOmniboxScoped.Get() &&
-                         input_.InKeywordMode();
+  bool answers_enabled =
+      history_embeddings::GetFeatureParameters().answers_in_omnibox_scoped &&
+      input_.InKeywordMode();
   if (answers_enabled) {
     auto optional_match = CreateAnswerMatch(
         search_result.answerer_result,
@@ -162,7 +175,8 @@ AutocompleteMatch HistoryEmbeddingsProvider::CreateMatch(
   match.contents = base::UTF8ToUTF16(scored_url_row.row.url().spec());
   match.contents_class = ClassifyTermMatches(
       FindTermMatches(input_.text(), match.contents), match.contents.size(),
-      ACMatchClassification::MATCH, ACMatchClassification::URL);
+      ACMatchClassification::MATCH | ACMatchClassification::URL,
+      ACMatchClassification::URL);
 
   if (starter_pack_engine_) {
     match.keyword = starter_pack_engine_->keyword();
@@ -184,6 +198,10 @@ std::optional<AutocompleteMatch> HistoryEmbeddingsProvider::CreateAnswerMatch(
 
   switch (answerer_result.status) {
     case history_embeddings::ComputeAnswerStatus::kUnspecified:
+    case history_embeddings::ComputeAnswerStatus::kUnanswerable:
+    case history_embeddings::ComputeAnswerStatus::kFiltered:
+    case history_embeddings::ComputeAnswerStatus::kExecutionCancelled:
+    case history_embeddings::ComputeAnswerStatus::kModelUnavailable:
       return std::nullopt;
 
     case history_embeddings::ComputeAnswerStatus::kLoading: {
@@ -204,8 +222,11 @@ std::optional<AutocompleteMatch> HistoryEmbeddingsProvider::CreateAnswerMatch(
               base::UTF8ToUTF16(answerer_result.answer.text())));
       answer_match.destination_url =
           GURL{"chrome://history/?q=" + answerer_result.query};
+      std::u16string source = history_clusters::ComputeURLForDisplay(
+          scored_url_row.row.url(), history_embeddings::GetFeatureParameters()
+                                        .trim_after_host_in_results);
       answer_match.contents = AutocompleteMatch::SanitizeString(
-          base::UTF8ToUTF16(answerer_result.url) + u"  •  " +
+          source + u"  •  " +
           l10n_util::GetStringFUTF16(
               IDS_HISTORY_EMBEDDINGS_ANSWER_SOURCE_VISIT_DATE_LABEL,
               base::TimeFormatShortDate(scored_url_row.row.last_visit())));
@@ -213,24 +234,12 @@ std::optional<AutocompleteMatch> HistoryEmbeddingsProvider::CreateAnswerMatch(
       return answer_match;
     }
 
-    case history_embeddings::ComputeAnswerStatus::kUnanswerable:
-    case history_embeddings::ComputeAnswerStatus::kFiltered:
-      return CreateAnswerMatchHelper(
-          score,
-          l10n_util::GetStringUTF16(IDS_HISTORY_EMBEDDINGS_ANSWER_HEADING),
-          l10n_util::GetStringUTF16(
-              IDS_HISTORY_EMBEDDINGS_ANSWERER_ERROR_UNANSWERABLE));
-
-    case history_embeddings::ComputeAnswerStatus::kModelUnavailable:
     case history_embeddings::ComputeAnswerStatus::kExecutionFailure:
       return CreateAnswerMatchHelper(
           score,
           l10n_util::GetStringUTF16(IDS_HISTORY_EMBEDDINGS_ANSWER_HEADING),
           l10n_util::GetStringUTF16(
               IDS_HISTORY_EMBEDDINGS_ANSWERER_ERROR_TRY_AGAIN));
-
-    case history_embeddings::ComputeAnswerStatus::kExecutionCancelled:
-      return std::nullopt;
   }
 }
 

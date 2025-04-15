@@ -17,10 +17,7 @@ try_.defaults.set(
     cores = 32,
     os = os.LINUX_DEFAULT,
     execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
-    experiments = {
-        # crbug.com/355218109
-        "chromium.use_per_builder_build_dir_name": 100,
-    },
+    reclient_enabled = False,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
@@ -100,6 +97,7 @@ try_.builder(
         ],
     ),
     os = os.WINDOWS_DEFAULT,
+    ssd = True,
     execution_timeout = 6 * time.hour,
 )
 
@@ -117,5 +115,6 @@ try_.builder(
         ],
     ),
     os = os.WINDOWS_DEFAULT,
+    ssd = True,
     execution_timeout = 6 * time.hour,
 )

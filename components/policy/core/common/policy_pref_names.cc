@@ -89,11 +89,6 @@ const char kBackForwardCacheEnabled[] = "policy.back_forward_cache_enabled";
 const char kReadAloudEnabled[] = "policy.read_aloud_enabled";
 #endif  // BUILDFLAG(IS_ANDROID)
 
-// Boolean policy preference to disable the User-Agent Client Hints
-// updated GREASE algorithm feature.
-const char kUserAgentClientHintsGREASEUpdateEnabled[] =
-    "policy.user_agent_client_hints_grease_update_enabled";
-
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 // Last time that a check for cloud policy management was done. This time is
 // recorded on Android and iOS so that retries aren't attempted on every
@@ -105,6 +100,10 @@ const char kLastPolicyCheckTime[] = "policy.last_policy_check_time";
 #if BUILDFLAG(IS_IOS)
 const char kUserPolicyNotificationWasShown[] =
     "policy.user_policy_notification_was_shown";
+
+// A bool for storing whether the user has seen the sync disabled alert since
+// sync was disabled.
+const char kSyncDisabledAlertShown[] = "sync.disabled_alert_shown";
 #endif
 
 // Boolean controlling whether SafeSearch is mandatory for Google Web Searches.
@@ -153,11 +152,6 @@ const char kAllowBackForwardCacheForCacheControlNoStorePageEnabled[] =
 const char kLocalTestPoliciesForNextStartup[] =
     "local_test_policies_for_next_startup";
 
-// A boolean pref indicating whether to fire deprecated/removed mutation events.
-// If false, mutation events might not be fired.
-const char kMutationEventsEnabled[] =
-    "policy.deprecated_mutation_events_enabled";
-
 // Enables the deprecated :--foo syntax of CSS custom state. The :--foo syntax
 // was deprecated and replaced by :state(foo).
 const char kCSSCustomStateDeprecatedSyntaxEnabled[] =
@@ -174,6 +168,15 @@ const char kSelectParserRelaxationEnabled[] =
 // If false, the deprecation rollout will be ignored.
 const char kForcePermissionPolicyUnloadDefaultEnabled[] =
     "policy.force_permission_policy_unload_default_enabled";
+
+// Prevents certain types of downloads based on integer value, which corresponds
+// to policy::DownloadRestriction.
+// 0 - No special restrictions (default)
+// 1 - Block dangerous downloads
+// 2 - Block potentially dangerous downloads
+// 3 - Block all downloads
+// 4 - Block malicious downloads
+const char kDownloadRestrictions[] = "download_restrictions";
 
 #if BUILDFLAG(IS_CHROMEOS)
 // Allows user browser navigation access to the listed host patterns. Only

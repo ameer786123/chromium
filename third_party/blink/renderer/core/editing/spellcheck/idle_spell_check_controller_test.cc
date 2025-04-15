@@ -45,7 +45,7 @@ class IdleSpellCheckControllerTest : public SpellCheckTestBase {
         break;
       case State::kInHotModeInvocation:
       case State::kInColdModeInvocation:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 };
@@ -146,11 +146,10 @@ TEST_F(IdleSpellCheckControllerTest, ColdModeRangeCrossesShadow) {
       "<menu style=\"all: initial\">1127</menu>"
       "<object><optgroup></optgroup></object>"
       "</div>");
-  auto* html_object_element = To<HTMLObjectElement>(
-      GetDocument().QuerySelector(AtomicString("object")));
+  auto* html_object_element = To<HTMLObjectElement>(QuerySelector("object"));
   html_object_element->RenderFallbackContent(
       HTMLObjectElement::ErrorEventPolicy::kDispatch);
-  GetDocument().QuerySelector(AtomicString("div"))->Focus();
+  QuerySelector("div")->Focus();
   UpdateAllLifecyclePhasesForTest();
 
   // Advance to cold mode invocation

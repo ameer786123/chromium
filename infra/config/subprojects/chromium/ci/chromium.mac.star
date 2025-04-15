@@ -24,13 +24,11 @@ ci.defaults.set(
     os = os.MAC_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
+    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
     main_console_view = "main",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    experiments = {
-        # crbug.com/355218109
-        "chromium.use_per_builder_build_dir_name": 100,
-    },
     health_spec = health_spec.DEFAULT,
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -570,7 +568,7 @@ ci.thin_tester(
     ),
     targets = targets.bundle(
         targets = [
-            "chromium_mac_gtests_no_nacl",
+            "chromium_mac_gtests_no_nacl_mac14_arm",
             "chromium_mac_rel_isolated_scripts",
         ],
         mixins = [
@@ -650,12 +648,15 @@ ci.thin_tester(
                     dimensions = {
                         "gpu": None,
                     },
-                    shards = 18,
+                    shards = 6,
                 ),
             ),
             "browser_tests": targets.mixin(
                 ci_only = True,
                 swarming = targets.swarming(
+                    dimensions = {
+                        "cores": "12",
+                    },
                     # crbug.com/1366016
                     shards = 20,
                 ),
@@ -731,12 +732,15 @@ ci.thin_tester(
                     dimensions = {
                         "gpu": None,
                     },
-                    shards = 18,
+                    shards = 6,
                 ),
             ),
             "browser_tests": targets.mixin(
                 ci_only = True,
                 swarming = targets.swarming(
+                    dimensions = {
+                        "cores": "12",
+                    },
                     # crbug.com/1361887
                     shards = 20,
                 ),
@@ -811,7 +815,7 @@ ci.thin_tester(
                     dimensions = {
                         "gpu": None,
                     },
-                    shards = 18,
+                    shards = 6,
                 ),
             ),
             "browser_tests": targets.mixin(
@@ -855,6 +859,7 @@ ci.thin_tester(
         category = "mac",
         short_name = "13",
     ),
+    contact_team_email = "bling-engprod@google.com",
 )
 
 ci.thin_tester(
@@ -898,7 +903,7 @@ ci.thin_tester(
                     "--debug",
                 ],
                 swarming = targets.swarming(
-                    shards = 24,
+                    shards = 8,
                 ),
             ),
             "browser_tests": targets.remove(
@@ -977,6 +982,7 @@ ci.thin_tester(
         targets = [
             "chromium_mac_gtests_no_nacl",
             "chromium_mac_rel_isolated_scripts",
+            "gtests_once",
         ],
         mixins = [
             "mac_14_x64",
@@ -996,7 +1002,7 @@ ci.thin_tester(
                     dimensions = {
                         "gpu": None,
                     },
-                    shards = 18,
+                    shards = 6,
                 ),
             ),
             "browser_tests": targets.mixin(
@@ -1122,13 +1128,12 @@ ios_builder(
     ),
     gn_args = gn_args.config(
         configs = [
-            "compile_only",
+            "minimal_symbols",
             "ios_device",
             "arm64",
-            "ios_google_cert",
-            "ios_disable_code_signing",
             "release_builder",
             "remoteexec",
+            "xctest",
         ],
     ),
     targets = targets.bundle(
@@ -1137,6 +1142,17 @@ ios_builder(
         ],
         additional_compile_targets = [
             "all",
+        ],
+        mixins = [
+            "ci_only",
+            "expand-as-isolated-script",
+            "has_native_resultdb_integration",
+            "ios_restart_device",
+            "limited_capacity_bot",
+            "mac_toolchain",
+            "out_dir_arg",
+            "xcode_16_main",
+            "xctest",
         ],
     ),
     cpu = cpu.ARM64,
@@ -1186,7 +1202,7 @@ ios_builder(
             "debug_static_builder",
             "remoteexec",
             "ios_simulator",
-            "x64",
+            "arm64",
             "xctest",
         ],
     ),
@@ -1201,7 +1217,7 @@ ios_builder(
             "expand-as-isolated-script",
             "has_native_resultdb_integration",
             "isolate_profile_data",
-            "mac_default_x64",
+            "mac_default_arm64",
             "mac_toolchain",
             "out_dir_arg",
             "xcode_16_main",
@@ -1260,7 +1276,7 @@ ios_builder(
             "debug_static_builder",
             "remoteexec",
             "ios_simulator",
-            "x64",
+            "arm64",
             "xctest",
         ],
     ),
@@ -1275,7 +1291,7 @@ ios_builder(
             "expand-as-isolated-script",
             "has_native_resultdb_integration",
             "isolate_profile_data",
-            "mac_default_x64",
+            "mac_default_arm64",
             "mac_toolchain",
             "out_dir_arg",
             "xcode_16_main",

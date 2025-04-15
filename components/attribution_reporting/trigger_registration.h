@@ -13,13 +13,18 @@
 
 #include "base/component_export.h"
 #include "base/types/expected.h"
-#include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_candidate.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
 #include "components/attribution_reporting/attribution_scopes_set.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/suitable_origin.h"
 #include "components/attribution_reporting/trigger_registration_error.mojom-forward.h"
+
+namespace base {
+class DictValue;
+class Value;
+}  // namespace base
 
 namespace attribution_reporting {
 
@@ -51,7 +56,7 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) TriggerRegistration {
   TriggerRegistration(TriggerRegistration&&);
   TriggerRegistration& operator=(TriggerRegistration&&);
 
-  base::Value::Dict ToJson() const;
+  base::DictValue ToJson() const;
 
   bool IsValid() const;
 
@@ -69,6 +74,8 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) TriggerRegistration {
   AggregatableTriggerConfig aggregatable_trigger_config;
   AggregatableDebugReportingConfig aggregatable_debug_reporting_config;
   AttributionScopesSet attribution_scopes;
+  std::vector<AggregatableNamedBudgetCandidate>
+      aggregatable_named_budget_candidates;
 };
 
 }  // namespace attribution_reporting

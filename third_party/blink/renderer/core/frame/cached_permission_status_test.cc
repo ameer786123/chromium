@@ -56,8 +56,8 @@ class MockHTMLPermissionElement
 
   ~MockHTMLPermissionElement() override = default;
 
-  void OnPermissionStatusInitialized(PermissionName permission,
-                                     PermissionStatus status) override {}
+  void OnPermissionStatusInitialized(
+      HashMap<PermissionName, PermissionStatus> map) override {}
 
   void Trace(Visitor* visitor) const override {}
 };
@@ -109,12 +109,7 @@ class CachedPermissionStatusTest : public PageTestBase {
   }
 };
 
-#if BUILDFLAG(IS_ANDROID)
-#define MAYBE_RegisterClient DISABLED_RegisterClient
-#else
-#define MAYBE_RegisterClient RegisterClient
-#endif
-TEST_F(CachedPermissionStatusTest, MAYBE_RegisterClient) {
+TEST_F(CachedPermissionStatusTest, RegisterClient) {
   auto* client1 = MakeGarbageCollected<MockHTMLPermissionElement>();
   CachedPermissionStatus* cache =
       CachedPermissionStatus::From(GetDocument().domWindow());
@@ -144,13 +139,7 @@ TEST_F(CachedPermissionStatusTest, MAYBE_RegisterClient) {
   }
 }
 
-#if BUILDFLAG(IS_ANDROID)
-#define MAYBE_UnregisterClientRemoveObserver \
-  DISABLED_UnregisterClientRemoveObserver
-#else
-#define MAYBE_UnregisterClientRemoveObserver UnregisterClientRemoveObserver
-#endif
-TEST_F(CachedPermissionStatusTest, MAYBE_UnregisterClientRemoveObserver) {
+TEST_F(CachedPermissionStatusTest, UnregisterClientRemoveObserver) {
   auto* client1 = MakeGarbageCollected<MockHTMLPermissionElement>();
   CachedPermissionStatus* cache =
       CachedPermissionStatus::From(GetDocument().domWindow());

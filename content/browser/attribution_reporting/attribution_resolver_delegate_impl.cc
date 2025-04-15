@@ -54,8 +54,8 @@ AttributionResolverDelegateImpl::AttributionResolverDelegateImpl(
     AttributionNoiseMode noise_mode,
     AttributionDelayMode delay_mode)
     : AttributionResolverDelegateImpl(noise_mode,
-                                     delay_mode,
-                                     AttributionConfig()) {}
+                                      delay_mode,
+                                      AttributionConfig()) {}
 
 AttributionResolverDelegateImpl::AttributionResolverDelegateImpl(
     AttributionNoiseMode noise_mode,
@@ -77,6 +77,13 @@ AttributionResolverDelegateImpl::GetDeleteExpiredSourcesFrequency() const {
 
 base::TimeDelta
 AttributionResolverDelegateImpl::GetDeleteExpiredRateLimitsFrequency() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return base::Minutes(5);
+}
+
+base::TimeDelta
+AttributionResolverDelegateImpl::GetDeleteExpiredOsRegistrationsFrequency()
+    const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return base::Minutes(5);
 }
@@ -152,18 +159,6 @@ void AttributionResolverDelegateImpl::ShuffleReports(
     case AttributionNoiseMode::kNone:
       break;
   }
-}
-
-std::optional<double>
-AttributionResolverDelegateImpl::GetRandomizedResponseRate(
-    const attribution_reporting::TriggerSpecs& trigger_specs,
-    attribution_reporting::EventLevelEpsilon epsilon) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const auto num_states = GetNumStates(trigger_specs);
-  if (!num_states.has_value()) {
-    return std::nullopt;
-  }
-  return attribution_reporting::GetRandomizedResponseRate(*num_states, epsilon);
 }
 
 AttributionResolverDelegate::GetRandomizedResponseResult

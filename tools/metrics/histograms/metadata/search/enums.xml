@@ -25,8 +25,6 @@ chromium-metrics-reviews@google.com.
 
 <enums>
 
-<!-- LINT.IfChange(AmbientSearchEntryPoint) -->
-
 <enum name="AmbientSearchEntryPoint">
   <summary>
     The entry point that initiated an ambient search query. (e.g. Context Menu
@@ -48,7 +46,7 @@ chromium-metrics-reviews@google.com.
   <int value="10" label="iOS Spotlight (Camera)"/>
   <int value="11" label="Plus Button (Camera)"/>
   <int value="12" label="Web Search Bar (Camera)"/>
-  <int value="13" label="Companion (Region)"/>
+  <int value="13" label="(Obsolete) Companion (Region) Deprecated 11/2024."/>
   <int value="14" label="Translate Onebox (Camera)"/>
   <int value="15" label="iOS Shortcuts App (Camera)"/>
   <int value="16" label="Web Images Search Bar (Camera)"/>
@@ -83,8 +81,6 @@ chromium-metrics-reviews@google.com.
       label="Lens Overlay Location Bar entry point that leads to Lens
              Overlay, entered via keyboard (Image)"/>
 </enum>
-
-<!-- LINT.ThenChange(//ios/chrome/browser/ui/lens/lens_entrypoint.h:IOSLensEntrypoint) -->
 
 <enum name="AuxiliarySearchRequestStatus">
   <int value="0" label="Sent (overall number of requests issued)"/>
@@ -124,6 +120,17 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Success (Gallery Image)"/>
   <int value="2" label="Success (QR/Bar Code)"/>
   <int value="3" label="Dismissed"/>
+</enum>
+
+<enum name="ClickInfo">
+  <summary>
+    The type of the button that users clicked on the auxiliary search module
+    card.
+  </summary>
+  <int value="0" label="Got it"/>
+  <int value="1" label="No thanks"/>
+  <int value="2" label="Go to settings"/>
+  <int value="3" label="Turn on"/>
 </enum>
 
 <enum name="ContextualSearchCardTag">
@@ -197,6 +204,30 @@ chromium-metrics-reviews@google.com.
   <int value="0" label="No favicons available"/>
   <int value="1" label="Failed"/>
   <int value="2" label="Succeed"/>
+</enum>
+
+<enum name="EntryClickedPosition">
+  <int value="0" label="1st position"/>
+  <int value="1" label="2nd position"/>
+  <int value="2" label="3rd position"/>
+  <int value="3" label="4th position"/>
+  <int value="4" label="5th position"/>
+  <int value="5" label="6th position"/>
+  <int value="6" label="7th position"/>
+  <int value="7" label="8th position"/>
+  <int value="8" label="9th position"/>
+  <int value="9" label="10th position"/>
+</enum>
+
+<enum name="KeywordTableHashValidationStatus">
+  <int value="0" label="Hash was validated successfully"/>
+  <int value="1" label="Decryption failed"/>
+  <int value="2" label="Hash format was invalid"/>
+  <int value="3" label="Hash did not match expected value"/>
+  <int value="4"
+      label="Hash was not verified as decryption services were not available"/>
+  <int value="5"
+      label="Hash was not verified as hash verification is disabled"/>
 </enum>
 
 <!-- LINT.IfChange(LaunchOsChoiceScreenTapHandlingStatus) -->
@@ -293,14 +324,6 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="SCROLLED_CLICKED"/>
 </enum>
 
-<enum name="SearchAnswerRequestResult">
-  <int value="0" label="Another Request Started"/>
-  <int value="1" label="Failed"/>
-  <int value="2" label="No Answer"/>
-  <int value="3" label="Received Answer"/>
-  <int value="4" label="Received Answer - Too Large"/>
-</enum>
-
 <enum name="SearchEngineChoiceReprompt">
   <int value="0" label="Reprompt"/>
   <int value="1" label="No reprompt: invalid dictionary"/>
@@ -377,12 +400,18 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="Invalid choice version"/>
   <int value="3" label="Force reprompt"/>
   <int value="4" label="Command line flag"/>
+  <int value="5" label="Device restore (iOS only)"/>
 </enum>
 
-<enum name="SearchEntryPoint">
-  <int value="0" label="From search widget"/>
-  <int value="1" label="From omnibox"/>
+<!-- LINT.IfChange(SearchPolicyConflictType) -->
+
+<enum name="SearchPolicyConflictType">
+  <int value="0" label="No conflict"/>
+  <int value="1" label="Conflict with featured search engine"/>
+  <int value="2" label="Conflict with non-featured search engine"/>
 </enum>
+
+<!-- LINT.ThenChange(/components/search_engines/template_url_service.h:SearchPolicyConflictType) -->
 
 <enum name="SearchProviderOverrideStatus">
   <int value="0" label="kNoPref"/>
@@ -411,17 +440,21 @@ chromium-metrics-reviews@google.com.
              start)"/>
 </enum>
 
-<enum name="SiteSearchPolicyConflictType">
-  <int value="0" label="No conflict"/>
-  <int value="1" label="Conflict with featured search engine"/>
-  <int value="2" label="Conflict with non-featured search engine"/>
-</enum>
-
 <enum name="TrendingTileEvent">
   <int value="0" label="Tile was shown"/>
   <int value="1" label="Tile was removed"/>
   <int value="2" label="Tile was clicked"/>
 </enum>
+
+<!-- LINT.IfChange(UnknownCountryIdStored) -->
+
+<enum name="UnknownCountryIdStored">
+  <int value="0" label="Valid country stored"/>
+  <int value="1" label="Clearing feature disabled"/>
+  <int value="2" label="Cleared pref due to invalid country ID"/>
+</enum>
+
+<!-- LINT.ThenChange(/components/regional_capabilities/regional_capabilities_service.cc:UnknownCountryIdStored) -->
 
 </enums>
 

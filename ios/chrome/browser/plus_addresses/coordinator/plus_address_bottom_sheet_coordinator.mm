@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/plus_addresses/coordinator/plus_address_bottom_sheet_coordinator.h"
 
 #import "base/strings/sys_string_conversions.h"
-#import "components/plus_addresses/features.h"
 #import "components/plus_addresses/grit/plus_addresses_strings.h"
 #import "components/plus_addresses/plus_address_service.h"
 #import "components/plus_addresses/plus_address_types.h"
@@ -56,7 +55,7 @@ constexpr CGFloat kHalfSheetCornerRadius = 20;
 #pragma mark - ChromeCoordinator
 
 - (void)start {
-  ProfileIOS* profile = self.browser->GetProfile()->GetOriginalProfile();
+  ProfileIOS* profile = self.profile->GetOriginalProfile();
   plus_addresses::PlusAddressService* plusAddressService =
       PlusAddressServiceFactory::GetForProfile(profile);
   plus_addresses::PlusAddressSettingService* plusAddressSettingService =
@@ -79,7 +78,7 @@ constexpr CGFloat kHalfSheetCornerRadius = 20;
                        activeUrl:activeWebState->GetLastCommittedURL()
                        urlLoader:UrlLoadingBrowserAgent::FromBrowser(
                                      self.browser)
-                       incognito:self.browser->GetProfile()->IsOffTheRecord()];
+                       incognito:self.profile->IsOffTheRecord()];
   _viewController = [[PlusAddressBottomSheetViewController alloc]
                     initWithDelegate:_mediator
       withBrowserCoordinatorCommands:HandlerForProtocol(
@@ -91,8 +90,8 @@ constexpr CGFloat kHalfSheetCornerRadius = 20;
       _viewController.sheetPresentationController;
   presentationController.prefersEdgeAttachedInCompactHeight = YES;
   presentationController.detents = @[
-    UISheetPresentationControllerDetent.mediumDetent,
-    UISheetPresentationControllerDetent.largeDetent
+    [UISheetPresentationControllerDetent mediumDetent],
+    [UISheetPresentationControllerDetent largeDetent]
   ];
   presentationController.preferredCornerRadius = kHalfSheetCornerRadius;
 
@@ -104,13 +103,9 @@ constexpr CGFloat kHalfSheetCornerRadius = 20;
                                         animated:YES
                                       completion:nil];
 
-  if (base::FeatureList::IsEnabled(
-          plus_addresses::features::
-              kPlusAddressIOSErrorAndLoadingStatesEnabled)) {
-    // Ensure that the bottom sheet is presented so that it can be dismissed
-    // before presenting the alert for error during reserve.
-    [_mediator reservePlusAddress];
-  }
+  // Ensure that the bottom sheet is presented so that it can be dismissed
+  // before presenting the alert for error during reserve.
+  [_mediator reservePlusAddress];
 }
 
 - (void)stop {

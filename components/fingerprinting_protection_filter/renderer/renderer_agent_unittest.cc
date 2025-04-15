@@ -31,12 +31,18 @@
 namespace fingerprinting_protection_filter {
 
 namespace {
+using ::testing::_;
 
 constexpr const char kTestFirstURL[] = "http://example.com/alpha";
 constexpr const char kTestSecondURL[] = "http://example.com/beta";
 constexpr const char kTestFirstURLPathSuffix[] = "alpha";
 constexpr const char kTestSecondURLPathSuffix[] = "beta";
 constexpr const char kTestBothURLsPathSuffix[] = "a";
+
+constexpr const char kSubresourceLoadEvaluationWallDurationHistogram[] =
+    "FingerprintingProtection.SubresourceLoad.Evaluation.WallDuration";
+constexpr const char kSubresourceLoadEvaluationCPUDurationHistogram[] =
+    "FingerprintingProtection.SubresourceLoad.Evaluation.CPUDuration";
 
 }  // namespace
 
@@ -415,13 +421,55 @@ TEST_F(RendererAgentTest, Enabled_NewRulesetIsPickedUpAtNextLoad) {
       DocumentLoadRulesetIsAvailableHistogramName, 1, 2);
 }
 
-// Make sure that the activation decision does not outlive a failed provisional
-// load (and affect the second load).
-TEST_F(RendererAgentTest,
-       Enabled_FilteringNoLongerActiveAfterProvisionalLoadIsCancelled) {
+// Make sure that the activation decision does not outlive a failed main frame
+// provisional load (Document/Page change) and affect the second load.
+TEST_F(
+    RendererAgentTest,
+    Enabled_FilteringNoLongerActiveAfterMainFrameProvisionalLoadIsCancelled) {
   base::HistogramTester histogram_tester;
   ASSERT_NO_FATAL_FAILURE(
       SetTestRulesetToDisallowURLsWithPathSuffix(kTestBothURLsPathSuffix));
+  EXPECT_CALL(*agent(), OnSetFilterCalled());
+  // The mocked function `GetMainDocumentUrl` will be called several times in
+  // the stack of `DidCreateNewDocument`.
+  EXPECT_CALL(*agent(), GetMainDocumentUrl()).Times(2);
+  // The agent should request activation state since the newly-started load is
+  // cross-origin (about:blank vs. example.com).
+  EXPECT_CALL(*agent(), RequestActivationState());
+  StartLoadWithoutSettingActivationState();
+  subresource_filter::mojom::ActivationStatePtr state =
+      subresource_filter::mojom::ActivationState::New();
+  state->activation_level =
+      subresource_filter::mojom::ActivationLevel::kEnabled;
+  state->measure_performance = true;
+  agent()->OnActivationComputed(std::move(state));
+  // The activation state should have been set to Enabled.
+  EXPECT_EQ(agent()->activation_state().activation_level,
+            subresource_filter::mojom::ActivationLevel::kEnabled);
+
+  // The activation state should be reset on a failed provisional load and
+  // immediately re-requested.
+  EXPECT_CALL(*agent(), RequestActivationState());
+  EXPECT_CALL(*agent(), GetMainDocumentUrl());
+  agent_as_rfo()->DidFailProvisionalLoad();
+
+  histogram_tester.ExpectUniqueSample(
+      MainFrameLoadRulesetIsAvailableAnyActivationLevelHistogramName, 1, 1);
+  histogram_tester.ExpectUniqueSample(
+      DocumentLoadRulesetIsAvailableHistogramName, 1, 1);
+}
+
+// A failed provisional load in a subframe should not reset activation state
+// because subframes should always have the same state as the main frame.
+TEST_F(RendererAgentTest,
+       Enabled_FilteringStillActiveAfterSubframeProvisionalLoadIsCancelled) {
+  base::HistogramTester histogram_tester;
+  ASSERT_NO_FATAL_FAILURE(
+      SetTestRulesetToDisallowURLsWithPathSuffix(kTestBothURLsPathSuffix));
+
+  // Simulate an agent for a subframe.
+  ResetAgent(/*is_top_level_main_frame=*/false, /*has_valid_opener=*/true);
+
   EXPECT_CALL(*agent(), OnSetFilterCalled());
   agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
   agent_as_rfo()->ReadyToCommitNavigation(nullptr);
@@ -434,14 +482,14 @@ TEST_F(RendererAgentTest,
   agent_as_rfo()->DidFailProvisionalLoad();
   ASSERT_TRUE(::testing::Mock::VerifyAndClearExpectations(agent()));
 
-  EXPECT_CALL(*agent(), OnSetFilterCalled()).Times(0);
-  agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
-  agent_as_rfo()->ReadyToCommitNavigation(nullptr);
-  agent_as_rfo()->DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
-  FinishLoad();
+  // The activation state should still be Enabled.
+  EXPECT_EQ(agent()->activation_state().activation_level,
+            subresource_filter::mojom::ActivationLevel::kEnabled);
 
+  // Expect no samples for main frame histogram because we didn't load a main
+  // frame.
   histogram_tester.ExpectUniqueSample(
-      MainFrameLoadRulesetIsAvailableAnyActivationLevelHistogramName, 1, 1);
+      MainFrameLoadRulesetIsAvailableAnyActivationLevelHistogramName, 0, 0);
   histogram_tester.ExpectUniqueSample(
       DocumentLoadRulesetIsAvailableHistogramName, 1, 1);
 }
@@ -499,7 +547,7 @@ TEST_F(RendererAgentTest,
       SetTestRulesetToDisallowURLsWithPathSuffix("somethingNotMatched"));
 
   ExpectNoFilterGetsInjected();
-  EXPECT_CALL(*agent(), RequestActivationState());
+  EXPECT_CALL(*agent(), RequestActivationState()).Times(2);
   EXPECT_CALL(*agent(), OnSetFilterCalled());
   StartLoadAndSetActivationState(
       subresource_filter::mojom::ActivationLevel::kEnabled);
@@ -511,6 +559,33 @@ TEST_F(RendererAgentTest,
       MainFrameLoadRulesetIsAvailableAnyActivationLevelHistogramName, 1, 1);
   histogram_tester.ExpectUniqueSample(
       DocumentLoadRulesetIsAvailableHistogramName, 1, 1);
+}
+
+TEST_F(RendererAgentTest,
+       Enabled_FilteringIsInEffectForOneLoad_PerformanceMeasurementsRecorded) {
+  base::HistogramTester histogram_tester;
+  ASSERT_NO_FATAL_FAILURE(
+      SetTestRulesetToDisallowURLsWithPathSuffix(kTestFirstURLPathSuffix));
+
+  ExpectFilterGetsInjected();
+  EXPECT_CALL(*agent(), RequestActivationState());
+  subresource_filter::mojom::ActivationState activation_state;
+  activation_state.activation_level =
+      subresource_filter::mojom::ActivationLevel::kEnabled;
+  activation_state.measure_performance = true;
+  StartLoadAndSetActivationState(activation_state);
+  ASSERT_TRUE(::testing::Mock::VerifyAndClearExpectations(agent()));
+
+  EXPECT_CALL(*agent(), OnSubresourceDisallowed());
+
+  ExpectLoadPolicy(kTestFirstURL, subresource_filter::LoadPolicy::DISALLOW);
+  ExpectLoadPolicy(kTestSecondURL, subresource_filter::LoadPolicy::ALLOW);
+  FinishLoad();
+
+  histogram_tester.ExpectTotalCount(
+      kSubresourceLoadEvaluationWallDurationHistogram, 2);
+  histogram_tester.ExpectTotalCount(
+      kSubresourceLoadEvaluationCPUDurationHistogram, 2);
 }
 
 }  // namespace fingerprinting_protection_filter

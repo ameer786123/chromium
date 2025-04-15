@@ -30,17 +30,13 @@
 #include "third_party/blink/renderer/platform/web_test_support.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/native_theme/native_theme_features.h"
+#include "ui/native_theme/features/native_theme_features.h"
 #include "ui/native_theme/native_theme_utils.h"
 #include "ui/native_theme/overlay_scrollbar_constants_aura.h"
 
 namespace blink {
 
 namespace {
-
-BASE_FEATURE(kUnpremultiplyAndDitherLowBitDepthTiles,
-             "UnpremultiplyAndDitherLowBitDepthTiles",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // When enabled, scrollbar fade animations' delay and duration are scaled
 // according to `kFadeDelayScalingFactor` and `kFadeDurationScalingFactor`
@@ -236,8 +232,6 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
   settings.enable_synchronized_scrolling =
       base::FeatureList::IsEnabled(::features::kSynchronizedScrolling);
   Platform* platform = Platform::Current();
-  settings.percent_based_scrolling =
-      ::features::IsPercentBasedScrollingEnabled();
 
   settings.commit_to_active_tree = !is_threaded;
   settings.is_for_embedded_frame = is_for_embedded_frame;
@@ -467,7 +461,6 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
       base::SysInfo::IsLowEndDevice() && !IsSmallScreen(screen_size) &&
       !platform->IsSynchronousCompositingEnabledForAndroidWebView();
 
-  settings.use_stream_video_draw_quad = true;
   settings.using_synchronous_renderer_compositor = use_synchronous_compositor;
   if (use_synchronous_compositor) {
     // Root frame in Android WebView uses system scrollbars, so make ours
@@ -515,12 +508,18 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
           ui::kFluentOverlayScrollbarThinningDuration;
       if (WebTestSupport::IsRunningWebTest()) {
         settings.scrollbar_thinning_duration = base::Milliseconds(0);
-        settings.scrollbar_fade_delay = base::Milliseconds(0);
+        settings.scrollbar_fade_delay = base::TimeDelta::Max();
         settings.scrollbar_fade_duration = base::Milliseconds(0);
       }
     }
   }
 #endif  // BUILDFLAG(IS_ANDROID)
+
+  if (!base::FeatureList::IsEnabled(::features::kScrollbarAnimations)) {
+    settings.scrollbar_thinning_duration = base::TimeDelta();
+    settings.scrollbar_fade_delay = base::TimeDelta::Max();
+    settings.scrollbar_fade_duration = base::TimeDelta();
+  }
 
   settings.decoded_image_working_set_budget_bytes =
       cc::ImageDecodeCacheUtils::GetWorkingSetBytesForImageDecode(
@@ -533,22 +532,21 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
     //  - If we are not running in a WebView, where 4444 isn't supported.
     //  - If we are not using vulkan, since some GPU drivers don't support
     //    using RGBA4444 as color buffer.
-    // TODO(penghuang): query supported formats from GPU process.
+    //  - If we are not using Skia's Graphite-Dawn backend, since dawn does not
+    //  support RGBA_4444 formats.
+    // TODO(crbug.com/398868042): Instead of Graphite/Vulkan feature checks, add
+    // appropriate shared image capability and check for its support.
     if (!cmd.HasSwitch(switches::kDisableRGBA4444Textures) &&
         base::SysInfo::AmountOfPhysicalMemoryMB() <= 512 &&
-        !::features::IsUsingVulkan()) {
+        !::features::IsUsingVulkan() &&
+        !::features::IsSkiaGraphiteEnabled(
+            base::CommandLine::ForCurrentProcess())) {
       settings.use_rgba_4444 = true;
 
-      // If we are going to unpremultiply and dither these tiles, we need to
-      // allocate an additional RGBA_8888 intermediate for each tile
-      // rasterization when rastering to RGBA_4444 to allow for dithering.
-      // Setting a reasonable sized max tile size allows this intermediate to
-      // be consistently reused.
-      if (base::FeatureList::IsEnabled(
-              kUnpremultiplyAndDitherLowBitDepthTiles)) {
-        settings.max_gpu_raster_tile_size = gfx::Size(512, 256);
-        settings.unpremultiply_and_dither_low_bit_depth_tiles = true;
-      }
+      // TODO(crbug.com/40042400): Determine whether this is actually necessary;
+      // its purpose was to support unpremultiply-and-dither, but it ended up
+      // being always set for RGBA4444.
+      settings.max_gpu_raster_tile_size = gfx::Size(512, 256);
     }
   }
 
@@ -591,8 +589,7 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
   settings.disable_frame_rate_limit =
       cmd.HasSwitch(::switches::kDisableFrameRateLimit);
 
-  settings.enable_hit_test_opaqueness =
-      RuntimeEnabledFeatures::HitTestOpaquenessEnabled();
+  settings.enable_hit_test_opaqueness = true;
 
   settings.enable_variable_refresh_rate =
       ::features::IsVariableRefreshRateAlwaysOn();
@@ -600,6 +597,9 @@ cc::LayerTreeSettings GenerateLayerTreeSettings(
   std::tie(settings.tiling_interest_area_padding,
            settings.skewport_extrapolation_limit_in_screen_pixels) =
       GetTilingInterestAreaSizes();
+
+  settings.dynamic_safe_area_insets_on_scroll_enabled =
+      RuntimeEnabledFeatures::DynamicSafeAreaInsetsOnScrollEnabled();
   return settings;
 }
 

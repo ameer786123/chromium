@@ -151,13 +151,6 @@ void ProfilePickerSignedInFlowController::SwitchToManagedUserProfileNotice(
                                    std::move(process_user_choice_callback)));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-void ProfilePickerSignedInFlowController::SwitchToLacrosIntro(
-    signin::SigninChoiceCallback proceed_callback) {
-  NOTREACHED_IN_MIGRATION();
-}
-#endif
-
 void ProfilePickerSignedInFlowController::SwitchToProfileSwitch(
     const base::FilePath& profile_path) {
   DCHECK(IsInitialized());
@@ -245,6 +238,7 @@ void ProfilePickerSignedInFlowController::
               ->FindExtendedAccountInfoByEmailAddress(email_),
           /*is_oidc_account=*/type ==
               ManagedUserProfileNoticeUI::ScreenType::kEnterpriseOIDC,
+          /*turn_sync_on_signed_profile=*/false,
           /*profile_creation_required_by_policy=*/false,
           /*show_link_data_option=*/false,
           /*process_user_choice_callback=*/

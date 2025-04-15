@@ -34,8 +34,9 @@ const char* TabbedWebAppNavigationThrottle::GetNameForLogging() {
 std::unique_ptr<content::NavigationThrottle>
 TabbedWebAppNavigationThrottle::MaybeCreateThrottleFor(
     content::NavigationHandle* handle) {
-  if (!handle->IsInPrimaryMainFrame())
+  if (!handle->IsInPrimaryMainFrame()) {
     return nullptr;
+  }
 
   // Reloading the page should not cause the tab to change.
   if (handle->GetReloadType() != content::ReloadType::NONE) {
@@ -45,12 +46,14 @@ TabbedWebAppNavigationThrottle::MaybeCreateThrottleFor(
   content::WebContents* web_contents = handle->GetWebContents();
 
   Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  if (!browser || !browser->app_controller())
+  if (!browser || !browser->app_controller()) {
     return nullptr;
+  }
 
   WebAppProvider* provider = WebAppProvider::GetForWebContents(web_contents);
-  if (!provider)
+  if (!provider) {
     return nullptr;
+  }
 
   const webapps::AppId& app_id = browser->app_controller()->app_id();
 
@@ -112,7 +115,7 @@ TabbedWebAppNavigationThrottle::WillStartRequest() {
 
 content::NavigationThrottle::ThrottleCheckResult
 TabbedWebAppNavigationThrottle::WillRedirectRequest() {
-  // TODO(crbug.com/40598974): Figure out how redirects should be handled.
+  // TODO(crbug.com/400761084): Figure out how redirects should be handled.
   return content::NavigationThrottle::PROCEED;
 }
 
@@ -121,6 +124,9 @@ TabbedWebAppNavigationThrottle::OpenInNewTab() {
   content::OpenURLParams params =
       content::OpenURLParams::FromNavigationHandle(navigation_handle());
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  // Clear the FrameTreeNode id, as the new navigation will be in a new tab
+  // rather than the frame of the original navigation.
+  params.frame_tree_node_id = content::FrameTreeNodeId();
   navigation_handle()->GetWebContents()->OpenURL(
       std::move(params), /*navigation_handle_callback=*/{});
   return content::NavigationThrottle::CANCEL_AND_IGNORE;

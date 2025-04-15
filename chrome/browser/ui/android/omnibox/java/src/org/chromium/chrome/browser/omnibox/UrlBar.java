@@ -19,6 +19,7 @@ import android.text.TextUtils;
 import android.text.style.ReplacementSpan;
 import android.util.AttributeSet;
 import android.util.TypedValue;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -27,6 +28,7 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.autofill.AutofillManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
 import android.view.textclassifier.TextClassifier;
 import android.widget.TextView;
 
@@ -40,22 +42,22 @@ import androidx.core.text.TextDirectionHeuristicsCompat;
 import androidx.core.view.inputmethod.EditorInfoCompat;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.MathUtils;
 import org.chromium.base.SysUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.metrics.TimingMetric;
+import org.chromium.base.version_info.VersionInfo;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.CheckDiscard;
-import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.util.KeyNavigationUtil;
 import org.chromium.components.browser_ui.share.ShareHelper;
 import org.chromium.components.browser_ui.util.FirstDrawDetector;
 import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.base.WindowDelegate;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.display.DisplayUtil;
 
@@ -100,12 +102,6 @@ public class UrlBar extends AutocompleteEditText {
     private UrlBarTextContextMenuDelegate mTextContextMenuDelegate;
     private Callback<Integer> mUrlDirectionListener;
 
-    /**
-     * The gesture detector is used to detect long presses. Long presses require special treatment
-     * because the URL bar has custom touch event handling. See: {@link #onTouchEvent}.
-     */
-    private final KeyboardHideHelper mKeyboardHideHelper;
-
     private final Rect mClipBounds = new Rect();
     @VisibleForTesting final Runnable mEnforceMaxTextHeight = this::enforceMaxTextHeight;
 
@@ -115,6 +111,7 @@ public class UrlBar extends AutocompleteEditText {
     private boolean mShouldSendTypingStartedEvent;
 
     private boolean mPendingScroll;
+    private boolean mIsInCct;
 
     // Captures the current intended text scroll type.
     // This may not be effective if mPendingScroll is true.
@@ -238,15 +235,6 @@ public class UrlBar extends AutocompleteEditText {
                 getResources().getDimensionPixelSize(R.dimen.url_bar_vertical_padding);
         setPaddingRelative(0, verticalPadding, 0, verticalPadding);
 
-        mKeyboardHideHelper =
-                new KeyboardHideHelper(
-                        this,
-                        () -> {
-                            if (mUrlBarDelegate != null && !BackPressManager.isEnabled()) {
-                                mUrlBarDelegate.backKeyPressed();
-                            }
-                        });
-
         setTextClassifier(TextClassifier.NO_OP);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             setIsHandwritingDelegate(true);
@@ -282,11 +270,6 @@ public class UrlBar extends AutocompleteEditText {
         mTypingStartedListener = Optional.empty();
     }
 
-    /** Initialize the delegate that allows interaction with the Window. */
-    public void setWindowDelegate(WindowDelegate windowDelegate) {
-        mKeyboardHideHelper.setWindowDelegate(windowDelegate);
-    }
-
     /** Set the delegate to be used for text context menu actions. */
     public void setTextContextMenuDelegate(UrlBarTextContextMenuDelegate delegate) {
         mTextContextMenuDelegate = delegate;
@@ -298,10 +281,6 @@ public class UrlBar extends AutocompleteEditText {
      */
     @Override
     public boolean onKeyPreIme(int keyCode, KeyEvent event) {
-        if (KeyEvent.KEYCODE_BACK == keyCode && event.getAction() == KeyEvent.ACTION_UP) {
-            mKeyboardHideHelper.monitorForKeyboardHidden();
-        }
-
         // NOTE: Do not pass ENTER key to listeners from here. This is because Enter key may also
         // come from a software keyboard.
         // - If we pass the event here, it will be emitted twice (once before IME and once after),
@@ -380,6 +359,11 @@ public class UrlBar extends AutocompleteEditText {
         mAllowFocus = allowFocus;
         setFocusable(allowFocus);
         setFocusableInTouchMode(allowFocus);
+    }
+
+    /** Sets the property indicating the URL bar is used by Custom Tab. */
+    public void setIsInCct(boolean isInCct) {
+        mIsInCct = isInCct;
     }
 
     /**
@@ -469,10 +453,70 @@ public class UrlBar extends AutocompleteEditText {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        // TODO(b:384508488): REMOVE once no longer needed.
+        // Attempt to identify view being served. Hacky and bad, but possibly the only
+        // way for us to determine which view announces itself as focused.
+        if (mFocused) {
+            var imm =
+                    (InputMethodManager)
+                            getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm.isActive() && !imm.isActive(this)) {
+                Log.e("b:384508488", "IMM appears to be handling a different view");
+                if (VersionInfo.isCanaryBuild() || VersionInfo.isLocalBuild()) {
+                    var activityContext = ContextUtils.activityFromContext(getContext());
+                    var focusedView = activityContext.getCurrentFocus();
+                    if (focusedView != this) {
+                        Log.e(
+                                "b:384508488",
+                                "Activity reports a different focused view: " + focusedView);
+                    } else {
+                        Log.e(
+                                "b:384508488",
+                                "UrlBar is focused, but IME handles a different, unknown view");
+                    }
+
+                    assert false
+                            : "b:384508488: UrlBar is focused, but IME is handling a different"
+                                    + " view. Please collect logcat and attach it to the bug.";
+                }
+            }
+        }
+
         if (event.getActionMasked() == MotionEvent.ACTION_UP) {
             performClick();
         }
-        return super.onTouchEvent(event);
+        boolean handledTouchEvent = super.onTouchEvent(event);
+
+        // mouse/touchpad might not fire a focus request from the super.onTouchEvent() call, so
+        // may need to explicitly do so.
+        ensureMouseTouchpadFocusFired(event);
+
+        return handledTouchEvent;
+    }
+
+    protected void ensureMouseTouchpadFocusFired(MotionEvent event) {
+        // TLDR: this is to ensure focus is fired for mouse/touchpad, which framework side has
+        // an issue and may not work reliably.
+        //
+        // This is to handle the case where touchpad or mouse input has a slight
+        // movement during a click.
+        // This results in three fired events instead of two:
+        // 1) ACTION_DOWN (2) ACTION_MOVE (3) ACTION_UP  <-- where ACTION_MOVE is the
+        // additional event.
+        // For touchscreen input, the combo of the 3 movements may indicate touch scrolling or a
+        // click, so there is logic in place (View) to differentiate this (i.e. tiny movements do
+        // not count as a scroll).
+        // For mouse/touchpad input, it shares the same touchscroll/click detection logic as the
+        // above, but the problem is that the ACTION_MOVE may be intercepted by child UI components
+        // (e.g. TextView) to be a drag event (e.g. drag to select text), and hence the
+        // touchscroll/click differentiation logic in the View component cannot kick in.
+        // TODO: Remove this once framework fix lands: crbug.com/376184128
+        if ((event.getSource() == InputDevice.SOURCE_TOUCHPAD
+                        || event.getSource() == InputDevice.SOURCE_MOUSE) &&
+                        !isFocused()
+                && event.getActionMasked() == MotionEvent.ACTION_UP) {
+            requestFocus();
+        }
     }
 
     @Override
@@ -1040,10 +1084,12 @@ public class UrlBar extends AutocompleteEditText {
         // and the text layout will remain unresolved, suppressing resolution of display text
         // scroll position.
         if (mPendingScroll || mPreviousScrollViewWidth != getVisibleMeasuredViewportWidth()) {
+            boolean isLayoutRequestedBeforeScrollDisplayText = isLayoutRequested();
             scrollDisplayText(mCurrentScrollType);
             // Confirmation check: be sure we don't re-request layout as a result of something that
-            // happens in scrollDisplayText().
-            assert !isLayoutRequested();
+            // happens in scrollDisplayText(). However, isLayoutRequested could be true before
+            // scrollDisplayText() due to what happened within super.layout(), e.g. clear focus.
+            assert isLayoutRequestedBeforeScrollDisplayText || !isLayoutRequested();
         }
     }
 
@@ -1132,16 +1178,10 @@ public class UrlBar extends AutocompleteEditText {
         // receive additional wide space on top and bottom, shifting the content upwards.
         // We suppress Y translation here, as the Omnibox is not a vertically scrollable view, and
         // our font height computation logic appears to produce correct glyph sizes.
-    }
-
-    @Override
-    public void requestLayout() {
-        // TODO(crbug.com/40285597): it is speculated that a requestLayout invoked during an active
-        // layout pass is causing Omnibox/Chrome to become unresponsive.
-        // While Android seemingly supports that, emitting just a warning, we can't rule this out
-        // completely. It is currently unclear where the secondary requestLayout could come from.
-        if (isInLayout()) return;
-        super.requestLayout();
+        //
+        // Allows translation in CCT that has to animate URL bar text for branding.
+        // TODO(crbug.com/357399658): Consider a new approach to remove this exception for CCT.
+        if (mIsInCct) super.setTranslationY(translationY);
     }
 
     @Override
@@ -1218,6 +1258,10 @@ public class UrlBar extends AutocompleteEditText {
     float getMaxHeightOfFont() {
         var fontMetrics = getPaint().getFontMetrics();
         return fontMetrics.bottom - fontMetrics.top;
+    }
+
+    boolean getIsInCctForTesting() {
+        return mIsInCct;
     }
 
     /**

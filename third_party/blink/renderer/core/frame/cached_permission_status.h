@@ -41,6 +41,9 @@ class CORE_EXPORT CachedPermissionStatus final
   // Returns the supplement, creating one as needed.
   static CachedPermissionStatus* From(LocalDOMWindow* window);
 
+  using PermissionStatusMap =
+      HashMap<mojom::blink::PermissionName, mojom::blink::PermissionStatus>;
+
   // Instances of this class receives notification from the cache, for example
   // receives any status changes notification. Notifications are only sent back
   // to the instances that have been registered first by calling RegisterClient.
@@ -48,20 +51,13 @@ class CORE_EXPORT CachedPermissionStatus final
    public:
     virtual ~Client() = default;
 
-    // TODO(crbug.com/368238224): Only listen permission status change here and
-    // notify client. Then move the PermissionObserver from
-    // HTMLPermissionElement to here, to remove all the PermissionObserver
-    // duplicate IPC calls.
-    virtual void OnPermissionStatusChanged(
+    virtual void OnPermissionStatusChange(
+        mojom::blink::PermissionName permission_name,
         mojom::blink::PermissionStatus status) {}
 
     virtual void OnPermissionStatusInitialized(
-        mojom::blink::PermissionName permission,
-        mojom::blink::PermissionStatus status) = 0;
+        PermissionStatusMap initilized_map) = 0;
   };
-
-  using PermissionStatusMap =
-      HashMap<mojom::blink::PermissionName, mojom::blink::PermissionStatus>;
 
   explicit CachedPermissionStatus(LocalDOMWindow* local_dom_window);
 
@@ -81,6 +77,7 @@ class CORE_EXPORT CachedPermissionStatus final
   FRIEND_TEST_ALL_PREFIXES(CachedPermissionStatusTest, RegisterClient);
   FRIEND_TEST_ALL_PREFIXES(CachedPermissionStatusTest,
                            UnregisterClientRemoveObserver);
+  FRIEND_TEST_ALL_PREFIXES(HTMLPemissionElementTest, SetTypeAfterInsertedInto);
 
   // Allow this object to keep track of the Client instances corresponding to
   // it.

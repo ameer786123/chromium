@@ -6,6 +6,8 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -14,7 +16,9 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/stringprintf.h"
 #include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_constants.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
 #include "components/fingerprinting_protection_filter/mojom/fingerprinting_protection_filter.mojom.h"
 #include "components/fingerprinting_protection_filter/renderer/unverified_ruleset_dealer.h"
 #include "components/subresource_filter/content/shared/common/utils.h"
@@ -160,7 +164,8 @@ void RendererAgent::DidCreateNewDocument() {
     notified_disallow_ = false;
     auto new_origin = url::Origin::Create(new_document_url);
     auto current_origin = url::Origin::Create(current_document_url_);
-    // Could be same origin for refreshes, etc.
+    // Reset the filter handle and re-initialize to get a new activation state
+    // if the origin has changed, meaning this is not just a refresh.
     if (!new_origin.IsSameOriginWith(current_origin)) {
       filter_.reset();
       Initialize();
@@ -170,11 +175,12 @@ void RendererAgent::DidCreateNewDocument() {
 }
 
 void RendererAgent::DidFailProvisionalLoad() {
-  // We know the document will change (or this agent will be deleted) since a
-  // navigation did not commit - set up to request new activation in
-  // `DidCreateNewDocument()`.
-  activation_state_ = subresource_filter::mojom::ActivationState();
-  pending_activation_ = true;
+  if (IsTopLevelMainFrame()) {
+    // Request new activation since a navigation did not commit. This may or may
+    // or not result in creating a new document, particularly for downloads.
+    activation_state_ = subresource_filter::mojom::ActivationState();
+    Initialize();
+  }
 }
 
 void RendererAgent::DidFinishLoad() {
@@ -194,10 +200,11 @@ void RendererAgent::OnDestruct() {
 
 void RendererAgent::OnSubresourceDisallowed() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Notify the browser that a subresource was disallowed on the renderer
-  // (for metrics or UI logic).
   if (!notified_disallow_) {
     notified_disallow_ = true;
+
+    // Notify the browser that a subresource was disallowed on the renderer
+    // (for metrics or UI logic).
     auto* fp_host = GetFingerprintingProtectionHost();
     if (fp_host) {
       fp_host->DidDisallowFirstSubresource();
@@ -301,7 +308,8 @@ void RendererAgent::MaybeCreateNewFilter() {
 
   url::Origin origin = url::Origin::Create(current_document_url_);
   SetFilter(std::make_unique<subresource_filter::DocumentSubresourceFilter>(
-      std::move(origin), activation_state_, std::move(ruleset)));
+      std::move(origin), activation_state_, std::move(ruleset),
+      kFingerprintingProtectionRulesetConfig.uma_tag));
 }
 
 void RendererAgent::SendDocumentLoadStatistics(

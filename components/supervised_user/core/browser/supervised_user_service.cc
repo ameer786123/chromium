@@ -5,6 +5,9 @@
 #include "components/supervised_user/core/browser/supervised_user_service.h"
 
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
@@ -19,6 +22,7 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/supervised_user/core/browser/kids_chrome_management_url_checker_client.h"
@@ -33,11 +37,50 @@
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_user_settings.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "ui/base/l10n/l10n_util.h"
 
+namespace supervised_user {
+
+namespace {
 using base::UserMetricsAction;
 
-namespace supervised_user {
+// Helper that extracts custodian data from given preferences.
+std::optional<Custodian> GetCustodianFromPrefs(
+    const PrefService& user_prefs,
+    std::string_view email_address_pref,
+    std::string_view name_pref,
+    std::string_view gaia_id_pref,
+    std::string_view profile_image_url_pref) {
+  std::string email(user_prefs.GetString(email_address_pref));
+  std::string name(user_prefs.GetString(name_pref));
+  GaiaId gaia_id(user_prefs.GetString(gaia_id_pref));
+  std::string profile_image_url(user_prefs.GetString(profile_image_url_pref));
+
+  if (email.empty() && name.empty() && gaia_id.empty() &&
+      profile_image_url.empty()) {
+    return std::nullopt;
+  }
+  return Custodian((name.empty() ? email : name), email, gaia_id,
+                   profile_image_url);
+}
+}  // namespace
+
+Custodian::Custodian(std::string_view name,
+                     std::string_view email_address,
+                     GaiaId obfuscated_gaia_id,
+                     std::string_view profile_image_url)
+    : name_(name),
+      email_address_(email_address),
+      obfuscated_gaia_id_(obfuscated_gaia_id),
+      profile_image_url_(profile_image_url) {}
+Custodian::Custodian(std::string_view name,
+                     std::string_view email_address,
+                     std::string_view profile_image_url)
+    : Custodian(name, email_address, GaiaId(), profile_image_url) {}
+
+Custodian::Custodian(const Custodian& other) = default;
+Custodian::~Custodian() = default;
 
 SupervisedUserService::~SupervisedUserService() {
   DCHECK(!did_init_ || did_shutdown_);
@@ -53,14 +96,12 @@ void SupervisedUserService::Init() {
       prefs::kSupervisedUserId,
       base::BindRepeating(&SupervisedUserService::OnSupervisedUserIdChanged,
                           base::Unretained(this)));
-  FirstTimeInterstitialBannerState banner_state =
-      static_cast<FirstTimeInterstitialBannerState>(
-          user_prefs_->GetInteger(prefs::kFirstTimeInterstitialBannerState));
-  banner_state = GetUpdatedBannerState(banner_state);
-
-  user_prefs_->SetInteger(prefs::kFirstTimeInterstitialBannerState,
-                          static_cast<int>(banner_state));
-  SetActive(supervised_user::IsSubjectToParentalControls(user_prefs_.get()));
+  pref_change_registrar_.Add(
+      policy::policy_prefs::kIncognitoModeAvailability,
+      base::BindRepeating(
+          &SupervisedUserService::OnIncognitoModeAvailabilityChanged,
+          base::Unretained(this)));
+  SetActive(IsSubjectToParentalControls(user_prefs_.get()));
 }
 
 SupervisedUserURLFilter* SupervisedUserService::GetURLFilter() const {
@@ -72,39 +113,20 @@ void SupervisedUserService::SetURLFilterForTesting(
   url_filter_ = std::move(test_filter);
 }
 
-std::string SupervisedUserService::GetCustodianEmailAddress() const {
-  return user_prefs_->GetString(prefs::kSupervisedUserCustodianEmail);
+std::optional<Custodian> SupervisedUserService::GetCustodian() const {
+  return GetCustodianFromPrefs(user_prefs_.get(),
+                               prefs::kSupervisedUserCustodianEmail,
+                               prefs::kSupervisedUserCustodianName,
+                               prefs::kSupervisedUserCustodianObfuscatedGaiaId,
+                               prefs::kSupervisedUserCustodianProfileImageURL);
 }
 
-std::string SupervisedUserService::GetCustodianObfuscatedGaiaId() const {
-  return user_prefs_->GetString(
-      prefs::kSupervisedUserCustodianObfuscatedGaiaId);
-}
-
-std::string SupervisedUserService::GetCustodianName() const {
-  std::string name =
-      user_prefs_->GetString(prefs::kSupervisedUserCustodianName);
-  return name.empty() ? GetCustodianEmailAddress() : name;
-}
-
-std::string SupervisedUserService::GetSecondCustodianEmailAddress() const {
-  return user_prefs_->GetString(prefs::kSupervisedUserSecondCustodianEmail);
-}
-
-std::string SupervisedUserService::GetSecondCustodianObfuscatedGaiaId() const {
-  return user_prefs_->GetString(
-      prefs::kSupervisedUserSecondCustodianObfuscatedGaiaId);
-}
-
-std::string SupervisedUserService::GetSecondCustodianName() const {
-  std::string name =
-      user_prefs_->GetString(prefs::kSupervisedUserSecondCustodianName);
-  return name.empty() ? GetSecondCustodianEmailAddress() : name;
-}
-
-bool SupervisedUserService::HasACustodian() const {
-  return !GetCustodianEmailAddress().empty() ||
-         !GetSecondCustodianEmailAddress().empty();
+std::optional<Custodian> SupervisedUserService::GetSecondCustodian() const {
+  return GetCustodianFromPrefs(
+      user_prefs_.get(), prefs::kSupervisedUserSecondCustodianEmail,
+      prefs::kSupervisedUserSecondCustodianName,
+      prefs::kSupervisedUserSecondCustodianObfuscatedGaiaId,
+      prefs::kSupervisedUserSecondCustodianProfileImageURL);
 }
 
 bool SupervisedUserService::IsBlockedURL(const GURL& url) const {
@@ -113,8 +135,7 @@ bool SupervisedUserService::IsBlockedURL(const GURL& url) const {
   if (!active_) {
     return false;
   }
-  return GetURLFilter()->GetFilteringBehaviorForURL(url) ==
-         supervised_user::FilteringBehavior::kBlock;
+  return GetURLFilter()->GetFilteringBehavior(url).IsBlocked();
 }
 
 void SupervisedUserService::AddObserver(
@@ -134,35 +155,15 @@ SupervisedUserService::SupervisedUserService(
     SupervisedUserSettingsService& settings_service,
     syncer::SyncService* sync_service,
     std::unique_ptr<SupervisedUserURLFilter::Delegate> url_filter_delegate,
-    std::unique_ptr<SupervisedUserService::PlatformDelegate> platform_delegate,
-    bool can_show_first_time_interstitial_banner)
+    std::unique_ptr<SupervisedUserService::PlatformDelegate> platform_delegate)
     : user_prefs_(user_prefs),
       settings_service_(settings_service),
       sync_service_(sync_service),
       identity_manager_(identity_manager),
       url_loader_factory_(url_loader_factory),
-      platform_delegate_(std::move(platform_delegate)),
-      can_show_first_time_interstitial_banner_(
-          can_show_first_time_interstitial_banner) {
+      platform_delegate_(std::move(platform_delegate)) {
   url_filter_ = std::make_unique<SupervisedUserURLFilter>(
       user_prefs, std::move(url_filter_delegate));
-}
-
-FirstTimeInterstitialBannerState SupervisedUserService::GetUpdatedBannerState(
-    const FirstTimeInterstitialBannerState original_state) {
-  FirstTimeInterstitialBannerState target_state = original_state;
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_IOS)
-  if (original_state != FirstTimeInterstitialBannerState::kSetupComplete &&
-      can_show_first_time_interstitial_banner_) {
-    target_state = FirstTimeInterstitialBannerState::kNeedToShow;
-  } else {
-    target_state = FirstTimeInterstitialBannerState::kSetupComplete;
-  }
-#else
-  target_state = FirstTimeInterstitialBannerState::kSetupComplete;
-#endif
-  return target_state;
 }
 
 void SupervisedUserService::SetActive(bool active) {
@@ -182,7 +183,7 @@ void SupervisedUserService::SetActive(bool active) {
       sync_service_->GetUserSettings()->IsInitialSyncFeatureSetupComplete()) {
     // Trigger a reconfig by grabbing a SyncSetupInProgressHandle and
     // immediately releasing it again (via the temporary unique_ptr going away).
-    sync_service_->GetSetupInProgressHandle();
+    std::ignore = sync_service_->GetSetupInProgressHandle();
   }
 
   if (active_) {
@@ -255,22 +256,29 @@ void SupervisedUserService::OnCustodianInfoChanged() {
 }
 
 void SupervisedUserService::OnSupervisedUserIdChanged() {
-  bool is_child =
-      supervised_user::IsSubjectToParentalControls(user_prefs_.get());
-  if (is_child) {
-    // When supervision is enabled, close any incognito windows/tabs that may
-    // be open for this profile. These windows cannot be created after the
-    // user is signed in, and closing existing ones avoids unexpected
-    // behavior due to baked-in assumptions in the SupervisedUser code.
+  SetActive(IsSubjectToParentalControls(user_prefs_.get()));
+}
+
+void SupervisedUserService::OnIncognitoModeAvailabilityChanged() {
+  // This is called in the following cases:
+  // 1) When kSupervisedUserId changes state and indicates child account, the
+  // `setings_service_`::SetActive(true) call notifies all subscribers that
+  // settings have changed. SupervisedUserPrefStore is one of these subscribers,
+  // and it unconditionally disables the incognito mode.
+  // 2) When incognito mode is explicitly disabled, regardless kSupervisedUserId
+  // status.
+  // 3) Backing policy pref is updated independently from supervised user
+  // features. Closing incognito tabs in this situation seems the right thing to
+  // do and closing incognito tabs is idempotent.
+  if (platform_delegate_->ShouldCloseIncognitoTabs()) {
     platform_delegate_->CloseIncognitoTabs();
   }
-  SetActive(is_child);
 }
 
 void SupervisedUserService::OnDefaultFilteringBehaviorChanged() {
   int behavior_value =
       user_prefs_->GetInteger(prefs::kDefaultSupervisedUserFilteringBehavior);
-  supervised_user::FilteringBehavior behavior =
+  FilteringBehavior behavior =
       SupervisedUserURLFilter::BehaviorFromInt(behavior_value);
   url_filter_->SetDefaultFilteringBehavior(behavior);
 
@@ -339,24 +347,10 @@ void SupervisedUserService::Shutdown() {
   }
   DCHECK(!did_shutdown_);
   did_shutdown_ = true;
-  if (supervised_user::IsSubjectToParentalControls(user_prefs_.get())) {
+  if (IsSubjectToParentalControls(user_prefs_.get())) {
     base::RecordAction(UserMetricsAction("ManagedUsers_QuitBrowser"));
   }
   SetActive(false);
 }
 
-void SupervisedUserService::MarkFirstTimeInterstitialBannerShown() const {
-  if (ShouldShowFirstTimeInterstitialBanner()) {
-    user_prefs_->SetInteger(
-        prefs::kFirstTimeInterstitialBannerState,
-        static_cast<int>(FirstTimeInterstitialBannerState::kSetupComplete));
-  }
-}
-
-bool SupervisedUserService::ShouldShowFirstTimeInterstitialBanner() const {
-  FirstTimeInterstitialBannerState banner_state =
-      static_cast<FirstTimeInterstitialBannerState>(
-          user_prefs_->GetInteger(prefs::kFirstTimeInterstitialBannerState));
-  return banner_state == FirstTimeInterstitialBannerState::kNeedToShow;
-}
 }  // namespace supervised_user

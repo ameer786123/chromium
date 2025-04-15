@@ -10,7 +10,7 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
 import type {SyncConfirmationBrowserProxy} from './sync_confirmation_browser_proxy.js';
-import {SyncConfirmationBrowserProxyImpl} from './sync_confirmation_browser_proxy.js';
+import {ScreenMode, SyncConfirmationBrowserProxyImpl} from './sync_confirmation_browser_proxy.js';
 import {getCss} from './sync_disabled_confirmation_app.css.js';
 import {getHtml} from './sync_disabled_confirmation_app.html.js';
 
@@ -39,7 +39,7 @@ export class SyncDisabledConfirmationAppElement extends CrLitElement {
     };
   }
 
-  protected signoutDisallowed_: boolean =
+  protected accessor signoutDisallowed_: boolean =
       loadTimeData.getBoolean('signoutDisallowed');
   private syncConfirmationBrowserProxy_: SyncConfirmationBrowserProxy =
       SyncConfirmationBrowserProxyImpl.getInstance();
@@ -54,7 +54,8 @@ export class SyncDisabledConfirmationAppElement extends CrLitElement {
   protected onConfirm_(e: Event) {
     this.syncConfirmationBrowserProxy_.confirm(
         this.getConsentDescription_(),
-        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]));
+        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]),
+        ScreenMode.UNSUPPORTED);
   }
 
   /**
@@ -75,7 +76,7 @@ export class SyncDisabledConfirmationAppElement extends CrLitElement {
   /** @return Text of the consent description elements. */
   private getConsentDescription_(): string[] {
     const consentDescription =
-        Array.from(this.shadowRoot!.querySelectorAll('[consent-description]'))
+        Array.from(this.shadowRoot.querySelectorAll('[consent-description]'))
             .filter(element => element.clientWidth * element.clientHeight > 0)
             .map(element => element.innerHTML.trim());
     assert(consentDescription);
@@ -95,7 +96,7 @@ export class SyncDisabledConfirmationAppElement extends CrLitElement {
   }
 
   protected onUndo_() {
-    this.syncConfirmationBrowserProxy_.undo();
+    this.syncConfirmationBrowserProxy_.undo(ScreenMode.UNSUPPORTED);
   }
 }
 

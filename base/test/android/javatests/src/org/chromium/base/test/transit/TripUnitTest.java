@@ -37,7 +37,7 @@ public class TripUnitTest {
         @Override
         public void declareElements(Elements.Builder elements) {
             super.declareElements(elements);
-            elements.declareLogicalElement(
+            elements.declareElement(
                     LogicalElement.instrumentationThreadLogicalElement(
                             "LogicalElement 1, always True", () -> Condition.fulfilled()));
             elements.declareEnterCondition(
@@ -50,7 +50,7 @@ public class TripUnitTest {
             elements.declareElementFactory(
                     mOuterCondition,
                     (nestedElements) -> {
-                        nestedElements.declareLogicalElement(
+                        nestedElements.declareElement(
                                 LogicalElement.instrumentationThreadLogicalElement(
                                         "LogicalElement 2, always True",
                                         () -> Condition.fulfilled()));
@@ -66,7 +66,7 @@ public class TripUnitTest {
                         nestedElements.declareElementFactory(
                                 mInnerCondition,
                                 (nestedNestedElements) -> {
-                                    nestedNestedElements.declareLogicalElement(
+                                    nestedNestedElements.declareElement(
                                             LogicalElement.instrumentationThreadLogicalElement(
                                                     "LogicalElement 3, always True",
                                                     () -> Condition.fulfilled()));
@@ -144,15 +144,15 @@ public class TripUnitTest {
         try {
             transitionThread.start();
             destinationStation.mDeclareElementsCallbackHelper.waitForNext();
-            assertEquals(destinationStation.mDeclareElementsCallbackHelper.getCallCount(), 1);
-            assertEquals(destinationStation.mOuterCallbackHelper.getCallCount(), 0);
-            assertEquals(destinationStation.mInnerCallbackHelper.getCallCount(), 0);
+            assertEquals(1, destinationStation.mDeclareElementsCallbackHelper.getCallCount());
+            assertEquals(0, destinationStation.mOuterCallbackHelper.getCallCount());
+            assertEquals(0, destinationStation.mInnerCallbackHelper.getCallCount());
 
             outerCondition.setConditionStatus(Condition.fulfilled());
             destinationStation.mOuterCallbackHelper.waitForNext();
-            assertEquals(destinationStation.mDeclareElementsCallbackHelper.getCallCount(), 1);
-            assertEquals(destinationStation.mOuterCallbackHelper.getCallCount(), 1);
-            assertEquals(destinationStation.mInnerCallbackHelper.getCallCount(), 0);
+            assertEquals(1, destinationStation.mDeclareElementsCallbackHelper.getCallCount());
+            assertEquals(1, destinationStation.mOuterCallbackHelper.getCallCount());
+            assertEquals(0, destinationStation.mInnerCallbackHelper.getCallCount());
 
             innerCondition.setConditionStatus(Condition.fulfilled());
             destinationStation.mInnerCallbackHelper.waitForNext();
@@ -187,8 +187,8 @@ public class TripUnitTest {
                 innerCondition.mHasStoppedMonitoringForTesting);
 
         // Factory delayed declarations should only be called once.
-        assertEquals(destinationStation.mDeclareElementsCallbackHelper.getCallCount(), 1);
-        assertEquals(destinationStation.mOuterCallbackHelper.getCallCount(), 1);
-        assertEquals(destinationStation.mInnerCallbackHelper.getCallCount(), 1);
+        assertEquals(1, destinationStation.mDeclareElementsCallbackHelper.getCallCount());
+        assertEquals(1, destinationStation.mOuterCallbackHelper.getCallCount());
+        assertEquals(1, destinationStation.mInnerCallbackHelper.getCallCount());
     }
 }

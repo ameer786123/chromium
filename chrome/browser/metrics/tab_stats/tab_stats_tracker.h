@@ -18,7 +18,7 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/tab_stats/tab_stats_data_store.h"
-#include "chrome/browser/resource_coordinator/tab_lifecycle_observer.h"
+#include "chrome/browser/resource_coordinator/lifecycle_unit_observer.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "components/metrics/daily_event.h"
@@ -40,7 +40,7 @@ FORWARD_DECLARE_TEST(TabStatsTrackerBrowserTest,
 class TabStatsTracker : public TabStripModelObserver,
                         public BrowserListObserver,
                         public base::PowerSuspendObserver,
-                        public resource_coordinator::TabLifecycleObserver {
+                        public resource_coordinator::LifecycleUnitObserver {
  public:
   // Constructor. |pref_service| must outlive this object.
   explicit TabStatsTracker(PrefService* pref_service);
@@ -100,7 +100,7 @@ class TabStatsTracker : public TabStripModelObserver,
     TabStatsDailyObserver(const TabStatsDailyObserver&) = delete;
     TabStatsDailyObserver& operator=(const TabStatsDailyObserver&) = delete;
 
-    ~TabStatsDailyObserver() override {}
+    ~TabStatsDailyObserver() override = default;
 
     // Callback called when the daily event happen.
     void OnDailyEvent(DailyEvent::IntervalType type) override;
@@ -157,13 +157,11 @@ class TabStatsTracker : public TabStripModelObserver,
   // base::PowerSuspendObserver:
   void OnResume() override;
 
-  // resource_coordinator::TabLifecycleObserver:
-  void OnDiscardedStateChange(content::WebContents* contents,
-                              ::mojom::LifecycleUnitDiscardReason reason,
-                              bool is_discarded) override;
-
-  void OnAutoDiscardableStateChange(content::WebContents* contents,
-                                    bool is_auto_discardable) override;
+  // resource_coordinator::LifecycleUnitObserver:
+  void OnLifecycleUnitStateChanged(
+      resource_coordinator::LifecycleUnit* lifecycle_unit,
+      ::mojom::LifecycleUnitState previous_state,
+      ::mojom::LifecycleUnitStateChangeReason reason) override;
 
   // Functions to call to start tracking a new tab.
   void OnInitialOrInsertedTab(content::WebContents* web_contents);
@@ -252,6 +250,14 @@ class TabStatsTracker::UmaStatsReportingDelegate {
   static const char kTabDuplicateCountAllProfileWindowsHistogramName[];
   static const char kTabDuplicatePercentageSingleWindowHistogramName[];
   static const char kTabDuplicatePercentageAllProfileWindowsHistogramName[];
+  static const char
+      kTabDuplicateExcludingFragmentsCountSingleWindowHistogramName[];
+  static const char
+      kTabDuplicateExcludingFragmentsCountAllProfileWindowsHistogramName[];
+  static const char
+      kTabDuplicateExcludingFragmentsPercentageSingleWindowHistogramName[];
+  static const char
+      kTabDuplicateExcludingFragmentsPercentageAllProfileWindowsHistogramName[];
 
   UmaStatsReportingDelegate() = default;
 
@@ -272,8 +278,10 @@ class TabStatsTracker::UmaStatsReportingDelegate {
 
   // Calculate and report the metrics related to tab duplicates, which are
   // re-calculated each time rather than cached like the other metrics due to
-  // their complexity.
-  void ReportTabDuplicateMetrics();
+  // their complexity. |exclude_fragments| will treat two tabs with the same
+  // URL apart from trailing fragments as duplicates, otherwise will only treat
+  // exact URL matches as duplicates.
+  void ReportTabDuplicateMetrics(bool exclude_fragments);
 
  protected:
   // Checks if Chrome is running in background with no visible windows, virtual

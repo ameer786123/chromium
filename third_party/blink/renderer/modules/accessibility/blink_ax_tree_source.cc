@@ -35,8 +35,7 @@ static ax::mojom::blink::TextAffinity ToAXAffinity(TextAffinity affinity) {
     case TextAffinity::kDownstream:
       return ax::mojom::blink::TextAffinity::kDownstream;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return ax::mojom::blink::TextAffinity::kDownstream;
+      NOTREACHED();
   }
 }
 
@@ -173,7 +172,6 @@ bool BlinkAXTreeSource::GetTreeData(ui::AXTreeData* tree_data) const {
       }
     }
   }
-
   return true;
 }
 
@@ -225,6 +223,14 @@ size_t BlinkAXTreeSource::GetChildCount(const AXObject* node) const {
   if (ShouldTruncateInlineTextBoxes() &&
       ui::CanHaveInlineTextBoxChildren(node->RoleValue())) {
     return 0;
+  }
+  if (ax_object_cache_->GetAXMode().HasFilterFlags(ui::AXMode::kOnScreenOnly)) {
+    // If kOnScreenOnly is set, we don't want to serialize children of nodes
+    // that are off-screen, thus pruning the tree that is sent to
+    // clients.
+    if (!node->WasEverOnScreen()) {
+      return 0;
+    }
   }
   return node->ChildCountIncludingIgnored();
 }
@@ -298,11 +304,7 @@ void BlinkAXTreeSource::SerializeNode(const AXObject* src,
 #endif
 
   if (!src || src->IsDetached() || !src->IsIncludedInTree()) {
-    dst->AddState(ax::mojom::blink::State::kIgnored);
-    dst->id = -1;
-    dst->role = ax::mojom::blink::Role::kUnknown;
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   src->Serialize(dst, ax_object_cache_->GetAXMode(), is_snapshot_);

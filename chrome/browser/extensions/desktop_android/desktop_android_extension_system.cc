@@ -7,9 +7,17 @@
 #include <memory>
 #include <string>
 
+#include "base/base_switches.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/threading/thread_restrictions.h"
+#include "chrome/browser/extensions/chrome_extension_registrar_delegate.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
+#include "chrome/browser/extensions/permissions/permissions_updater.h"
+#include "chrome/browser/extensions/shared_module_service.h"
+#include "chrome/browser/profiles/profile.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/value_store/value_store_factory_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -24,15 +32,19 @@
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/install_flag.h"
+#include "extensions/browser/management_policy.h"
 #include "extensions/browser/null_app_sorting.h"
 #include "extensions/browser/quota_service.h"
 #include "extensions/browser/service_worker_manager.h"
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 
 using content::BrowserContext;
 namespace extensions {
+
+using LoadErrorBehavior = ExtensionRegistrar::LoadErrorBehavior;
 
 namespace {
 
@@ -79,38 +91,36 @@ class DesktopAndroidExtensionSystemFactory : public ExtensionSystemProvider {
   bool ServiceIsCreatedWithBrowserContext() const override { return true; }
 };
 
-// A minimal stub implementation of the ExtensionRegistrar::Delegate.
+// A version of ChromeExtensionRegistrarDelegate that works around the current
+// lack of support for UnpackedInstaller on Android.
+//
+// TODO(crbug.com/398299722): Delete this class when UnpackedInstaller is ported
+// to Android, because then unpacked extensions will be supported by
+// ChromeExtensionRegistrarDelegate::LoadExtensionForReload().
 class DesktopAndroidExtensionRegistrarDelegate
-    : public ExtensionRegistrar::Delegate {
+    : public ChromeExtensionRegistrarDelegate {
  public:
   explicit DesktopAndroidExtensionRegistrarDelegate(
       content::BrowserContext* browser_context)
-      : browser_context_(browser_context) {
-    DCHECK(browser_context_);
-  }
+      : ChromeExtensionRegistrarDelegate(
+            Profile::FromBrowserContext(browser_context)) {}
   ~DesktopAndroidExtensionRegistrarDelegate() override = default;
 
   // ExtensionRegistrar::Delegate:
-  void PreAddExtension(const Extension* extension,
-                       const Extension* old_extension) override {}
-  void PostActivateExtension(
-      scoped_refptr<const Extension> extension) override {}
-  void PostDeactivateExtension(
-      scoped_refptr<const Extension> extension) override {}
   void LoadExtensionForReload(
       const ExtensionId& extension_id,
       const base::FilePath& path,
       ExtensionRegistrar::LoadErrorBehavior load_error_behavior) override {
-    NOTIMPLEMENTED();
+    CHECK(!path.empty()) << "ExtensionRegistrar should never ask to load an "
+                            "unknown extension with no path";
+    auto* android_system = static_cast<DesktopAndroidExtensionSystem*>(
+        ExtensionSystem::Get(profile()));
+    DCHECK(android_system);
+    scoped_refptr<const Extension> extension =
+        android_system->LoadExtensionFromDirectory(path);
+    DCHECK(extension);
+    DCHECK_EQ(extension->id(), extension_id);
   }
-  bool CanEnableExtension(const Extension* extension) override { return true; }
-  bool CanDisableExtension(const Extension* extension) override { return true; }
-  bool ShouldBlockExtension(const Extension* extension) override {
-    return false;
-  }
-
- private:
-  raw_ptr<content::BrowserContext> browser_context_;  // Not owned.
 };
 
 }  // namespace
@@ -118,6 +128,12 @@ class DesktopAndroidExtensionRegistrarDelegate
 DesktopAndroidExtensionSystem::DesktopAndroidExtensionSystem(
     BrowserContext* browser_context)
     : browser_context_(browser_context),
+      // TODO(crbug.com/356905053): Provide real sorting once the web app story
+      // on Android is finalized.
+      app_sorting_(std::make_unique<NullAppSorting>()),
+      // TODO(crbug.com/408523607): Populate ManagementPolicy with actual
+      // policies.
+      management_policy_(std::make_unique<ManagementPolicy>()),
       store_factory_(base::MakeRefCounted<value_store::ValueStoreFactoryImpl>(
           browser_context->GetPath())) {}
 
@@ -133,20 +149,24 @@ void DesktopAndroidExtensionSystem::Shutdown() {}
 bool DesktopAndroidExtensionSystem::AddExtension(
     scoped_refptr<Extension> extension,
     std::string& error) {
-  // This code is normally handled as part of the UnpackedInstaller, which is
-  // not (yet) included in desktop android builds.
-  base::expected<base::Value::Dict, std::string> index_result =
-      declarative_net_request::InstallIndexHelper::
-          IndexAndPersistRulesOnInstall(*extension);
-  if (!index_result.has_value()) {
-    error = std::move(index_result.error());
-    return false;
+  base::expected<base::Value::Dict, std::string> index_result;
+  if (Manifest::IsUnpackedLocation(extension->location())) {
+    // This code is normally handled as part of the UnpackedInstaller, which is
+    // not (yet) included in desktop android builds.
+    // TODO(crbug.com/398299722): Remove this when UnpackedInstaller works on
+    // desktop android.
+    index_result = declarative_net_request::InstallIndexHelper::
+        IndexAndPersistRulesOnInstall(*extension);
+    if (!index_result.has_value()) {
+      error = std::move(index_result.error());
+      return false;
+    }
   }
 
   // This is normally handled by ExtensionService, and should likely be moved
   // to ExtensionRegistrar.
   ExtensionPrefs::Get(browser_context_)
-      ->OnExtensionInstalled(extension.get(), Extension::ENABLED,
+      ->OnExtensionInstalled(extension.get(), /*disable_reasons=*/{},
                              syncer::StringOrdinal(),
                              kInstallFlagInstallImmediately, std::string(),
                              std::move(index_result.value()));
@@ -155,13 +175,49 @@ bool DesktopAndroidExtensionSystem::AddExtension(
   return true;
 }
 
+const Extension* DesktopAndroidExtensionSystem::LoadExtensionFromDirectory(
+    const base::FilePath& file_path) {
+  base::ScopedAllowBlocking allow_blocking;
+
+  std::string load_error;
+  scoped_refptr<Extension> extension = file_util::LoadExtension(
+      file_path, mojom::ManifestLocation::kUnpacked, 0, &load_error);
+  if (!extension) {
+    return nullptr;
+  }
+
+  std::string error;
+  if (!AddExtension(extension, error)) {
+    return nullptr;
+  }
+
+  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
+  CHECK(registry->enabled_extensions().Contains(extension->id()));
+
+  return extension.get();
+}
+
 void DesktopAndroidExtensionSystem::InitForRegularProfile(
     bool extensions_enabled) {
+  if (is_ready()) {
+    return;
+  }
+
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  bool allow_noisy_errors =
+      !command_line->HasSwitch(::switches::kNoErrorDialogs);
+  LoadErrorReporter::Init(allow_noisy_errors);
+
   registrar_delegate_ =
       std::make_unique<DesktopAndroidExtensionRegistrarDelegate>(
           browser_context_);
-  registrar_ = std::make_unique<ExtensionRegistrar>(browser_context_,
-                                                    registrar_delegate_.get());
+  registrar_ = ExtensionRegistrar::Get(browser_context_);
+  registrar_->Init(
+      registrar_delegate_.get(), extensions_enabled,
+      base::CommandLine::ForCurrentProcess(),
+      browser_context_->GetPath().AppendASCII(kInstallDirectoryName),
+      browser_context_->GetPath().AppendASCII(kUnpackedInstallDirectoryName));
+  registrar_delegate_->Init(registrar_.get());
 
   service_worker_manager_ =
       std::make_unique<ServiceWorkerManager>(browser_context_);
@@ -176,7 +232,7 @@ ExtensionService* DesktopAndroidExtensionSystem::extension_service() {
 }
 
 ManagementPolicy* DesktopAndroidExtensionSystem::management_policy() {
-  return nullptr;
+  return management_policy_.get();
 }
 
 ServiceWorkerManager* DesktopAndroidExtensionSystem::service_worker_manager() {
@@ -209,7 +265,7 @@ QuotaService* DesktopAndroidExtensionSystem::quota_service() {
 }
 
 AppSorting* DesktopAndroidExtensionSystem::app_sorting() {
-  return nullptr;
+  return app_sorting_.get();
 }
 
 const base::OneShotEvent& DesktopAndroidExtensionSystem::ready() const {
@@ -227,7 +283,8 @@ ContentVerifier* DesktopAndroidExtensionSystem::content_verifier() {
 std::unique_ptr<ExtensionSet>
 DesktopAndroidExtensionSystem::GetDependentExtensions(
     const Extension* extension) {
-  return std::make_unique<ExtensionSet>();
+  return SharedModuleService::Get(browser_context_)
+      ->GetDependentExtensions(extension);
 }
 
 void DesktopAndroidExtensionSystem::InstallUpdate(

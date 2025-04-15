@@ -31,7 +31,7 @@ class CORE_EXPORT LCPCriticalPathPredictor final
     : public GarbageCollected<LCPCriticalPathPredictor> {
  public:
   explicit LCPCriticalPathPredictor(LocalFrame& frame);
-  virtual ~LCPCriticalPathPredictor();
+  ~LCPCriticalPathPredictor();
 
   LCPCriticalPathPredictor(const LCPCriticalPathPredictor&) = delete;
   LCPCriticalPathPredictor& operator=(const LCPCriticalPathPredictor&) = delete;
@@ -66,6 +66,8 @@ class CORE_EXPORT LCPCriticalPathPredictor final
   const Vector<KURL>& fetched_fonts() { return fetched_fonts_; }
 
   const Vector<KURL>& unused_preloads() { return unused_preloads_; }
+
+  void enable_testing();
 
   void Reset();
 
@@ -112,6 +114,8 @@ class CORE_EXPORT LCPCriticalPathPredictor final
   bool has_lcp_occurred_ = false;
   bool is_outermost_main_frame_document_loaded_ = false;
   bool has_sent_unused_preloads_ = false;
+
+  bool report_timing_predictor_for_testing_ = false;
 };
 
 }  // namespace blink

@@ -46,10 +46,9 @@
       "targets_spec_directory": "src/infra/config/generated/builders/try/linux-cast-arm64-rel/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-untrusted",
-    "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
+  "$build/flakiness": {
+    "check_for_flakiness": true,
+    "check_for_flakiness_with_resultdb": true
   },
   "$build/siso": {
     "configs": [
@@ -73,5 +72,6 @@
     ]
   },
   "builder_group": "tryserver.chromium.linux",
+  "cq": "path-based",
   "recipe": "chromium_trybot"
 }

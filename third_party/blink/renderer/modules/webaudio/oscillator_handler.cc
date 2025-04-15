@@ -167,7 +167,9 @@ OscillatorHandler::OscillatorHandler(AudioNode& node,
                                      PeriodicWaveImpl* wave_table,
                                      AudioParamHandler& frequency,
                                      AudioParamHandler& detune)
-    : AudioScheduledSourceHandler(kNodeTypeOscillator, node, sample_rate),
+    : AudioScheduledSourceHandler(NodeType::kNodeTypeOscillator,
+                                  node,
+                                  sample_rate),
       frequency_(&frequency),
       detune_(&detune),
       phase_increments_(GetDeferredTaskHandler().RenderQuantumFrames()),
@@ -186,7 +188,7 @@ OscillatorHandler::OscillatorHandler(AudioNode& node,
     } else if (oscillator_type == "triangle") {
       SetType(TRIANGLE);
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -272,8 +274,7 @@ bool OscillatorHandler::SetType(uint8_t type) {
     default:
       // Return false for invalid types, including CUSTOM since
       // setPeriodicWave() method must be called explicitly.
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 
   SetPeriodicWave(periodic_wave->impl());

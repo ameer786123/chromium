@@ -4,11 +4,13 @@
 
 package org.chromium.ui.widget;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Bundle;
 import android.text.Layout;
-import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.style.ClickableSpan;
 import android.util.AttributeSet;
 import android.view.Menu;
@@ -20,6 +22,8 @@ import android.widget.PopupMenu;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.accessibility.AccessibilityState;
 
 /**
@@ -28,16 +32,16 @@ import org.chromium.ui.accessibility.AccessibilityState;
  * do nothing if it's a touch event directly on a ClickableSpan. Otherwise if there's only one
  * ClickableSpan, we activate it. If there's more than one, we pop up a PopupMenu to disambiguate.
  */
+@NullMarked
 public class TextViewWithClickableSpans extends TextViewWithLeading
         implements View.OnLongClickListener {
-    private PopupMenu mDisambiguationMenu;
+    private @Nullable PopupMenu mDisambiguationMenu;
 
     public TextViewWithClickableSpans(Context context) {
-        super(context);
-        init();
+        this(context, /* attrs= */ null);
     }
 
-    public TextViewWithClickableSpans(Context context, AttributeSet attrs) {
+    public TextViewWithClickableSpans(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         init();
     }
@@ -63,14 +67,14 @@ public class TextViewWithClickableSpans extends TextViewWithLeading
     }
 
     @Override
-    public final void setOnLongClickListener(View.OnLongClickListener listener) {
+    public final void setOnLongClickListener(View.@Nullable OnLongClickListener listener) {
         // Ensure that no one changes the long click listener to anything but this view.
         assert listener == this || listener == null;
         super.setOnLongClickListener(listener);
     }
 
     @Override
-    public boolean performAccessibilityAction(int action, Bundle arguments) {
+    public boolean performAccessibilityAction(int action, @Nullable Bundle arguments) {
         // BrailleBack will generate an accessibility click event directly
         // on this view, make sure we handle that correctly.
         if (action == AccessibilityNodeInfo.ACTION_CLICK) {
@@ -109,9 +113,7 @@ public class TextViewWithClickableSpans extends TextViewWithLeading
         // so we should only try to simplify clicking on a clickable span if the touch event
         // isn't already over a clickable span.
 
-        CharSequence text = getText();
-        if (!(text instanceof SpannableString)) return false;
-        SpannableString spannable = (SpannableString) text;
+        if (!(getText() instanceof Spanned text)) return false;
 
         int x = (int) event.getX();
         int y = (int) event.getY();
@@ -122,22 +124,20 @@ public class TextViewWithClickableSpans extends TextViewWithLeading
         x += getScrollX();
         y += getScrollY();
 
-        Layout layout = getLayout();
+        Layout layout = assumeNonNull(getLayout());
         int line = layout.getLineForVertical(y);
         int off = layout.getOffsetForHorizontal(line, x);
 
-        ClickableSpan[] clickableSpans = spannable.getSpans(off, off, ClickableSpan.class);
+        ClickableSpan[] clickableSpans = text.getSpans(off, off, ClickableSpan.class);
         return clickableSpans.length > 0;
     }
 
     /** Returns the ClickableSpans in this TextView's text. */
     @VisibleForTesting
-    public ClickableSpan[] getClickableSpans() {
-        CharSequence text = getText();
-        if (!(text instanceof SpannableString)) return null;
+    public ClickableSpan @Nullable [] getClickableSpans() {
+        if (!(getText() instanceof Spanned text)) return null;
 
-        SpannableString spannable = (SpannableString) text;
-        return spannable.getSpans(0, spannable.length(), ClickableSpan.class);
+        return text.getSpans(0, text.length(), ClickableSpan.class);
     }
 
     private void handleAccessibilityClick() {
@@ -157,14 +157,13 @@ public class TextViewWithClickableSpans extends TextViewWithLeading
             return;
         }
 
-        SpannableString spannable = (SpannableString) getText();
+        Spanned spanned = (Spanned) getText();
         mDisambiguationMenu = new PopupMenu(getContext(), this);
         Menu menu = mDisambiguationMenu.getMenu();
         for (final ClickableSpan clickableSpan : clickableSpans) {
             CharSequence itemText =
-                    spannable.subSequence(
-                            spannable.getSpanStart(clickableSpan),
-                            spannable.getSpanEnd(clickableSpan));
+                    spanned.subSequence(
+                            spanned.getSpanStart(clickableSpan), spanned.getSpanEnd(clickableSpan));
             MenuItem menuItem = menu.add(itemText);
             menuItem.setOnMenuItemClickListener(
                     new MenuItem.OnMenuItemClickListener() {

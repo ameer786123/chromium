@@ -15,8 +15,8 @@
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/ash/scheduler_config/scheduler_configuration_manager.h"
 #include "chromeos/ash/components/dbus/resourced/resourced_client.h"
+#include "chromeos/ash/components/scheduler_config/scheduler_configuration_manager.h"
 #include "chromeos/ash/services/cros_healthd/public/mojom/cros_healthd.mojom.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -48,32 +48,6 @@ struct CpuTick {
   CpuTick operator-(const CpuTick& rhs) const {
     return {idle_time - rhs.idle_time, used_time - rhs.used_time};
   }
-};
-
-// This is used for logging, so do not remove or reorder existing entries.
-enum class RestoreResult {
-  kFinish = 0,
-  kNotFinish = 1,
-
-  // Add any new values above this one, and update kMaxValue to the highest
-  // enumerator value.
-  kMaxValue = kNotFinish,
-};
-
-// This is used for logging, so do not remove or reorder existing entries.
-enum class ArcRestoreState {
-  kSuccess = 0,
-  kSuccessWithMemoryPressure = 1,
-  kSuccessWithCPUUsageRateLimiting = 2,
-  kSuccessWithMemoryPressureAndCPUUsageRateLimiting = 3,
-  kFailedWithMemoryPressure = 4,
-  kFailedWithCPUUsageRateLimiting = 5,
-  kFailedWithMemoryPressureAndCPUUsageRateLimiting = 6,
-  kFailedWithUnknown = 7,
-
-  // Add any new values above this one, and update kMaxValue to the highest
-  // enumerator value.
-  kMaxValue = kFailedWithUnknown,
 };
 
 constexpr char kRestoredAppWindowCountHistogram[] =
@@ -284,10 +258,6 @@ class ArcAppQueueRestoreHandler
       ResourcedClient::PressureLevel::MODERATE;
 
   std::optional<bool> should_apply_cpu_restirction_;
-
-  // Record if the restore process faced memory pressure or CPU usage limiting.
-  bool was_memory_pressured_ = false;
-  bool was_cpu_usage_limited_ = false;
 
   mojo::Remote<cros_healthd::mojom::CrosHealthdProbeService> probe_service_;
 

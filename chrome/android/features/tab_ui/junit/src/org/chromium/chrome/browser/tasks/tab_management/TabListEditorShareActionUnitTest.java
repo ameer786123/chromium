@@ -15,7 +15,6 @@ import android.content.Intent;
 import android.graphics.drawable.Drawable;
 
 import androidx.appcompat.content.res.AppCompatResources;
-import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -23,13 +22,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CallbackHelper;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
@@ -39,7 +38,6 @@ import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.Acti
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ButtonType;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.IconPosition;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ShowMode;
-import org.chromium.chrome.tab_ui.R;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.components.browser_ui.share.ShareParams;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
@@ -58,7 +56,8 @@ import java.util.Set;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TabListEditorShareActionUnitTest {
-    @Rule public JniMocker mJniMocker = new JniMocker();
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private TabGroupModelFilter mTabGroupModelFilter;
     @Mock private SelectionDelegate<Integer> mSelectionDelegate;
@@ -85,7 +84,6 @@ public class TabListEditorShareActionUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mContext = RuntimeEnvironment.application;
         mAction =
                 (TabListEditorShareAction)
@@ -113,11 +111,10 @@ public class TabListEditorShareActionUnitTest {
                         })
                 .when(mTabGroupModelFilter)
                 .getRelatedTabList(anyInt());
-        mJniMocker.mock(DomDistillerUrlUtilsJni.TEST_HOOKS, mDomDistillerUrlUtilsJni);
+        DomDistillerUrlUtilsJni.setInstanceForTesting(mDomDistillerUrlUtilsJni);
     }
 
     @Test
-    @SmallTest
     public void testInherentActionProperties() {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, false);
 
@@ -145,7 +142,6 @@ public class TabListEditorShareActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareActionNoTabs() {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, false);
 
@@ -157,7 +153,6 @@ public class TabListEditorShareActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareActionWithOneTab() throws Exception {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, false);
 
@@ -222,7 +217,6 @@ public class TabListEditorShareActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareActionWithMultipleTabs() throws Exception {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, false);
 
@@ -286,7 +280,6 @@ public class TabListEditorShareActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareActionWithAllFilterableTabs_actionsOnTabs() throws Exception {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, false);
 
@@ -308,7 +301,6 @@ public class TabListEditorShareActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareActionWithAllFilterableTabs_actionsOnTabsAndRelatedTabs()
             throws Exception {
         mAction.configure(() -> mTabGroupModelFilter, mSelectionDelegate, mDelegate, true);

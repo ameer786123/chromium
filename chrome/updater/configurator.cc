@@ -17,6 +17,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/rand_util.h"
 #include "base/sequence_checker.h"
+#include "base/strings/to_string.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "build/build_config.h"
@@ -57,10 +58,10 @@ Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
           GetUpdaterScope(),
           prefs->GetPrefService(),
           std::make_unique<ActivityDataService>(GetUpdaterScope()))),
-      policy_service_(base::MakeRefCounted<PolicyService>(
-          external_constants,
-          persisted_data_->GetUsageStatsEnabled(),
-          is_ceca_experiment_enabled)),
+      policy_service_(
+          base::MakeRefCounted<PolicyService>(external_constants,
+                                              persisted_data_,
+                                              is_ceca_experiment_enabled)),
       unzip_factory_(
           base::MakeRefCounted<update_client::InProcessUnzipperFactory>()),
       patch_factory_(
@@ -79,7 +80,8 @@ Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
   GetNetworkFetcherFactory();
 #endif
   static crash_reporter::CrashKeyString<6> crash_key_managed("managed");
-  crash_key_managed.Set(is_managed_device_ ? "true" : "false");
+  crash_key_managed.Set(is_managed_device_ ? base::ToString(*is_managed_device_)
+                                           : "n/a");
 }
 Configurator::~Configurator() = default;
 
@@ -265,7 +267,7 @@ update_client::UpdaterStateProvider Configurator::GetUpdaterStateProvider()
 
 std::optional<base::FilePath> Configurator::GetCrxCachePath() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return updater::GetCrxDiffCacheDirectory(GetUpdaterScope());
+  return updater::GetCrxCacheDirectory(GetUpdaterScope());
 }
 
 bool Configurator::IsConnectionMetered() const {

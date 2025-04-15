@@ -1,10 +1,10 @@
 Name: Abseil
 Short Name: absl
 URL: https://github.com/abseil/abseil-cpp
-License: Apache 2.0
+License: Apache-2.0
 License File: LICENSE
 Version: N/A
-Revision: 878313658ed7cbef40635e2394b28ef0242072d8
+Revision: 12f4be6805ea58052ecf764b381619632b061cbf
 Security Critical: yes
 Shipped: yes
 
@@ -40,4 +40,4 @@ Local Modifications:
 * Patches from //third_party/abseil-cpp/patches have been applied.
 
 * Increment this number to silence presubmits about modifying files in
-  third_party when regenerating absl .def files: 2
+  third_party when regenerating absl .def files: 3

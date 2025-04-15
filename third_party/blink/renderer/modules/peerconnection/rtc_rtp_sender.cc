@@ -11,6 +11,8 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/common/privacy_budget/identifiability_metric_builder.h"
 #include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
@@ -477,7 +479,7 @@ ToRtpParameters(ExecutionContext* context,
       degradation_preference =
           webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 
@@ -489,18 +491,18 @@ webrtc::RtpCodec ToWebrtcRtpCodec(const RTCRtpCodec* codec) {
   std::string mime_type = codec->mimeType().Utf8();
   auto slash_index = codec->mimeType().Find("/");
   if (slash_index == WTF::kNotFound) {
-    webrtc_codec.kind = cricket::MEDIA_TYPE_UNSUPPORTED;
+    webrtc_codec.kind = webrtc::MediaType::UNSUPPORTED;
     return webrtc_codec;
   }
   webrtc_codec.name = codec->mimeType().Substring(slash_index + 1).Utf8();
   WTF::String codec_type = codec->mimeType().Substring(0, slash_index);
 
   if (codec_type == "video") {
-    webrtc_codec.kind = cricket::MEDIA_TYPE_VIDEO;
+    webrtc_codec.kind = webrtc::MediaType::VIDEO;
   } else if (codec_type == "audio") {
-    webrtc_codec.kind = cricket::MEDIA_TYPE_AUDIO;
+    webrtc_codec.kind = webrtc::MediaType::AUDIO;
   } else {
-    webrtc_codec.kind = cricket::MEDIA_TYPE_UNSUPPORTED;
+    webrtc_codec.kind = webrtc::MediaType::UNSUPPORTED;
     return webrtc_codec;
   }
 
@@ -656,7 +658,7 @@ RTCRtpSender::RTCRtpSender(RTCPeerConnection* pc,
   DCHECK(!track || kind_ == track->kind());
   LogMessage(base::StringPrintf(
       "%s({require_encoded_insertable_streams=%s})", __func__,
-      require_encoded_insertable_streams ? "true" : "false"));
+      base::ToString(require_encoded_insertable_streams).c_str()));
   if (!base::FeatureList::IsEnabled(kWebRtcEncodedTransformDirectCallback)) {
     if (encoded_audio_transformer_) {
       RegisterEncodedAudioStreamCallback();
@@ -748,7 +750,7 @@ RTCRtpSendParameters* RTCRtpSender::getParameters() {
         degradation_preference_str = "balanced";
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
     parameters->setDegradationPreference(degradation_preference_str);
   }
@@ -910,9 +912,8 @@ void RTCRtpSender::SetTrack(MediaStreamTrack* track) {
     if (kind_.IsNull()) {
       kind_ = track->kind();
     } else if (kind_ != track->kind()) {
-      LOG(ERROR) << "Trying to set track to a different kind: Old " << kind_
-                 << " new " << track->kind();
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED() << "Trying to set track to a different kind: Old " << kind_
+                   << " new " << track->kind();
     }
   }
 }
@@ -971,8 +972,9 @@ RTCInsertableStreams* RTCRtpSender::createEncodedStreams(
     ScriptState* script_state,
     ExceptionState& exception_state) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  LogMessage(base::StringPrintf("%s({transform_shortcircuited_=%s})", __func__,
-                                transform_shortcircuited_ ? "true" : "false"));
+  LogMessage(
+      base::StringPrintf("%s({transform_shortcircuited_=%s})", __func__,
+                         base::ToString(transform_shortcircuited_).c_str()));
   if (transform_shortcircuited_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Too late to create encoded streams");

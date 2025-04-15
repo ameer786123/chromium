@@ -145,6 +145,7 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
       std::unique_ptr<viz::CopyOutputRequest> request) override;
   void SetNeedsAnimate() override;
   viz::FrameSinkId GetFrameSinkId() override;
+  gpu::SurfaceHandle GetSurfaceHandle() override;
   void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
   void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
   bool IsDrawingFirstVisibleFrame() const override;
@@ -152,6 +153,7 @@ class CONTENT_EXPORT CompositorImpl : public Compositor,
   void OnUpdateRefreshRate(float refresh_rate) override;
   void OnUpdateSupportedRefreshRates(
       const std::vector<float>& supported_refresh_rates) override;
+  void OnAdaptiveRefreshRateInfoChanged() override;
   void OnUpdateOverlayTransform() override;
   std::unique_ptr<ui::CompositorLock> GetCompositorLock(
       base::TimeDelta timeout) override;

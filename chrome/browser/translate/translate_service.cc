@@ -11,7 +11,6 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
@@ -27,7 +26,7 @@
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/file_manager/app_id.h"
 #include "extensions/common/constants.h"
 #endif
@@ -45,7 +44,7 @@ TranslateService::TranslateService()
   resource_request_allowed_notifier_.Init(this, true /* leaky */);
 }
 
-TranslateService::~TranslateService() {}
+TranslateService::~TranslateService() = default;
 
 // static
 void TranslateService::Initialize() {
@@ -99,8 +98,7 @@ void TranslateService::OnResourceRequestsAllowed() {
   translate::TranslateLanguageList* language_list =
       translate::TranslateDownloadManager::GetInstance()->language_list();
   if (!language_list) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   language_list->SetResourceRequestsAllowed(
@@ -138,7 +136,7 @@ bool TranslateService::IsTranslatableURL(const GURL& url) {
   return !url.is_empty() && !url.SchemeIs(content::kChromeUIScheme) &&
          !url.SchemeIs(chrome::kChromeNativeScheme) &&
          !url.SchemeIs(content::kChromeDevToolsScheme) &&
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
          !(url.SchemeIs(extensions::kExtensionScheme) &&
            url.DomainIs(file_manager::kFileManagerAppId)) &&
 #endif

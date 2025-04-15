@@ -17,26 +17,10 @@ import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
 import {getCss} from './sync_confirmation_app.css.js';
 import {getHtml} from './sync_confirmation_app.html.js';
+import {ScreenMode} from './sync_confirmation_browser_proxy.js';
 import type {SyncBenefit, SyncConfirmationBrowserProxy} from './sync_confirmation_browser_proxy.js';
 import {SyncConfirmationBrowserProxyImpl} from './sync_confirmation_browser_proxy.js';
 
-
-// LINT.IfChange(screen_mode)
-/**
- * In PENDING mode, the screen should not show consent buttons and indicate that
- * some loading is pending. In RESTRICTED mode, the button must not be weighted,
- * and in UNRESTRICTED mode they can be.
- *
- * In UNSUPPORTED mode, the client take any behavior.
- */
-export enum ScreenMode {
-  UNSUPPORTED = 0,
-  PENDING = 1,
-  RESTRICTED = 2,
-  UNRESTRICTED = 3,
-  DEADLINED = 4,
-}
-// LINT.ThenChange(//chrome/browser/ui/webui/signin/sync_confirmation_handler.h:screen_mode)
 
 interface AccountInfo {
   src: string;
@@ -78,18 +62,19 @@ export class SyncConfirmationAppElement extends SyncConfirmationAppElementBase {
     };
   }
 
-  protected accountImageSrc_: string =
+  protected accessor accountImageSrc_: string =
       loadTimeData.getString('accountPictureUrl');
-  protected anyButtonClicked_: boolean = false;
-  protected isModalDialog_: boolean = loadTimeData.getBoolean('isModalDialog');
-  private showEnterpriseBadge_: boolean = false;
-  protected syncBenefitsList_: SyncBenefit[] =
+  protected accessor anyButtonClicked_: boolean = false;
+  protected accessor isModalDialog_: boolean =
+      loadTimeData.getBoolean('isModalDialog');
+  private accessor showEnterpriseBadge_: boolean = false;
+  protected accessor syncBenefitsList_: SyncBenefit[] =
       JSON.parse(loadTimeData.getString('syncBenefitsList'));
   private syncConfirmationBrowserProxy_: SyncConfirmationBrowserProxy =
       SyncConfirmationBrowserProxyImpl.getInstance();
-  protected useClickableSyncInfoDesc_: boolean =
+  protected accessor useClickableSyncInfoDesc_: boolean =
       loadTimeData.getBoolean('useClickableSyncInfoDesc');
-  private screenMode_: ScreenMode = ScreenMode.PENDING;
+  private accessor screenMode_: ScreenMode = ScreenMode.PENDING;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -105,19 +90,21 @@ export class SyncConfirmationAppElement extends SyncConfirmationAppElementBase {
     this.anyButtonClicked_ = true;
     this.syncConfirmationBrowserProxy_.confirm(
         this.getConsentDescription_(),
-        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]));
+        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]),
+        this.screenMode_);
   }
 
   protected onUndo_() {
     this.anyButtonClicked_ = true;
-    this.syncConfirmationBrowserProxy_.undo();
+    this.syncConfirmationBrowserProxy_.undo(this.screenMode_);
   }
 
   protected onGoToSettings_(e: Event) {
     this.anyButtonClicked_ = true;
     this.syncConfirmationBrowserProxy_.goToSettings(
         this.getConsentDescription_(),
-        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]));
+        this.getConsentConfirmation_(e.composedPath() as HTMLElement[]),
+        this.screenMode_);
   }
 
   /**
@@ -138,7 +125,7 @@ export class SyncConfirmationAppElement extends SyncConfirmationAppElementBase {
   /** @return Text of the consent description elements. */
   private getConsentDescription_(): string[] {
     const consentDescription =
-        Array.from(this.shadowRoot!.querySelectorAll('[consent-description]'))
+        Array.from(this.shadowRoot.querySelectorAll('[consent-description]'))
             .filter(
                 element => element.getBoundingClientRect().width *
                         element.getBoundingClientRect().height >

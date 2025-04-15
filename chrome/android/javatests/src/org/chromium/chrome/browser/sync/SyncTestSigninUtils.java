@@ -6,12 +6,15 @@ package org.chromium.chrome.browser.sync;
 
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.chrome.test.util.browser.signin.LiveSigninTestUtil;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
+import org.chromium.components.signin.base.GaiaId;
+import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
 
 /** Utility class for sign-in functionalities in native Sync browser tests. */
 @JNINamespace("sync_test_utils_android")
@@ -22,6 +25,12 @@ final class SyncTestSigninUtils {
     @CalledByNative
     private static void setUpAccountAndSignInForTesting() {
         sSigninTestRule.addTestAccountThenSignin();
+    }
+
+    /** Returns GaiaId for the default test account. */
+    @CalledByNative
+    private static GaiaId getGaiaIdForDefaultTestAccount() {
+        return FakeAccountManagerFacade.toGaiaId(SigninTestRule.TEST_ACCOUNT_EMAIL);
     }
 
     /** Sets up the test account, signs in, and enables Sync-the-feature. */
@@ -51,14 +60,15 @@ final class SyncTestSigninUtils {
 
     /** Add an account to the device and signs in for live testing, but does not enable Sync. */
     @CalledByNative
-    private static void setUpLiveAccountAndSignInForTesting(String accountName, String password) {
+    private static void setUpLiveAccountAndSignInForTesting(
+            @JniType("std::string") String accountName, @JniType("std::string") String password) {
         LiveSigninTestUtil.getInstance().addAccountWithPasswordThenSignin(accountName, password);
     }
 
     /** Add an account to the device and signs in for live testing, and enables Sync-the-feature. */
     @CalledByNative
     private static void setUpLiveAccountAndSignInAndEnableSyncForTesting(
-            String accountName, String password) {
+            @JniType("std::string") String accountName, @JniType("std::string") String password) {
         LiveSigninTestUtil.getInstance()
                 .addAccountWithPasswordThenSigninAndEnableSync(accountName, password);
     }

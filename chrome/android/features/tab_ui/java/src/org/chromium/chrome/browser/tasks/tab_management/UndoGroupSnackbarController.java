@@ -12,7 +12,6 @@ import androidx.annotation.Nullable;
 import org.chromium.base.Callback;
 import org.chromium.base.Token;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
@@ -83,7 +82,8 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
         mTabGroupModelFilterObserver =
                 new TabGroupModelFilterObserver() {
                     @Override
-                    public void willMoveTabOutOfGroup(Tab movedTab, int newRootId) {
+                    public void willMoveTabOutOfGroup(
+                            Tab movedTab, @Nullable Token destinationTabGroupId) {
                         // Fix for b/338511492 is to dismiss the snackbar if an ungroup operation
                         // happens because information that allowed the group action to be undone
                         // may no longer be usable (incorrect indices, group IDs, etc.).
@@ -186,8 +186,7 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
                 mTabModelSelector
                         .getTabGroupModelFilterProvider()
                         .getCurrentTabGroupModelFilter()
-                        .getRelatedTabIds(tabUndoInfo.get(0).tab.getId())
-                        .size();
+                        .getTabCountForGroup(tabUndoInfo.get(0).tab.getTabGroupId());
 
         String content = String.format(Locale.getDefault(), "%d", mergedGroupSize);
         String templateText;
@@ -243,23 +242,18 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
             filter.deleteTabGroupTitle(firstRootId);
         }
 
-        if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-            // If the destination rootID previously did not have a color id associated with it since
-            // it was either created from a new tab group or was originally a single tab before
-            // merge, delete that color id on undo. This check deletes the group color for that
-            // destination rootID, as all tabs still currently share that ID before the undo
-            // operation is performed.
-            if (firstInfo.destinationGroupColorId == TabGroupColorUtils.INVALID_COLOR_ID) {
-                filter.deleteTabGroupColor(firstRootId);
-            }
+        // If the destination rootID previously did not have a color id associated with it since it
+        // was either created from a new tab group or was originally a single tab before merge,
+        // delete that color id on undo. This check deletes the group color for that destination
+        // rootID, as all tabs still currently share that ID before the undo operation is performed.
+        if (firstInfo.destinationGroupColorId == TabGroupColorUtils.INVALID_COLOR_ID) {
+            filter.deleteTabGroupColor(firstRootId);
         }
 
         // The action of merging expands the destination group. If it was originally collapsed, we
         // need to restore that state.
-        if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
-            if (firstInfo.destinationGroupTitleCollapsed) {
-                filter.setTabGroupCollapsed(firstRootId, true);
-            }
+        if (firstInfo.destinationGroupTitleCollapsed) {
+            filter.setTabGroupCollapsed(firstRootId, true);
         }
 
         for (int i = data.size() - 1; i >= 0; i--) {

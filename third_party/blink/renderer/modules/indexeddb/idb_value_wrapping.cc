@@ -2,20 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
 
 #include <cstdint>
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/numerics/safe_conversions.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialization_tag.h"
@@ -27,6 +25,10 @@
 #include "third_party/snappy/src/snappy.h"
 
 namespace blink {
+
+BASE_FEATURE(kIdbDecompressValuesInPlace,
+             "IdbDecompressValuesInPlace",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 namespace {
 
@@ -84,13 +86,14 @@ bool ShouldTransmitCompressed(size_t uncompressed_length,
     return false;
   }
 
-  // Don't keep compressed if decompressed size is large. Snappy doesn't have
-  // native support for streamed decoding, so decompressing requires
-  // O(uncompressed_length) memory more than handling an uncompressed value
-  // would.
-  // TODO(estade): implement framing as described in
-  // https://github.com/google/snappy/blob/main/framing_format.txt
-  if (compressed_length > 256000U) {
+  // Don't keep compressed if decompressed size is large, unless `kIdbDecompressValuesInPlace`
+  // is enabled. Snappy doesn't have native support for streamed decoding, so decompressing
+  // requires O(uncompressed_length) memory more than handling an uncompressed value would.
+  // TODO(crbug.com/377441266): remove this condition. The value stored in
+  // `IDBValue::data_` is copied when being deserialized, regardless of whether
+  // it's compressed. Thus disabling compression for large values was misguided.
+  if (compressed_length > 256000U &&
+      !base::FeatureList::IsEnabled(kIdbDecompressValuesInPlace)) {
     return false;
   }
 
@@ -165,11 +168,22 @@ void IDBValueWrapper::DoneCloning() {
 }
 
 bool IDBValueWrapper::ShouldCompress(size_t uncompressed_length) const {
-  return uncompressed_length >= compression_threshold_override_.value_or(
-                                    mojom::blink::kIDBWrapThreshold);
+  static int field_trial_threshold =
+      features::kIndexedDBCompressValuesWithSnappyCompressionThreshold.Get();
+  return base::FeatureList::IsEnabled(
+             features::kIndexedDBCompressValuesWithSnappy) &&
+         uncompressed_length >=
+             compression_threshold_override_.value_or(static_cast<size_t>(
+                 field_trial_threshold < 0 ? mojom::blink::kIDBWrapThreshold
+                                           : field_trial_threshold));
 }
 
 void IDBValueWrapper::MaybeCompress() {
+  if (!base::FeatureList::IsEnabled(
+          features::kIndexedDBCompressValuesWithSnappy)) {
+    return;
+  }
+
   DCHECK(wire_data_buffer_.empty());
   const size_t wire_data_size = wire_data_.size();
 
@@ -184,10 +198,11 @@ void IDBValueWrapper::MaybeCompress() {
   wire_data_buffer_[1] = kRequiresProcessingSSVPseudoVersion;
   wire_data_buffer_[2] = kCompressedWithSnappy;
   size_t compressed_length;
-  snappy::RawCompress(
-      reinterpret_cast<const char*>(wire_data_.data()), wire_data_size,
-      reinterpret_cast<char*>(wire_data_buffer_.data() + kHeaderSize),
-      &compressed_length);
+  snappy::RawCompress(reinterpret_cast<const char*>(wire_data_.data()),
+                      wire_data_size,
+                      reinterpret_cast<char*>(
+                          UNSAFE_TODO(wire_data_buffer_.data() + kHeaderSize)),
+                      &compressed_length);
   if (ShouldTransmitCompressed(wire_data_size, compressed_length)) {
     // Truncate the excess space that was previously allocated.
     wire_data_buffer_.resize(kHeaderSize +
@@ -197,13 +212,12 @@ void IDBValueWrapper::MaybeCompress() {
     // Compression wasn't very successful, but we still allocated a large chunk
     // of memory, so we can repurpose it. This copy saves us from making another
     // allocation later on in `MaybeStoreInBlob()` or `TakeWireBytes()`.
-    memcpy(wire_data_buffer_.data(), wire_data_.data(), wire_data_size);
+    UNSAFE_TODO(
+        memcpy(wire_data_buffer_.data(), wire_data_.data(), wire_data_size));
     wire_data_buffer_.resize(static_cast<wtf_size_t>(wire_data_size));
   }
 
-  wire_data_ = base::make_span(
-      reinterpret_cast<const uint8_t*>(wire_data_buffer_.data()),
-      wire_data_buffer_.size());
+  wire_data_ = base::as_byte_span(wire_data_buffer_);
 }
 
 void IDBValueWrapper::MaybeStoreInBlob() {
@@ -238,9 +252,7 @@ void IDBValueWrapper::MaybeStoreInBlob() {
                                wire_data_buffer_);
   IDBValueWrapper::WriteVarInt(blob_info_.size() - 1, wire_data_buffer_);
 
-  wire_data_ = base::make_span(
-      reinterpret_cast<const uint8_t*>(wire_data_buffer_.data()),
-      wire_data_buffer_.size());
+  wire_data_ = base::as_byte_span(wire_data_buffer_);
   DCHECK(!wire_data_buffer_.empty());
 }
 
@@ -301,8 +313,10 @@ void IDBValueUnwrapper::Unwrap(Vector<char>&& wrapper_blob_content,
 }
 
 // static
-bool IDBValueUnwrapper::Decompress(const Vector<char>& buffer,
-                                   Vector<char>* out_buffer) {
+bool IDBValueUnwrapper::Decompress(
+    const Vector<char>& buffer,
+    Vector<char>* out_buffer,
+    SerializedScriptValue::DataBufferPtr* out_buffer_in_place) {
   if (buffer.size() < kHeaderSize) {
     return false;
   }
@@ -317,17 +331,30 @@ bool IDBValueUnwrapper::Decompress(const Vector<char>& buffer,
   base::span<const char> compressed(
       base::as_chars(data_span.subspan(kHeaderSize)));
 
-  Vector<char> decompressed_data;
   size_t decompressed_length;
   if (!snappy::GetUncompressedLength(compressed.data(), compressed.size(),
                                      &decompressed_length)) {
     return false;
   }
 
-  decompressed_data.resize(static_cast<wtf_size_t>(decompressed_length));
-  snappy::RawUncompress(compressed.data(), compressed.size(),
-                        decompressed_data.data());
-  *out_buffer = std::move(decompressed_data);
+  if (out_buffer) {
+    Vector<char> decompressed_data;
+    decompressed_data.resize(static_cast<wtf_size_t>(decompressed_length));
+    if (!snappy::RawUncompress(compressed.data(), compressed.size(),
+                               decompressed_data.data())) {
+      return false;
+    }
+    *out_buffer = std::move(decompressed_data);
+  } else {
+    SerializedScriptValue::DataBufferPtr decompressed_data =
+        SerializedScriptValue::AllocateBuffer(decompressed_length);
+    if (!snappy::RawUncompress(
+            compressed.data(), compressed.size(),
+            reinterpret_cast<char*>(decompressed_data.data()))) {
+      return false;
+    }
+    *out_buffer_in_place = std::move(decompressed_data);
+  }
   return true;
 }
 
@@ -337,8 +364,8 @@ bool IDBValueUnwrapper::Parse(IDBValue* value) {
     return false;
 
   const uint8_t* data = reinterpret_cast<const uint8_t*>(value->Data().data());
-  end_ = data + value->DataSize();
-  current_ = data + kHeaderSize;
+  end_ = UNSAFE_TODO(data + value->DataSize());
+  current_ = UNSAFE_TODO(data + kHeaderSize);
 
   if (!ReadVarInt(blob_size_))
     return Reset();
@@ -375,7 +402,7 @@ bool IDBValueUnwrapper::ReadVarInt(unsigned& value) {
     if (shift >= sizeof(unsigned) * 8)
       return false;
     uint8_t byte = *current_;
-    ++current_;
+    UNSAFE_TODO(++current_);
     value |= static_cast<unsigned>(byte & 0x7F) << shift;
     shift += 7;
 
@@ -394,9 +421,9 @@ bool IDBValueUnwrapper::ReadBytes(Vector<uint8_t>& value) {
     return false;
   Vector<uint8_t> result;
   result.ReserveInitialCapacity(length);
-  result.Append(current_, length);
+  result.AppendSpan(UNSAFE_TODO(base::span(current_, end_)).first(length));
   value = std::move(result);
-  current_ += length;
+  UNSAFE_TODO(current_ += length);
   return true;
 }
 

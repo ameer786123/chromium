@@ -75,7 +75,7 @@ void RecordCheckingForUpdateTime(const base::TimeDelta duration) {
 
 }  // anonymous namespace
 
-VersionUpdater::UpdateInfo::UpdateInfo() {}
+VersionUpdater::UpdateInfo::UpdateInfo() = default;
 
 VersionUpdater::VersionUpdater(VersionUpdater::Delegate* delegate)
     : delegate_(delegate),
@@ -310,7 +310,7 @@ void VersionUpdater::UpdateStatusChanged(
     case update_engine::Operation::UPDATED_BUT_DEFERRED:
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 
   if (time_estimator_.HasTotalTime(status.current_operation())) {
@@ -417,8 +417,7 @@ void VersionUpdater::UpdateErrorMessage(const NetworkState* network,
       network_name = network->name();
       break;
     case NetworkState::PortalState::kOnline:
-      NOTREACHED_IN_MIGRATION();
-      return;
+      NOTREACHED();
   }
   delegate_->UpdateErrorMessage(state, error_state, network_name);
 }

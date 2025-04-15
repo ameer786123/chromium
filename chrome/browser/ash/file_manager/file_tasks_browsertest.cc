@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/file_manager/file_tasks.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string_view>
@@ -11,6 +12,7 @@
 
 #include "ash/constants/web_app_id_constants.h"
 #include "ash/webui/file_manager/url_constants.h"
+#include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -19,7 +21,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -34,6 +35,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/app_service_test.h"
+#include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/apps/app_service/publishers/app_publisher.h"
 #include "chrome/browser/ash/arc/fileapi/arc_documents_provider_util.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
@@ -58,8 +60,8 @@
 #include "chrome/browser/chromeos/policy/dlp/dlp_rules_manager_factory.h"
 #include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/browser/chromeos/upload_office_to_cloud/upload_office_to_cloud.h"
-#include "chrome/browser/extensions/extension_keeplist_chromeos.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
@@ -147,8 +149,8 @@ void VerifyTasks(int* remaining,
   ASSERT_TRUE(resulting_tasks) << expectation.file_extensions;
   --*remaining;
 
-  auto default_task = base::ranges::find_if(resulting_tasks->tasks,
-                                            &FullTaskDescriptor::is_default);
+  auto default_task = std::ranges::find_if(resulting_tasks->tasks,
+                                           &FullTaskDescriptor::is_default);
 
   // Early exit for the uncommon situation where no default should be set.
   if (!expectation.app_id) {
@@ -164,8 +166,8 @@ void VerifyTasks(int* remaining,
       << " for extension: " << expectation.file_extensions;
 
   // Verify no other task is set as default.
-  EXPECT_EQ(1, base::ranges::count_if(resulting_tasks->tasks,
-                                      &FullTaskDescriptor::is_default))
+  EXPECT_EQ(1, std::ranges::count_if(resulting_tasks->tasks,
+                                     &FullTaskDescriptor::is_default))
       << expectation.file_extensions;
 }
 
@@ -525,6 +527,9 @@ IN_PROC_BROWSER_TEST_P(FileTasksBrowserTest, MediaAppPreferredOverChromeApps) {
 
 // Test expectations for files coming from provided file systems.
 IN_PROC_BROWSER_TEST_P(FileTasksBrowserTest, ProvidedFileSystemFileSource) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   if (profile_type() == TestProfileType::kGuest) {
     // Provided file systems don't exist in guest.
     return;
@@ -764,10 +769,11 @@ class FileTasksPolicyBrowserTest : public FileTasksBrowserTest {
       // Verifies that all tasks are either blocked or not by DLP, according to
       // |test|.
       bool expect_dlp_blocked =
-          test.dlp_source_url && strcmp(test.dlp_source_url, blockedUrl) == 0;
+          test.dlp_source_url &&
+          UNSAFE_TODO(strcmp(test.dlp_source_url, blockedUrl)) == 0;
       EXPECT_EQ(expect_dlp_blocked,
-                base::ranges::all_of(resulting_tasks.tasks,
-                                     &FullTaskDescriptor::is_dlp_blocked));
+                std::ranges::all_of(resulting_tasks.tasks,
+                                    &FullTaskDescriptor::is_dlp_blocked));
     }
   }
 
@@ -994,7 +1000,7 @@ IN_PROC_BROWSER_TEST_P(WithEnterpriseFlagAndPrefs,
       std::vector<FullTaskDescriptor> tasks =
           file_manager::test::GetTasksForFile(profile, test_file_path);
 
-      const size_t google_workspace_task_count = base::ranges::count_if(
+      const size_t google_workspace_task_count = std::ranges::count_if(
           tasks, &IsWebDriveOfficeTask, &FullTaskDescriptor::task_descriptor);
       EXPECT_EQ(
           google_workspace_task_count,
@@ -1002,7 +1008,7 @@ IN_PROC_BROWSER_TEST_P(WithEnterpriseFlagAndPrefs,
               ? 1U
               : 0U);
 
-      const size_t microsoft_office_task_count = base::ranges::count_if(
+      const size_t microsoft_office_task_count = std::ranges::count_if(
           tasks, &IsOpenInOfficeTask, &FullTaskDescriptor::task_descriptor);
       EXPECT_EQ(microsoft_office_task_count,
                 chromeos::cloud_upload::IsMicrosoftOfficeCloudUploadAllowed(
@@ -1589,6 +1595,20 @@ class FakeWebAppPublisher : public apps::AppPublisher {
             /*should_notify_initialized=*/false);
   }
 
+  void set_fail_launch(bool fail_launch) { fail_launch_ = fail_launch; }
+
+  void Uninstall(const std::string& app_id,
+                 apps::UninstallSource uninstall_source,
+                 bool clear_site_data,
+                 bool report_abuse) override {
+    std::vector<apps::AppPtr> apps;
+    apps::AppPtr app = std::make_unique<apps::App>(apps::AppType::kWeb, app_id);
+    app->readiness = apps::Readiness::kUninstalledByUser;
+    apps.push_back(std::move(app));
+    Publish(std::move(apps), apps::AppType::kWeb,
+            /*should_notify_initialized=*/false);
+  }
+
   void LoadIcon(const std::string& app_id,
                 const apps::IconKey& icon_key,
                 apps::IconType icon_type,
@@ -1596,7 +1616,7 @@ class FakeWebAppPublisher : public apps::AppPublisher {
                 bool allow_placeholder_icon,
                 apps::LoadIconCallback callback) override {
     // Never called in these tests.
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   void Launch(const std::string& app_id,
@@ -1604,7 +1624,7 @@ class FakeWebAppPublisher : public apps::AppPublisher {
               apps::LaunchSource launch_source,
               apps::WindowInfoPtr window_info) override {
     // Never called in these tests.
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   void LaunchAppWithIntent(const std::string& app_id,
@@ -1613,16 +1633,23 @@ class FakeWebAppPublisher : public apps::AppPublisher {
                            apps::LaunchSource launch_source,
                            apps::WindowInfoPtr window_info,
                            apps::LaunchCallback callback) override {
+    if (fail_launch_) {
+      std::move(callback).Run(
+          apps::LaunchResult(apps::LaunchResult::State::kFailed));
+      return;
+    }
     launches_.push_back({
         .app_id = app_id,
         .intent_url = (intent && intent->url) ? intent->url->spec() : "",
     });
+    std::move(callback).Run(
+        apps::LaunchResult(apps::LaunchResult::State::kSuccess));
   }
 
   void LaunchAppWithParams(apps::AppLaunchParams&& params,
                            apps::LaunchCallback callback) override {
     // Never called in these tests.
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   void ClearPastLaunches() { launches_.clear(); }
@@ -1631,6 +1658,7 @@ class FakeWebAppPublisher : public apps::AppPublisher {
 
  private:
   std::vector<LaunchEvent> launches_;
+  bool fail_launch_ = false;
 };
 
 // TODO(cassycc or petermarshall) share this class with other test files for
@@ -2611,6 +2639,87 @@ IN_PROC_BROWSER_TEST_F(OneDriveTest, OpenFileFromAndroidOneDriveViaODFS) {
   histogram_.ExpectUniqueSample(
       ash::cloud_upload::kOneDriveErrorMetricName,
       ash::cloud_upload::OfficeOneDriveOpenErrors::kSuccess, 1);
+}
+
+// Test that when MS365 is not installed, OpenOrMoveFiles() fails to open a file
+// from ODFS and an error notification is shown.
+IN_PROC_BROWSER_TEST_F(OneDriveTest,
+                       FailToOpenFileFromODFSWhenMS365NotInstalled) {
+  // Creates a fake ODFS with a test file.
+  SetUpTest(/*disable_set_up=*/true, /*launch_files_app=*/false);
+
+  NotificationDisplayServiceFactory::GetForProfile(profile())->AddObserver(
+      this);
+
+  web_app_publisher_->Uninstall(
+      ash::kMicrosoft365AppId, apps::UninstallSource::kUnknown,
+      /*clear_site_data=*/false, /*report_abuse=*/false);
+
+  // Open file directly from ODFS.
+  auto task = base::WrapRefCounted(new ash::cloud_upload::CloudOpenTask(
+      profile(), file_urls_, open_in_office_task_,
+      ash::cloud_upload::CloudProvider::kOneDrive,
+      std::move(cloud_open_metrics_)));
+  task->OpenOrMoveFiles();
+
+  // Expect that an error notification was shown.
+  EXPECT_EQ(notification_message_, ash::cloud_upload::GetGenericErrorMessage());
+  EXPECT_EQ(notification_warning_level_,
+            message_center::SystemNotificationWarningLevel::WARNING);
+
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveOpenSourceVolumeMetric,
+      ash::cloud_upload::OfficeFilesSourceVolume::kMicrosoftOneDrive, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveTransferRequiredMetric,
+      ash::cloud_upload::OfficeFilesTransferRequired::kNotRequired, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveTaskResultMetricName,
+      ash::cloud_upload::OfficeTaskResult::kFailedToOpen, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveErrorMetricName,
+      ash::cloud_upload::OfficeOneDriveOpenErrors::kMS365NotInstalled, 1);
+
+  NotificationDisplayServiceFactory::GetForProfile(browser()->profile())
+      ->RemoveObserver(this);
+}
+
+// Test that when the web app publisher fails to launch the MS365 app, the open
+// fails and an error notification is shown.
+IN_PROC_BROWSER_TEST_F(OneDriveTest, FailToOpenFileFromODFSWhenLaunchFails) {
+  // Creates a fake ODFS with a test file.
+  SetUpTest(/*disable_set_up=*/true, /*launch_files_app=*/false);
+
+  NotificationDisplayServiceFactory::GetForProfile(profile())->AddObserver(
+      this);
+
+  web_app_publisher_->set_fail_launch(true);
+
+  ExecuteFileTask(profile(), open_in_office_task_, file_urls_,
+                  base::DoNothing());
+
+  // Expect that an error notification was shown.
+  EXPECT_EQ(notification_message_, ash::cloud_upload::GetGenericErrorMessage());
+  EXPECT_EQ(notification_warning_level_,
+            message_center::SystemNotificationWarningLevel::WARNING);
+
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveOpenSourceVolumeMetric,
+      ash::cloud_upload::OfficeFilesSourceVolume::kMicrosoftOneDrive, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveTransferRequiredMetric,
+      ash::cloud_upload::OfficeFilesTransferRequired::kNotRequired, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveTaskResultMetricName,
+      ash::cloud_upload::OfficeTaskResult::kFailedToOpen, 1);
+  histogram_.ExpectUniqueSample(
+      ash::cloud_upload::kOneDriveErrorMetricName,
+      ash::cloud_upload::OfficeOneDriveOpenErrors::kFailedToLaunch, 1);
+
+  web_app_publisher_->set_fail_launch(false);
+
+  NotificationDisplayServiceFactory::GetForProfile(browser()->profile())
+      ->RemoveObserver(this);
 }
 
 // Same as OpenFileFromAndroidOneDriveViaODFS test the email account associated

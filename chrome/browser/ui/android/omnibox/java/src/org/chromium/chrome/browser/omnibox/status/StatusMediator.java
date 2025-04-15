@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.omnibox.status;
 
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.text.TextUtils;
@@ -37,11 +38,13 @@ import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.site_settings.ContentSettingsResources;
 import org.chromium.components.browser_ui.site_settings.SiteSettingsUtil;
+import org.chromium.components.browser_ui.util.DrawableUtils;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.CookieBlocking3pcdStatus;
 import org.chromium.components.content_settings.CookieControlsBridge;
 import org.chromium.components.content_settings.CookieControlsObserver;
+import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 import org.chromium.components.page_info.PageInfoController;
 import org.chromium.components.permissions.PermissionDialogController;
 import org.chromium.components.search_engines.TemplateUrlService;
@@ -115,6 +118,10 @@ public class StatusMediator
     private int mBlockingStatus3pcd;
     private int mLastTabId;
     private boolean mCurrentTabCrashed;
+    private Drawable mDefaultStatusBackground;
+    private Drawable mDefaultStatusBackgroundIncognito;
+    private Drawable mVerboseStatusBackground;
+    private Drawable mVerboseStatusBackgroundIncognito;
 
     /**
      * @param model The {@link PropertyModel} for this mediator.
@@ -145,6 +152,7 @@ public class StatusMediator
             @Nullable
                     Supplier<MerchantTrustSignalsCoordinator>
                             merchantTrustSignalsCoordinatorSupplier) {
+        initBackgroundDrawables(context);
         mModel = model;
         mLocationBarDataProvider = locationBarDataProvider;
         mTemplateUrlServiceSupplier = templateUrlServiceSupplier;
@@ -233,7 +241,7 @@ public class StatusMediator
         }
 
         if (didUpdate) {
-            updateVerbaseStatusTextVisibility();
+            updateVerboseStatusTextVisibility();
             updateLocationBarIcon(IconTransitionType.CROSSFADE);
             updateColorTheme();
         }
@@ -276,7 +284,7 @@ public class StatusMediator
 
         if (hasSpaceForStatus != mVerboseStatusSpaceAvailable) {
             mVerboseStatusSpaceAvailable = hasSpaceForStatus;
-            updateVerbaseStatusTextVisibility();
+            updateVerboseStatusTextVisibility();
         }
     }
 
@@ -285,7 +293,7 @@ public class StatusMediator
         if (mUrlHasFocus == urlHasFocus) return;
 
         mUrlHasFocus = urlHasFocus;
-        updateVerbaseStatusTextVisibility();
+        updateVerboseStatusTextVisibility();
         updateStatusVisibility();
         updateLocationBarIcon(IconTransitionType.CROSSFADE);
 
@@ -295,7 +303,8 @@ public class StatusMediator
     }
 
     void setStatusIconShown(boolean show) {
-        mModel.set(StatusProperties.SHOW_STATUS_ICON, show);
+        applyStatusIconAndTooltipProperties(
+                show, mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
     void setStatusIconAlpha(float alpha) {
@@ -372,7 +381,7 @@ public class StatusMediator
     }
 
     /** Update visibility of the verbose status text field. */
-    private void updateVerbaseStatusTextVisibility() {
+    private void updateVerboseStatusTextVisibility() {
         int statusText = 0;
 
         if (mPageIsPaintPreview) {
@@ -395,7 +404,8 @@ public class StatusMediator
             mModel.set(StatusProperties.VERBOSE_STATUS_TEXT_STRING_RES, statusText);
         }
 
-        mModel.set(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE, newVisibility);
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON), newVisibility);
     }
 
     /** Update color theme for all status components. */
@@ -471,8 +481,6 @@ public class StatusMediator
         mLastPermission = ContentSettingsType.DEFAULT;
         // Reset the store icon status.
         mIsStoreIconShowing = false;
-        // Update the accessibility description before continuing since we need it either way.
-        mModel.set(StatusProperties.STATUS_ICON_DESCRIPTION_RES, getAccessibilityDescriptionRes());
 
         // No need to proceed further if we've already updated it for the search engine icon.
         if (maybeUpdateStatusIconForSearchEngineIcon()) return;
@@ -480,9 +488,21 @@ public class StatusMediator
         int icon = 0;
         int tint = 0;
         int toast = 0;
+        @StringRes int doubleTapDescriptionRes = R.string.accessibility_toolbar_view_site_info;
 
         mIsSecurityViewShown = false;
-        if (mUrlHasFocus) {
+
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            // Show the status icon primarily for incognito since it is defaulted off there.
+            setStatusIconShown(/* show= */ true);
+            icon = R.drawable.ic_arrow_back_24dp;
+            tint = ThemeUtils.getThemedToolbarIconTintRes(mBrandedColorScheme);
+            doubleTapDescriptionRes = R.string.accessibility_toolbar_exit_hub_search;
+            applyStatusIconAndTooltipProperties(
+                    mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                    mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
+        } else if (mUrlHasFocus) {
             if (mShowStatusIconWhenUrlFocused) {
                 icon =
                         mUrlBarTextIsSearch
@@ -503,11 +523,13 @@ public class StatusMediator
             statusIcon.setTransitionType(transitionType);
         }
 
+        // Update the accessibility description before continuing since we need it either way.
+        mModel.set(StatusProperties.STATUS_ICON_DESCRIPTION_RES, getAccessibilityDescriptionRes());
         mModel.set(StatusProperties.STATUS_ICON_RESOURCE, statusIcon);
         mModel.set(StatusProperties.STATUS_ACCESSIBILITY_TOAST_RES, toast);
         mModel.set(
                 StatusProperties.STATUS_ACCESSIBILITY_DOUBLE_TAP_DESCRIPTION_RES,
-                R.string.accessibility_toolbar_view_site_info);
+                doubleTapDescriptionRes);
     }
 
     /**
@@ -528,6 +550,11 @@ public class StatusMediator
      * independent from alpha/visibility.
      */
     boolean shouldDisplaySearchEngineIcon() {
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            return false;
+        }
+
         if (mLocationBarDataProvider.isIncognitoBranded()) {
             return false;
         }
@@ -558,6 +585,11 @@ public class StatusMediator
 
     /** Return the resource id for the accessibility description or 0 if none apply. */
     private int getAccessibilityDescriptionRes() {
+        if (mLocationBarDataProvider.getPageClassification(false)
+                == PageClassification.ANDROID_HUB_VALUE) {
+            return R.string.hub_search_status_view_back_button_icon_description;
+        }
+
         if (mUrlHasFocus && !mLocationBarDataProvider.isIncognitoBranded()) {
             return 0;
         }
@@ -799,11 +831,15 @@ public class StatusMediator
     }
 
     void setTooltipText(@StringRes int tooltipTextResId) {
-        mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, tooltipTextResId);
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
-    void setHoverHighlight(@DrawableRes int hoverHighlightResId) {
-        mModel.set(StatusProperties.STATUS_VIEW_HOVER_HIGHLIGHT, hoverHighlightResId);
+    void setBackground() {
+        applyStatusIconAndTooltipProperties(
+                mModel.get(StatusProperties.SHOW_STATUS_ICON),
+                mModel.get(StatusProperties.VERBOSE_STATUS_TEXT_VISIBLE));
     }
 
     public void onUrlChanged() {
@@ -817,9 +853,14 @@ public class StatusMediator
                         profile.isOffTheRecord() ? profile.getOriginalProfile() : null;
                 if (mCookieControlsBridge == null) {
                     mCookieControlsBridge =
-                            new CookieControlsBridge(this, webContents, originalBrowserContext);
+                            new CookieControlsBridge(
+                                    this,
+                                    webContents,
+                                    originalBrowserContext,
+                                    profile.isIncognitoBranded());
                 } else if (mLastTabId != currentTab.getId() || mCurrentTabCrashed) {
-                    mCookieControlsBridge.updateWebContents(webContents, originalBrowserContext);
+                    mCookieControlsBridge.updateWebContents(
+                            webContents, originalBrowserContext, profile.isIncognitoBranded());
                     mCurrentTabCrashed = false;
                 }
             }
@@ -853,5 +894,59 @@ public class StatusMediator
 
     void setShowStatusView(boolean show) {
         mModel.set(StatusProperties.SHOW_STATUS_VIEW, show);
+    }
+
+    private void applyStatusIconAndTooltipProperties(
+            boolean showIcon, boolean verboseStatusTextVisible) {
+        boolean isHubSearch =
+                mLocationBarDataProvider.getPageClassification(false)
+                        == PageClassification.ANDROID_HUB_VALUE;
+        mModel.set(StatusProperties.SHOW_STATUS_ICON, showIcon);
+        if (showIcon && !isHubSearch) {
+            Drawable background;
+            if (mLocationBarDataProvider.isIncognitoBranded()) {
+                background =
+                        verboseStatusTextVisible
+                                ? mVerboseStatusBackgroundIncognito
+                                : mDefaultStatusBackgroundIncognito;
+            } else {
+                background =
+                        verboseStatusTextVisible
+                                ? mVerboseStatusBackground
+                                : mDefaultStatusBackground;
+            }
+            mModel.set(StatusProperties.STATUS_VIEW_BACKGROUND, background);
+            mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, R.string.accessibility_menu_info);
+        } else {
+            mModel.set(StatusProperties.STATUS_VIEW_TOOLTIP_TEXT, Resources.ID_NULL);
+            mModel.set(StatusProperties.STATUS_VIEW_BACKGROUND, null);
+        }
+    }
+
+    private void initBackgroundDrawables(Context context) {
+        int verboseStatusViewHeight =
+                context.getResources()
+                        .getDimensionPixelSize(R.dimen.status_view_verbose_highlight_height);
+        int verboseStatusViewWidth =
+                context.getResources()
+                        .getDimensionPixelSize(R.dimen.status_view_verbose_highlight_width);
+        mVerboseStatusBackground =
+                DrawableUtils.getSearchBoxIconBackground(
+                        context,
+                        /* isIncognito= */ false,
+                        verboseStatusViewHeight,
+                        verboseStatusViewWidth);
+        mVerboseStatusBackgroundIncognito =
+                DrawableUtils.getSearchBoxIconBackground(
+                        context,
+                        /* isIncognito= */ true,
+                        verboseStatusViewHeight,
+                        verboseStatusViewWidth);
+
+        int size = context.getResources().getDimensionPixelSize(R.dimen.small_icon_background_size);
+        mDefaultStatusBackground =
+                DrawableUtils.getIconBackground(context, /* isIncognito= */ false, size, size);
+        mDefaultStatusBackgroundIncognito =
+                DrawableUtils.getIconBackground(context, /* isIncognito= */ true, size, size);
     }
 }

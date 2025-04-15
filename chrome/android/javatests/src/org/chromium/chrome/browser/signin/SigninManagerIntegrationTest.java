@@ -9,6 +9,8 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
+import android.os.Build;
+
 import androidx.test.filters.MediumTest;
 
 import org.junit.Assert;
@@ -24,9 +26,8 @@ import org.mockito.quality.Strictness;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
@@ -37,7 +38,6 @@ import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
-import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
@@ -220,6 +220,7 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
+    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41486307")
     public void testUpdateAccountListTwoAccountsThenRemoveAllSignOut() {
         // Add accounts.
         mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
@@ -270,10 +271,9 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
-    @DisableFeatures(SigninFeatures.USE_CONSENT_LEVEL_SIGNIN_FOR_LEGACY_ACCOUNT_EMAIL_PREF)
     public void testPrimaryAccountRemoval_signsOut() {
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
-        SigninTestUtil.signinAndEnableSync(TestAccounts.ACCOUNT1, /* syncService= */ null);
+        SigninTestUtil.signin(TestAccounts.ACCOUNT1);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -294,41 +294,7 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
-    @DisableFeatures(SigninFeatures.USE_CONSENT_LEVEL_SIGNIN_FOR_LEGACY_ACCOUNT_EMAIL_PREF)
-    public void testPrimaryAccountRenaming_updatesLegacySyncAccountEmail() {
-        mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
-        SigninTestUtil.signinAndEnableSync(TestAccounts.ACCOUNT1, /* syncService= */ null);
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    assertEquals(
-                            SigninPreferencesManager.getInstance().getLegacyPrimaryAccountEmail(),
-                            TestAccounts.ACCOUNT1.getEmail());
-                });
-
-        AccountInfo renamedAccount =
-                new AccountInfo.Builder("renamed@gmail.com", TestAccounts.ACCOUNT1.getGaiaId())
-                        .build();
-        try (var ignored = mSigninTestRule.blockGetCoreAccountInfosUpdate(true)) {
-            mSigninTestRule.removeAccount(TestAccounts.ACCOUNT1.getId());
-            mSigninTestRule.addAccount(renamedAccount);
-        }
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    assertEquals(
-                            mIdentityManager.getPrimaryAccountInfo(ConsentLevel.SYNC).getEmail(),
-                            renamedAccount.getEmail());
-                    assertEquals(
-                            SigninPreferencesManager.getInstance().getLegacyPrimaryAccountEmail(),
-                            renamedAccount.getEmail());
-                });
-    }
-
-    @Test
-    @MediumTest
-    @EnableFeatures({SigninFeatures.USE_CONSENT_LEVEL_SIGNIN_FOR_LEGACY_ACCOUNT_EMAIL_PREF})
-    public void testSignInAndSignOut_updateLegacySyncAccountEmail() {
+    public void testSignInAndSignOut_updatesLegacyPrimaryAccountEmail() {
         mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -349,8 +315,7 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
-    @EnableFeatures({SigninFeatures.USE_CONSENT_LEVEL_SIGNIN_FOR_LEGACY_ACCOUNT_EMAIL_PREF})
-    public void testPrimaryAccountRenaming_updatesLegacySyncAccountEmail_whenSignedIn() {
+    public void testPrimaryAccountRenaming_updatesLegacyPrimaryAccountEmail() {
         mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -363,11 +328,7 @@ public class SigninManagerIntegrationTest {
         AccountInfo renamedAccount =
                 new AccountInfo.Builder("renamed@gmail.com", TestAccounts.ACCOUNT1.getGaiaId())
                         .build();
-
-        try (var ignored = mSigninTestRule.blockGetCoreAccountInfosUpdate(true)) {
-            mSigninTestRule.removeAccount(TestAccounts.ACCOUNT1.getId());
-            mSigninTestRule.addAccount(renamedAccount);
-        }
+        mSigninTestRule.updateAccount(renamedAccount);
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -382,7 +343,7 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
-    public void testClearPrimaryAccountWithSyncNotEnabled_signsOut() {
+    public void testClearPrimaryAccount_signsOut() {
         // Add accounts.
         mSigninTestRule.addTestAccountThenSignin();
 
@@ -404,56 +365,7 @@ public class SigninManagerIntegrationTest {
 
     @Test
     @MediumTest
-    public void testClearPrimaryAccountWithSyncEnabled_signsOut() {
-        // Add accounts.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    Assert.assertTrue(mIdentityManager.hasPrimaryAccount(ConsentLevel.SYNC));
-
-                    // Run test.
-                    mSigninManager.signOut(SignoutReason.TEST);
-
-                    Assert.assertFalse(mIdentityManager.hasPrimaryAccount(ConsentLevel.SIGNIN));
-                });
-
-        // Wait for the operation to have completed - the revokeSyncConsent processing calls back
-        // SigninManager, and if we don't wait for this to complete before test teardown then we
-        // can hit a race condition where this async processing overlaps with the signout causing
-        // teardown to fail.
-        verify(mSignInStateObserverMock, timeout(CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL).times(1))
-                .onSignedOut();
-    }
-
-    @Test
-    @MediumTest
-    public void testRevokeSyncConsent_disablesSync() {
-        // Add account.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    Assert.assertTrue(mIdentityManager.hasPrimaryAccount(ConsentLevel.SYNC));
-
-                    // Run test.
-                    mSigninManager.revokeSyncConsent(SignoutReason.TEST, null, false);
-
-                    Assert.assertFalse(mIdentityManager.hasPrimaryAccount(ConsentLevel.SYNC));
-                    Assert.assertTrue(mIdentityManager.hasPrimaryAccount(ConsentLevel.SIGNIN));
-                });
-
-        // Wait for the operation to have completed - the revokeSyncConsent processing calls back
-        // SigninManager, and if we don't wait for this to complete before test teardown then we
-        // can hit a race condition where this async processing overlaps with the signout causing
-        // teardown to fail.
-        verify(mSignInStateObserverMock, timeout(CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL).times(1))
-                .onSignedOut();
-    }
-
-    @Test
-    @MediumTest
-    public void testSignInWithoutSync_waitForPrefCommit() {
+    public void testSignIn_waitForPrefCommit() {
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
         SigninTestUtil.signinAndWaitForPrefsCommit(TestAccounts.ACCOUNT1);
 
@@ -477,6 +389,7 @@ public class SigninManagerIntegrationTest {
                 () -> {
                     Assert.assertTrue(mIdentityManager.hasPrimaryAccount(ConsentLevel.SIGNIN));
                     Assert.assertFalse(mAccountManagerFacade.getCoreAccountInfos().isFulfilled());
+                    Assert.assertFalse(mAccountManagerFacade.getAccounts().isFulfilled());
                     Assert.assertEquals(
                             List.of(TestAccounts.ACCOUNT1),
                             Arrays.asList(mIdentityManager.getAccountsWithRefreshTokens()));

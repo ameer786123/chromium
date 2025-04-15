@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <set>
@@ -16,7 +17,6 @@
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,6 +33,7 @@
 #include "components/omnibox/browser/shortcuts_database.h"
 #include "components/omnibox/browser/tailored_word_break_iterator.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/search_engines/template_url_service.h"
 
 namespace {
 
@@ -197,7 +198,7 @@ std::u16string ExpandToFullWord(std::u16string trimmed_text,
   // Add on the missing letters of `text_last_word`, rather than replace it with
   // `best_word` to preserve capitalization.
   return best_word.empty()
-             ? trimmed_text
+             ? std::move(trimmed_text)
              : base::StrCat(
                    {trimmed_text, best_word.substr(text_last_word.length())});
 }
@@ -274,6 +275,9 @@ ShortcutsBackend::ShortcutsBackend(
     db_ = new ShortcutsDatabase(database_path);
   if (history_service)
     history_service_observation_.Observe(history_service);
+  if (template_url_service_) {
+    template_url_service_observation_.Observe(template_url_service_);
+  }
 }
 
 bool ShortcutsBackend::Init() {
@@ -446,7 +450,7 @@ void ShortcutsBackend::OnHistoryDeletions(
 
   ShortcutsDatabase::ShortcutIDs shortcut_ids;
   for (const auto& guid_pair : guid_map_) {
-    if (base::ranges::any_of(
+    if (std::ranges::any_of(
             deletion_info.deleted_rows(),
             history::URLRow::URLRowHasURL(
                 guid_pair.second->second.match_core.destination_url))) {
@@ -459,6 +463,18 @@ void ShortcutsBackend::OnHistoryDeletions(
       shortcut_ids.size());
 
   DeleteShortcutsWithIDs(shortcut_ids);
+}
+
+void ShortcutsBackend::OnTemplateURLServiceChanged() {
+  if (!initialized()) {
+    return;
+  }
+  DeleteShortcutsWithInvalidKeywords();
+  return;
+}
+
+void ShortcutsBackend::OnTemplateURLServiceShuttingDown() {
+  template_url_service_observation_.Reset();
 }
 
 void ShortcutsBackend::InitInternal() {
@@ -493,14 +509,11 @@ void ShortcutsBackend::InitCompleted() {
 
   ComputeDatabaseMetrics();
 
-  if (base::FeatureList::IsEnabled(omnibox::kOmniboxDeleteOldShortcuts)) {
-    main_runner_->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            base::IgnoreResult(&ShortcutsBackend::DeleteOldShortcuts),
-            weak_factory_.GetWeakPtr()),
-        base::Minutes(kInitialExpirationDelayMinutes));
-  }
+  main_runner_->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(base::IgnoreResult(&ShortcutsBackend::DeleteOldShortcuts),
+                     weak_factory_.GetWeakPtr()),
+      base::Minutes(kInitialExpirationDelayMinutes));
 }
 
 void ShortcutsBackend::ComputeDatabaseMetrics() {
@@ -530,6 +543,10 @@ void ShortcutsBackend::ComputeDatabaseMetrics() {
 
 bool ShortcutsBackend::AddShortcut(
     const ShortcutsDatabase::Shortcut& shortcut) {
+  // TODO(crbug.com/406862326): Mark some matches as non-shortcut-compatible and
+  //   prevent them from being added to the DB, remove them if they've already
+  //   been recorded to the DB, and skip over them when retrieving shortcuts.
+  //   E.g. `HISTORY_KEYWORD` matches.
   if (!initialized())
     return false;
   DCHECK(guid_map_.find(shortcut.id) == guid_map_.end());
@@ -609,6 +626,35 @@ bool ShortcutsBackend::DeleteShortcutsWithURL(const GURL& url,
                  db_.get(), url_spec));
 }
 
+void ShortcutsBackend::DeleteShortcutsWithInvalidKeywords() {
+  ShortcutsDatabase::ShortcutIDs shortcut_ids =
+      GetShortcutsWithInvalidKeywords();
+  UMA_HISTOGRAM_COUNTS_10000(
+      "ShortcutsProvider.InvalidKeywordEntryDeletions.OnKeywordChange",
+      shortcut_ids.size());
+  DeleteShortcutsWithIDs(shortcut_ids);
+}
+
+ShortcutsDatabase::ShortcutIDs
+ShortcutsBackend::GetShortcutsWithInvalidKeywords() const {
+  ShortcutsDatabase::ShortcutIDs shortcut_ids;
+  for (const auto& pair : guid_map_) {
+    // Check if the keyword is invalid: not present in the `TemplateURLService`
+    // or inactive.
+    if (pair.second->second.match_core.keyword.empty()) {
+      continue;
+    }
+    const TemplateURL* template_url =
+        template_url_service_->GetTemplateURLForKeyword(
+            pair.second->second.match_core.keyword);
+    if (!template_url ||
+        template_url->is_active() != TemplateURLData::ActiveStatus::kTrue) {
+      shortcut_ids.push_back(pair.first);
+    }
+  }
+  return shortcut_ids;
+}
+
 bool ShortcutsBackend::DeleteAllShortcuts() {
   if (!initialized())
     return false;
@@ -625,6 +671,21 @@ bool ShortcutsBackend::DeleteAllShortcuts() {
 }
 
 bool ShortcutsBackend::DeleteOldShortcuts() {
+  ShortcutsDatabase::ShortcutIDs shortcut_ids = GetShortcutsWithExpiredTime();
+  UMA_HISTOGRAM_COUNTS_10000("ShortcutsProvider.OldEntryDeletions.OnInit",
+                             shortcut_ids.size());
+  ShortcutsDatabase::ShortcutIDs shortcut_ids_invalid_keywords =
+      GetShortcutsWithInvalidKeywords();
+  UMA_HISTOGRAM_COUNTS_10000(
+      "ShortcutsProvider.InvalidKeywordEntryDeletions.OnInit",
+      shortcut_ids_invalid_keywords.size());
+  shortcut_ids.insert(shortcut_ids.end(), shortcut_ids_invalid_keywords.begin(),
+                      shortcut_ids_invalid_keywords.end());
+  return DeleteShortcutsWithIDs(shortcut_ids);
+}
+
+ShortcutsDatabase::ShortcutIDs ShortcutsBackend::GetShortcutsWithExpiredTime()
+    const {
   ShortcutsDatabase::ShortcutIDs shortcut_ids;
   const base::Time now(base::Time::Now());
   for (const auto& guid_pair : guid_map_) {
@@ -633,7 +694,5 @@ bool ShortcutsBackend::DeleteOldShortcuts() {
       shortcut_ids.push_back(guid_pair.first);
     }
   }
-  UMA_HISTOGRAM_COUNTS_10000("ShortcutsProvider.OldEntryDeletions.OnInit",
-                             shortcut_ids.size());
-  return DeleteShortcutsWithIDs(shortcut_ids);
+  return shortcut_ids;
 }

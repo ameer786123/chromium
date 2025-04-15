@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "content/browser/web_package/signed_exchange_signature_header_field.h"
 
 #include <string_view>
@@ -104,7 +109,8 @@ SignedExchangeSignatureHeaderField::ParseSignature(
       return std::nullopt;
     }
     net::SHA256HashValue cert_sha256;
-    memcpy(&cert_sha256.data, cert_sha256_string.data(), crypto::kSHA256Length);
+    memcpy(cert_sha256.data(), cert_sha256_string.data(),
+           crypto::kSHA256Length);
     sig.cert_sha256 = std::move(cert_sha256);
 
     // TODO(crbug.com/40565993): Support ed25519key.

@@ -10,18 +10,14 @@
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
 
 class TabStripModel;
-
-namespace tabs {
-class TabModel;
-}
 
 namespace content {
 class NavigationHandle;
@@ -41,7 +37,7 @@ class TabData : public TabStripModelObserver,
     virtual void OnTabDataDestroyed(TabID tab_id) {}
   };
 
-  explicit TabData(tabs::TabModel* tab);
+  explicit TabData(tabs::TabInterface* tab);
   ~TabData() override;
   TabID tab_id() const { return tab_.raw_value(); }
   const TabStripModel* original_tab_strip_model() const {
@@ -50,7 +46,7 @@ class TabData : public TabStripModelObserver,
   TabStripModel* original_tab_strip_model() {
     return original_tab_strip_model_;
   }
-  tabs::TabModel* tab() const { return tab_.Get(); }
+  tabs::TabInterface* tab() const { return tab_.Get(); }
   const GURL& original_url() const { return original_url_; }
 
   void AddObserver(Observer* new_observer);

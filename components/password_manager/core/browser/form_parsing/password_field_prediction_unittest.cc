@@ -10,9 +10,9 @@
 #include "base/containers/flat_map.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/signatures.h"
@@ -225,7 +225,10 @@ TEST(FormPredictionsTest, DeriveFromFieldType) {
        CredentialFieldType::kNonCredential},
       {"Not password", NOT_PASSWORD, CredentialFieldType::kNonCredential},
       {"Not username", NOT_USERNAME, CredentialFieldType::kNonCredential},
-      {"OTP", ONE_TIME_CODE, CredentialFieldType::kNonCredential}};
+      {"OTP", ONE_TIME_CODE, CredentialFieldType::kNonCredential},
+      {"Single username with intermediate values",
+       SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES,
+       CredentialFieldType::kSingleUsername}};
 
   for (const TestCase& test_case : test_cases) {
     SCOPED_TRACE(test_case.name);
@@ -263,34 +266,6 @@ TEST(FormPredictionsTest, ConvertToFormPredictions_OverrideFlagPropagated) {
 
   EXPECT_EQ(ConvertToFormPredictions(driver_id, form, autofill_predictions),
             expected_result);
-}
-
-// Tests that new single username server prediction with enabled feature is
-// considered as single username.
-// TODO: crbug/40925827 - Move the test under
-// `FormPredictionsTest.DeriveFromFieldType` once the feature is enabled by
-// default.
-TEST(FormPredictionsTest, SingleUsernameWithIntermediateValues_EnabledFeature) {
-  base::test::ScopedFeatureList feature_list(
-      /*enable_feature=*/features::
-          kUsernameFirstFlowWithIntermediateValuesPredictions);
-  EXPECT_EQ(
-      DeriveFromFieldType(autofill::SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES),
-      CredentialFieldType::kSingleUsername);
-}
-
-// Tests that new single username server prediction with disabled feature is not
-// considered as credential field.
-// TODO: crbug/40925827 - Delete the test once the feature is enabled by
-// default.
-TEST(FormPredictionsTest,
-     SingleUsernameWithIntermediateValues_DisabledFeature) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      features::kUsernameFirstFlowWithIntermediateValuesPredictions);
-  EXPECT_EQ(
-      DeriveFromFieldType(autofill::SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES),
-      CredentialFieldType::kNone);
 }
 
 }  // namespace

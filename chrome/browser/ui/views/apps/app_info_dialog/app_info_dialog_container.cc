@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/buildflags.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -64,6 +63,8 @@ class FullSizeBubbleFrameView : public views::BubbleFrameView {
 BEGIN_METADATA(FullSizeBubbleFrameView)
 END_METADATA
 
+}  // namespace
+
 // A container view for a native dialog, which sizes to the given fixed |size|.
 class NativeDialogContainer : public views::DialogDelegateView {
   METADATA_HEADER(NativeDialogContainer, views::DialogDelegateView)
@@ -99,8 +100,6 @@ class NativeDialogContainer : public views::DialogDelegateView {
 
 BEGIN_METADATA(NativeDialogContainer)
 END_METADATA
-
-}  // namespace
 
 views::DialogDelegateView* CreateDialogContainerForView(
     std::unique_ptr<views::View> view,

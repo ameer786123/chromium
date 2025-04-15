@@ -26,6 +26,8 @@
 #include "base/time/time.h"
 #include "base/uuid.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/ash/floating_sso/floating_sso_service.h"
+#include "chrome/browser/ash/floating_sso/floating_sso_service_factory.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_metrics_util.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
@@ -61,6 +63,21 @@
 #include "ui/base/user_activity/user_activity_detector.h"
 #include "ui/chromeos/devicetype_utils.h"
 #include "ui/message_center/public/cpp/notification.h"
+
+namespace {
+
+bool IsFloatingSsoEnabled(Profile* profile) {
+  if (!ash::features::IsFloatingSsoAllowed()) {
+    return false;
+  }
+  ash::floating_sso::FloatingSsoService* floating_sso_service =
+      ash::floating_sso::FloatingSsoServiceFactory::GetForProfile(profile);
+  if (!floating_sso_service) {
+    return false;
+  }
+  return floating_sso_service->IsFloatingSsoEnabled();
+}
+}  // namespace
 
 namespace ash {
 
@@ -275,43 +292,91 @@ void FloatingWorkspaceService::OnStateChanged(syncer::SyncService* sync) {
     MaybeSignOutOfCurrentSession();
     return;
   }
-  if (download_status_cache_.has_value() &&
-      download_status_cache_.value() ==
-          sync->GetDownloadStatusFor(syncer::DataType::WORKSPACE_DESK)) {
-    return;
-  }
-  download_status_cache_ =
+  syncer::SyncService::DataTypeDownloadStatus workspace_download_status =
       sync->GetDownloadStatusFor(syncer::DataType::WORKSPACE_DESK);
-  switch (sync->GetDownloadStatusFor(syncer::DataType::WORKSPACE_DESK)) {
+  bool is_new_workspace_status =
+      download_status_cache_ != workspace_download_status;
+  download_status_cache_ = workspace_download_status;
+  switch (workspace_download_status) {
     case syncer::SyncService::DataTypeDownloadStatus::kWaitingForUpdates: {
       // Floating Workspace Service needs to wait until workspace desks are
       // up to date.
       break;
     }
     case syncer::SyncService::DataTypeDownloadStatus::kUpToDate: {
-      if (!first_uptodate_download_timeticks_.has_value()) {
-        first_uptodate_download_timeticks_ = base::TimeTicks::Now();
+      if (!first_sync_data_downloaded_timeticks_.has_value()) {
+        first_sync_data_downloaded_timeticks_ = base::TimeTicks::Now();
       }
-      if (!is_cache_ready_) {
-        should_launch_on_ready_ = true;
-        VLOG(1) << "App cache is not ready. Don't restore floating "
-                   "workspace yet.";
-        return;
+      if (ShouldWaitForCookies()) {
+        // We can hit this code path repeatedly while waiting for cookies to be
+        // up to date. `ShouldWaitForCookies()` call is expected to schedule a
+        // call to `LaunchWhenAppCacheIsReady` which should be run once cookies
+        // are ready. This will result in `should_run_restore_` being set to
+        // `false`, which will enable an early return from `OnStateChanged`.
+        // In practice, cookies and desks usually become up to date at the same
+        // time.
+        // TODO(crbug.com/377327839): if we time out after hitting this code,
+        // then it's due to us waiting for cookies, not for desk templates. We
+        // should add a new version of timeout UI for that.
+        break;
       }
-      StopProgressBarAndRestoreFloatingWorkspace();
+      LaunchWhenAppCacheIsReady();
       break;
     }
     case syncer::SyncService::DataTypeDownloadStatus::kError: {
+      if (!is_new_workspace_status) {
+        // Don'h handle the error repeatedly.
+        break;
+      }
       // Sync is not expected to deliver the data, let user decide.
       // TODO: send notification to user asking if restore local.
       if (!should_run_restore_) {
-        return;
+        break;
       }
       StopProgressBarNotification();
       HandleSyncError();
       break;
     }
   }
+}
+
+bool FloatingWorkspaceService::ShouldWaitForCookies() {
+  if (!IsFloatingSsoEnabled(profile_)) {
+    return false;
+  }
+  syncer::SyncService::DataTypeDownloadStatus cookies_download_status =
+      sync_service_->GetDownloadStatusFor(syncer::DataType::COOKIES);
+  switch (cookies_download_status) {
+    case syncer::SyncService::DataTypeDownloadStatus::kWaitingForUpdates: {
+      return true;
+    }
+    case syncer::SyncService::DataTypeDownloadStatus::kUpToDate: {
+      ash::floating_sso::FloatingSsoService* floating_sso_service =
+          ash::floating_sso::FloatingSsoServiceFactory::GetForProfile(profile_);
+      // Even when Sync status is "up to date", cookies might still be in the
+      // process of being applied to the cookie jar in the browser. Schedule a
+      // callback to restore the workspace once it's done. This call is cheap
+      // and it's ok to execute it multiple times.
+      floating_sso_service->RunWhenCookiesAreReady(
+          base::BindOnce(&FloatingWorkspaceService::LaunchWhenAppCacheIsReady,
+                         weak_pointer_factory_.GetWeakPtr()));
+      return true;
+    }
+    case syncer::SyncService::DataTypeDownloadStatus::kError: {
+      // TODO(crbug.com/377327839): add error handling for cookies.
+      return false;
+    }
+  }
+}
+
+void FloatingWorkspaceService::LaunchWhenAppCacheIsReady() {
+  if (!is_cache_ready_) {
+    should_launch_on_ready_ = true;
+    VLOG(1) << "App cache is not ready. Don't restore floating "
+               "workspace yet.";
+    return;
+  }
+  StopProgressBarAndRestoreFloatingWorkspace();
 }
 
 void FloatingWorkspaceService::DefaultNetworkChanged(
@@ -862,8 +927,8 @@ void FloatingWorkspaceService::OnTemplateCaptured(
   // If it successfully captured desk, remove old entry and record new uuid only
   // if the user was active from when the sync cycle is finished to now.
   if (!IsCurrentDeskSameAsPrevious(desk_template.get()) &&
-      (first_uptodate_download_timeticks_.has_value() &&
-       first_uptodate_download_timeticks_.value() <=
+      (first_sync_data_downloaded_timeticks_.has_value() &&
+       first_sync_data_downloaded_timeticks_.value() <=
            ui::UserActivityDetector::Get()->last_activity_time())) {
     UploadFloatingWorkspaceTemplateToDeskModel(std::move(desk_template));
   }
@@ -1158,14 +1223,7 @@ bool FloatingWorkspaceService::AreRequiredAppTypesInitialized() {
   if (!initialized_types.contains(apps::AppType::kWeb)) {
     return false;
   }
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return (
-      initialized_types.contains(apps::AppType::kStandaloneBrowser) &&
-      initialized_types.contains(apps::AppType::kStandaloneBrowserChromeApp));
-#endif
-#if BUILDFLAG(IS_CHROMEOS_ASH)
   return initialized_types.contains(apps::AppType::kChromeApp);
-#endif
 }
 
 void FloatingWorkspaceService::OnAppTypeInitialized(apps::AppType app_type) {
@@ -1226,6 +1284,10 @@ void FloatingWorkspaceService::OnLockStateChanged(bool locked) {
   }
 }
 
+void FloatingWorkspaceService::OnLogoutConfirmationStarted() {
+  CaptureAndUploadActiveDesk();
+}
+
 void FloatingWorkspaceService::OnFocusLeavingSystemTray(bool reverse) {}
 
 void FloatingWorkspaceService::OnSystemTrayBubbleShown() {
@@ -1269,8 +1331,15 @@ void FloatingWorkspaceService::ShutDownServicesAndObservers() {
     app_cache_wrapper_obs_.Reset();
   }
   StopCaptureAndUploadActiveDesk();
-  if (Shell::HasInstance() && Shell::Get()->system_tray_notifier()) {
-    Shell::Get()->system_tray_notifier()->RemoveSystemTrayObserver(this);
+  if (Shell::HasInstance()) {
+    if (SystemTrayNotifier* system_tray_notifier =
+            Shell::Get()->system_tray_notifier()) {
+      system_tray_notifier->RemoveSystemTrayObserver(this);
+    }
+    if (LogoutConfirmationController* logout_confirmation_controller =
+            Shell::Get()->logout_confirmation_controller()) {
+      logout_confirmation_controller->RemoveObserver(this);
+    }
   }
   if (chromeos::PowerManagerClient::Get()) {
     chromeos::PowerManagerClient::Get()->RemoveObserver(this);
@@ -1290,8 +1359,15 @@ void FloatingWorkspaceService::SetUpServiceAndObservers(
       network_handler->network_state_handler()->AddObserver(this);
     }
   }
-  if (Shell::HasInstance() && Shell::Get()->system_tray_notifier()) {
-    Shell::Get()->system_tray_notifier()->AddSystemTrayObserver(this);
+  if (Shell::HasInstance()) {
+    if (SystemTrayNotifier* system_tray_notifier =
+            Shell::Get()->system_tray_notifier()) {
+      system_tray_notifier->AddSystemTrayObserver(this);
+    }
+    if (LogoutConfirmationController* logout_confirmation_controller =
+            Shell::Get()->logout_confirmation_controller()) {
+      logout_confirmation_controller->AddObserver(this);
+    }
   }
   if (sync_service_ && !sync_service_->HasObserver(this)) {
     sync_service_->AddObserver(this);
@@ -1321,6 +1397,29 @@ void FloatingWorkspaceService::SetUpServiceAndObservers(
   // just start capturing.
   if (!should_run_restore_) {
     StartCaptureAndUploadActiveDesk();
+    return;
   }
+  SetCallbacksToLaunchOnFirstSync();
+}
+
+void FloatingWorkspaceService::SetCallbacksToLaunchOnFirstSync() {
+  if (IsFloatingSsoEnabled(profile_)) {
+    ash::floating_sso::FloatingSsoService* floating_sso_service =
+        ash::floating_sso::FloatingSsoServiceFactory::GetForProfile(profile_);
+    floating_sso_service->RunWhenCookiesAreReadyOnFirstSync(base::BindOnce(
+        &FloatingWorkspaceService::LaunchWhenDeskTemplatesAreReadyOnFirstSync,
+        weak_pointer_factory_.GetWeakPtr()));
+  } else {
+    LaunchWhenDeskTemplatesAreReadyOnFirstSync();
+  }
+}
+
+void FloatingWorkspaceService::LaunchWhenDeskTemplatesAreReadyOnFirstSync() {
+  if (!first_sync_data_downloaded_timeticks_.has_value()) {
+    first_sync_data_downloaded_timeticks_ = base::TimeTicks::Now();
+  }
+  desk_sync_service_->RunWhenDesksTemplatesAreReadyOnFirstSync(
+      base::BindOnce(&FloatingWorkspaceService::LaunchWhenAppCacheIsReady,
+                     weak_pointer_factory_.GetWeakPtr()));
 }
 }  // namespace ash

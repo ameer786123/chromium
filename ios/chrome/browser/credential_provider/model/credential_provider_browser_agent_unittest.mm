@@ -4,9 +4,7 @@
 
 #import "ios/chrome/browser/credential_provider/model/credential_provider_browser_agent.h"
 
-#import "base/test/scoped_feature_list.h"
 #import "base/time/time.h"
-#import "components/sync/base/features.h"
 #import "components/webauthn/core/browser/test_passkey_model.h"
 #import "ios/chrome/browser/infobars/model/infobar_manager_impl.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -26,8 +24,6 @@
 class CredentialProviderBrowserAgentTest : public PlatformTest {
  public:
   CredentialProviderBrowserAgentTest() {
-    feature_list_.InitAndEnableFeature(syncer::kSyncWebauthnCredentials);
-
     TestProfileIOS::Builder test_profile_builder;
     test_profile_builder.AddTestingFactory(
         IOSPasskeyModelFactory::GetInstance(),
@@ -49,6 +45,7 @@ class CredentialProviderBrowserAgentTest : public PlatformTest {
                              forProtocol:@protocol(SettingsCommands)];
     CredentialProviderBrowserAgent::CreateForBrowser(browser_.get());
     agent_ = CredentialProviderBrowserAgent::FromBrowser(browser_.get());
+    agent_->SetInfobarAllowed(true);
     model_ = static_cast<webauthn::TestPasskeyModel*>(
         IOSPasskeyModelFactory::GetForProfile(
             browser_->GetProfile()->GetOriginalProfile()));
@@ -84,7 +81,6 @@ class CredentialProviderBrowserAgentTest : public PlatformTest {
     return inserted_web_state;
   }
 
-  base::test::ScopedFeatureList feature_list_;
   web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<Browser> browser_;

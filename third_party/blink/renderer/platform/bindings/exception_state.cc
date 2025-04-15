@@ -54,8 +54,6 @@ void ExceptionState::SetCreateDOMExceptionFunction(
   DCHECK(s_create_dom_exception_func_);
 }
 
-ExceptionState::~ExceptionState() = default;
-
 NOINLINE void ExceptionState::ThrowSecurityError(
     const char* sanitized_message,
     const char* unsanitized_message) {
@@ -99,7 +97,7 @@ void ExceptionState::ThrowDOMException(DOMExceptionCode exception_code,
   // must be given to the data exposed to JavaScript via |sanitized_message|.
   DCHECK_NE(exception_code, DOMExceptionCode::kSecurityError);
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "DOMException should not be thrown.";
 #endif
 
@@ -114,7 +112,7 @@ void ExceptionState::ThrowDOMException(DOMExceptionCode exception_code,
 void ExceptionState::ThrowSecurityError(const String& sanitized_message,
                                         const String& unsanitized_message) {
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "SecurityError should not be thrown.";
 #endif
   SetExceptionInfo(ToExceptionCode(DOMExceptionCode::kSecurityError),
@@ -129,7 +127,7 @@ void ExceptionState::ThrowSecurityError(const String& sanitized_message,
 
 void ExceptionState::ThrowRangeError(const String& message) {
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "RangeError should not be thrown.";
 #endif
   SetExceptionInfo(ToExceptionCode(ESErrorType::kRangeError), message);
@@ -140,7 +138,7 @@ void ExceptionState::ThrowRangeError(const String& message) {
 
 void ExceptionState::ThrowTypeError(const String& message) {
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "TypeError should not be thrown.";
 #endif
   SetExceptionInfo(ToExceptionCode(ESErrorType::kTypeError), message);
@@ -151,7 +149,7 @@ void ExceptionState::ThrowTypeError(const String& message) {
 
 void ExceptionState::ThrowWasmCompileError(const String& message) {
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "WebAssembly.CompileError should not be thrown.";
 #endif
   SetExceptionInfo(ToExceptionCode(ESErrorType::kWasmCompileError), message);
@@ -162,7 +160,7 @@ void ExceptionState::ThrowWasmCompileError(const String& message) {
 
 void ExceptionState::RethrowV8Exception(v8::TryCatch& try_catch) {
 #if DCHECK_IS_ON()
-  DCHECK_AT(!assert_no_exceptions_, file_, line_)
+  DCHECK_AT(!assert_no_exceptions_, location_)
       << "A V8 exception should not be thrown.";
 #endif
   SetExceptionInfo(
@@ -174,8 +172,7 @@ void ExceptionState::RethrowV8Exception(v8::TryCatch& try_catch) {
 }
 
 ExceptionState::ExceptionState(DummyExceptionStateForTesting& dummy_derived)
-    : context_(
-          ExceptionContext(v8::ExceptionContext::kUnknown, nullptr, nullptr)),
+    : context_(kEmptyContext),
       isolate_(nullptr),
       swallow_all_exceptions_(true) {
   DCHECK(this == &dummy_derived);

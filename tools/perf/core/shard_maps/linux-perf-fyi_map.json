@@ -14,7 +14,11 @@
         "crossbench": {
             "speedometer_3.0": {
                 "display_name": "speedometer3.crossbench",
-                "arguments": ["--fileserver"]
+                "arguments": []
+            },
+            "speedometer_3.1": {
+                "display_name": "speedometer3.1.crossbench",
+                "arguments": []
             },
             "jetstream_2.2": {
                 "display_name": "jetstream2.crossbench",
@@ -41,7 +45,11 @@
         "crossbench": {
             "speedometer_3.0": {
                 "display_name": "speedometer3.crossbench",
-                "arguments": ["--fileserver"]
+                "arguments": []
+            },
+            "speedometer_3.1": {
+                "display_name": "speedometer3.1.crossbench",
+                "arguments": []
             },
             "jetstream_2.2": {
                 "display_name": "jetstream2.crossbench",
@@ -68,7 +76,11 @@
         "crossbench": {
             "speedometer_3.0": {
                 "display_name": "speedometer3.crossbench",
-                "arguments": ["--fileserver"]
+                "arguments": []
+            },
+            "speedometer_3.1": {
+                "display_name": "speedometer3.1.crossbench",
+                "arguments": []
             },
             "jetstream_2.2": {
                 "display_name": "jetstream2.crossbench",
@@ -77,6 +89,12 @@
             "motionmark_1.3": {
                 "display_name": "motionmark1.3.crossbench",
                 "arguments": []
+            },
+            "speedometer_2.1": {
+                "display_name": "speedometer2.1.crossbench",
+                "arguments": [
+                    "--fileserver"
+                ]
             }
         }
     },
@@ -95,7 +113,11 @@
         "crossbench": {
             "speedometer_3.0": {
                 "display_name": "speedometer3.crossbench",
-                "arguments": ["--fileserver"]
+                "arguments": []
+            },
+            "speedometer_3.1": {
+                "display_name": "speedometer3.1.crossbench",
+                "arguments": []
             },
             "jetstream_2.2": {
                 "display_name": "jetstream2.crossbench",
@@ -108,14 +130,14 @@
         }
     },
     "extra_infos": {
-        "num_stories": 24,
-        "predicted_min_shard_time": 630,
+        "num_stories": 29,
+        "predicted_min_shard_time": 787.0,
         "predicted_min_shard_index": 0,
-        "predicted_max_shard_time": 630,
-        "predicted_max_shard_index": 0,
-        "shard #0": 630,
-        "shard #1": 630,
-        "shard #2": 630,
-        "shard #3": 630
+        "predicted_max_shard_time": 847.0,
+        "predicted_max_shard_index": 2,
+        "shard #0": 787.0,
+        "shard #1": 787.0,
+        "shard #2": 847.0,
+        "shard #3": 787.0
     }
 }

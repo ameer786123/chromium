@@ -11,13 +11,14 @@
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
-#include <cstdint>
-
-#include "base/auto_reset.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
 #include "content/common/content_export.h"
+
+namespace base {
+class ScopedClosureRunner;
+}
 
 namespace gfx {
 class Rect;
@@ -25,10 +26,13 @@ class Size;
 }  // namespace gfx
 
 namespace ui {
+struct StylusHandwritingPropertiesWin;
 class TextInputClient;
-}
+}  // namespace ui
 
 namespace content {
+
+class StylusHandwritingCallbackSinkWin;
 
 // Encapsulates the Shell Handwriting API. Receives signals from the application
 // to notify the Shell Handwriting API of relevant interactions, and forwards
@@ -42,9 +46,11 @@ class CONTENT_EXPORT StylusHandwritingControllerWin {
       base::RepeatingCallback<void(const gfx::Rect& /*rect_in_screen*/,
                                    const gfx::Size& /*distance_threshold*/)>;
 
-  // Overrides `g_instance` for testing.
-  static base::AutoReset<StylusHandwritingControllerWin*> SetInstanceForTesting(
-      StylusHandwritingControllerWin*);
+  // Sets `g_thread_manager_instance_for_testing` using the provided mocked
+  // thread manager instance, initializes the controller instance. Resets the
+  // state upon exiting the scope (e.g., on the test fixture tear down).
+  [[nodiscard]] static base::ScopedClosureRunner InitializeForTesting(
+      ITfThreadMgr* thread_manager);
 
   // Returns true if Shell Handwriting API is available and the bindings
   // have been successfully set up.
@@ -65,14 +71,18 @@ class CONTENT_EXPORT StylusHandwritingControllerWin {
       const StylusHandwritingControllerWin&) = delete;
   virtual ~StylusHandwritingControllerWin();
 
+  // Returns the Handwriting Callback Sink Com pointer for testing.
+  Microsoft::WRL::ComPtr<StylusHandwritingCallbackSinkWin>
+  GetCallbackSinkForTesting() const;
+
   // Notify the Shell Handwriting API about the intent to write. At this point,
   // we delegate the input processing to the API which starts inking. After
   // intent is confirmed, the API will request that focus is updated by calling
   // ITfHandwritingSink::FocusHandwritingTarget.
-  void OnStartStylusWriting(OnFocusHandwritingTargetCallback callback,
-                            uint32_t pointer_id,
-                            uint64_t stroke_id,
-                            ui::TextInputClient& text_input_client);
+  void OnStartStylusWriting(
+      OnFocusHandwritingTargetCallback callback,
+      const ui::StylusHandwritingPropertiesWin& properties,
+      ui::TextInputClient& text_input_client);
 
   // Signal the Handwriting API whether focus has been updated successfully and
   // may begin committing edits or collect character bounds for evaluating
@@ -83,16 +93,18 @@ class CONTENT_EXPORT StylusHandwritingControllerWin {
   // cancel the inking session.
   void OnFocusFailed(ui::TextInputClient& text_input_client);
 
- protected:
-  // Protected for for tests only purposes. Binds interfaces and sets the global
-  // g_instance if the initialization is successful.
+ private:
+  friend class base::NoDestructor<StylusHandwritingControllerWin>;
+
+  // Binds interfaces and sets the global g_instance if the initialization is
+  // successful.
   StylusHandwritingControllerWin();
 
- private:
   // Binds required API interfaces if available.
   void BindInterfaces();
 
-  friend class base::NoDestructor<StylusHandwritingControllerWin>;
+  Microsoft::WRL::ComPtr<StylusHandwritingCallbackSinkWin>
+      handwriting_callback_sink_;
   Microsoft::WRL::ComPtr<::ITfHandwriting> handwriting_;
   // Stores the current text input client where handwriting was initiated. Used
   // to filter out calls that come from other clients, e.g., when the focused

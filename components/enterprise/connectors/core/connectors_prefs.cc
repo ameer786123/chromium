@@ -53,16 +53,15 @@ const char kOnSecurityEventScopePref[] =
 // Local State Prefs
 const char kLatestCrashReportCreationTime[] =
     "enterprise_connectors.latest_crash_report_creation_time";
+const char kLatestTelomereReportCreationTime[] =
+    "enterprise_connectors.latest_telomere_report_creation_time";
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kEnterpriseRealTimeUrlCheckMode,
                                 REAL_TIME_CHECK_DISABLED);
   registry->RegisterIntegerPref(kEnterpriseRealTimeUrlCheckScope, 0);
-
-#if !BUILDFLAG(IS_ANDROID)
   registry->RegisterListPref(kOnSecurityEventPref);
   registry->RegisterIntegerPref(kOnSecurityEventScopePref, 0);
-#endif
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   registry->RegisterListPref(kOnFileAttachedPref);
@@ -89,6 +88,11 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
 
 void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
   registry->RegisterInt64Pref(kLatestCrashReportCreationTime, 0);
+  registry->RegisterInt64Pref(kLatestTelomereReportCreationTime, 0);
+
+#if BUILDFLAG(ENTERPRISE_CLIENT_CERTIFICATES)
+  client_certificates::RegisterLocalStatePrefs(registry);
+#endif  // BUILDFLAG(ENTERPRISE_CLIENT_CERTIFICATES)
 }
 
 }  // namespace enterprise_connectors

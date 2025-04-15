@@ -280,9 +280,7 @@ void URLDownloader::DownloadOfflineURL(const GURL& url) {
 }
 
 void URLDownloader::CancelDownloadOfflineURL(const GURL& url) {
-  tasks_.erase(
-      std::remove(tasks_.begin(), tasks_.end(), std::make_pair(DOWNLOAD, url)),
-      tasks_.end());
+  base::Erase(tasks_, std::make_pair(DOWNLOAD, url));
 }
 
 void URLDownloader::DownloadPDFOrHTMLCompletionHandler(
@@ -434,6 +432,7 @@ void URLDownloader::FetchPDFFile() {
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = pdf_url;
   resource_request->load_flags = net::LOAD_SKIP_CACHE_VALIDATION;
+  resource_request->site_for_cookies = net::SiteForCookies::FromUrl(pdf_url);
 
   url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                  NO_TRAFFIC_ANNOTATION_YET);

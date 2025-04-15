@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -23,7 +24,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/threading/thread_restrictions.h"
-#include "build/chromeos_buildflags.h"
 #include "components/autofill/core/common/credit_card_number_validation.h"
 #include "components/feedback/redaction_tool/ip_address.h"
 #include "components/feedback/redaction_tool/pii_types.h"
@@ -378,9 +378,9 @@ bool MaybeUntranslateAddress(IPAddress* addr) {
     return false;
   }
 
-  static const IPAddress kTranslated6To4(0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0,
-                                         0, 0, 0, 0, 0, 0);
-  if (!IPAddressMatchesPrefix(*addr, kTranslated6To4, 96)) {
+  static const base::NoDestructor<IPAddress> kTranslated6To4(
+      0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  if (!IPAddressMatchesPrefix(*addr, *kTranslated6To4, 96)) {
     return false;
   }
 
@@ -403,56 +403,57 @@ bool MaybeTruncateIPv6(IPAddress* addr) {
 
 // Returns an appropriately scrubbed version of |addr| if applicable.
 std::string MaybeScrubIPAddress(const std::string& addr) {
-  struct {
+  struct IPAddresScrub {
     IPAddress ip_addr;
     int prefix_length;
     bool scrub;
-  } static const kNonIdentifyingIPRanges[] = {
-      // Private.
-      {IPAddress(10, 0, 0, 0), 8, true},
-      {IPAddress(172, 16, 0, 0), 12, true},
-      {IPAddress(192, 168, 0, 0), 16, true},
-      // Chrome OS containers and VMs.
-      {IPAddress(100, 115, 92, 0), 24, false},
-      // Loopback.
-      {IPAddress(127, 0, 0, 0), 8, true},
-      // Any.
-      {IPAddress(0, 0, 0, 0), 8, true},
-      // DNS.
-      {IPAddress(8, 8, 8, 8), 32, false},
-      {IPAddress(8, 8, 4, 4), 32, false},
-      {IPAddress(1, 1, 1, 1), 32, false},
-      // Multicast.
-      {IPAddress(224, 0, 0, 0), 4, true},
-      // Link local.
-      {IPAddress(169, 254, 0, 0), 16, true},
-      {IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
-       true},
-      // Broadcast.
-      {IPAddress(255, 255, 255, 255), 32, false},
-      // IPv6 loopback, unspecified and non-address strings.
-      {IPAddress::IPv6AllZeros(), 112, false},
-      // IPv6 multicast all nodes and routers.
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
-       false},
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
-       false},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
-       false},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
-       false},
-      // IPv6 other multicast (link and interface local).
-      {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
-       true},
-      {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
-       true},
-
   };
+  static const base::NoDestructor<std::vector<IPAddresScrub>>
+      kNonIdentifyingIPRanges({
+          // Private.
+          {IPAddress(10, 0, 0, 0), 8, true},
+          {IPAddress(172, 16, 0, 0), 12, true},
+          {IPAddress(192, 168, 0, 0), 16, true},
+          // Chrome OS containers and VMs.
+          {IPAddress(100, 115, 92, 0), 24, false},
+          // Loopback.
+          {IPAddress(127, 0, 0, 0), 8, true},
+          // Any.
+          {IPAddress(0, 0, 0, 0), 8, true},
+          // DNS.
+          {IPAddress(8, 8, 8, 8), 32, false},
+          {IPAddress(8, 8, 4, 4), 32, false},
+          {IPAddress(1, 1, 1, 1), 32, false},
+          // Multicast.
+          {IPAddress(224, 0, 0, 0), 4, true},
+          // Link local.
+          {IPAddress(169, 254, 0, 0), 16, true},
+          {IPAddress(0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 10,
+           true},
+          // Broadcast.
+          {IPAddress(255, 255, 255, 255), 32, false},
+          // IPv6 loopback, unspecified and non-address strings.
+          {IPAddress::IPv6AllZeros(), 112, false},
+          // IPv6 multicast all nodes and routers.
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
+           false},
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
+           false},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1), 128,
+           false},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2), 128,
+           false},
+          // IPv6 other multicast (link and interface local).
+          {IPAddress(0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
+           true},
+          {IPAddress(0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), 16,
+           true},
+      });
   IPAddress input_addr;
   if (input_addr.AssignFromIPLiteral(addr) && input_addr.IsValid()) {
     bool mapped = MaybeUnmapAddress(&input_addr);
     bool translated = !mapped ? MaybeUntranslateAddress(&input_addr) : false;
-    for (const auto& range : kNonIdentifyingIPRanges) {
+    for (const auto& range : *kNonIdentifyingIPRanges) {
       if (IPAddressMatchesPrefix(input_addr, range.ip_addr,
                                  range.prefix_length)) {
         std::string prefix;
@@ -480,39 +481,6 @@ std::string MaybeScrubIPAddress(const std::string& addr) {
     }
   }
   return "";
-}
-
-// Some strings can contain pieces that match like IPv4 addresses but aren't.
-// This function can be used to determine if this was the case by evaluating
-// the skipped piece. It returns true, if the matched address was erroneous
-// and should be skipped instead.
-bool ShouldSkipIPv4Address(std::string_view skipped) {
-  // Only look for patterns on the same line as the IPv4 address.
-  const auto nlpos = skipped.rfind("\n");
-  if (nlpos != std::string_view::npos) {
-    skipped = skipped.substr(nlpos);
-  }
-  // MomdemManager can dump out firmware revision fields that can also
-  // confuse the IPv4 matcher e.g. "Revision: 81600.0000.00.29.19.16_DO"
-  // so ignore the replacement if the skipped piece looks like
-  // "Revision: .*<ipv4>". Note however that if this field contains
-  // values delimited by multiple spaces, any matches after the first
-  // will lose the context and be redacted.
-  static const std::string_view rev("Revision: ");
-  static const std::string_view space(" ");
-  const auto pos = skipped.rfind(rev);
-  if (pos != std::string_view::npos &&
-      skipped.find(space, pos + rev.length()) == std::string_view::npos) {
-    return true;
-  }
-  // URLs with an IP Address should be handled by the "URL" entry in
-  // kCustomPatternsWithoutContext instead. If the skipped piece ends with an
-  // IRI, skip it.
-  re2::RE2 re_iri(".*" IRI);
-  if (re2::RE2::FullMatch(skipped, re_iri)) {
-    return true;
-  }
-  return false;
 }
 
 // TODO(battre): Use http://tools.ietf.org/html/rfc5322 to represent email
@@ -845,7 +813,7 @@ std::string RedactionTool::RedactAndroidAppStoragePaths(
   // We only use this on Chrome OS and there's differences in the API for
   // FilePath on Windows which prevents this from compiling, so only enable this
   // code for Chrome OS.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   std::string result;
   result.reserve(input.size());
 
@@ -907,7 +875,7 @@ std::string RedactionTool::RedactAndroidAppStoragePaths(
   return result;
 #else
   return input;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 std::string RedactionTool::RedactCreditCardNumbers(
@@ -1172,6 +1140,35 @@ RedactionToolCaller RedactionTool::GetCaller(const base::Location& location) {
     return RedactionToolCaller::kFeedbackToolLogs;
   }
   return RedactionToolCaller::kUnknown;
+}
+
+bool RedactionTool::ShouldSkipIPv4Address(std::string_view skipped) {
+  // Only look for patterns on the same line as the IPv4 address.
+  const auto nlpos = skipped.rfind("\n");
+  if (nlpos != std::string_view::npos) {
+    skipped = skipped.substr(nlpos);
+  }
+  // MomdemManager can dump out firmware revision fields that can also
+  // confuse the IPv4 matcher e.g. "Revision: 81600.0000.00.29.19.16_DO"
+  // so ignore the replacement if the skipped piece looks like
+  // "Revision: .*<ipv4>". Note however that if this field contains
+  // values delimited by multiple spaces, any matches after the first
+  // will lose the context and be redacted.
+  static const std::string_view rev("Revision: ");
+  static const std::string_view space(" ");
+  const auto pos = skipped.rfind(rev);
+  if (pos != std::string_view::npos &&
+      skipped.find(space, pos + rev.length()) == std::string_view::npos) {
+    return true;
+  }
+  // URLs with an IP Address should be handled by the "URL" entry in
+  // kCustomPatternsWithoutContext instead. If the skipped piece ends with an
+  // IRI, skip it.
+  RE2* re_iri = GetRegExp(".*" IRI);
+  if (RE2::FullMatch(skipped, *re_iri)) {
+    return true;
+  }
+  return false;
 }
 
 std::string RedactionTool::RedactCustomPatternWithContext(

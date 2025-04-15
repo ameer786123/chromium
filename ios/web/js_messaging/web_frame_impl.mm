@@ -61,7 +61,7 @@ const double kJavaScriptFunctionCallDefaultTimeout = 100.0;
 WebFrameImpl::WebFrameImpl(WKFrameInfo* frame_info,
                            const std::string& frame_id,
                            bool is_main_frame,
-                           GURL security_origin,
+                           url::Origin security_origin,
                            web::WebState* web_state,
                            ContentWorld content_world)
     : frame_info_(frame_info),
@@ -96,7 +96,7 @@ bool WebFrameImpl::IsMainFrame() const {
   return is_main_frame_;
 }
 
-GURL WebFrameImpl::GetSecurityOrigin() const {
+url::Origin WebFrameImpl::GetSecurityOrigin() const {
   return security_origin_;
 }
 
@@ -259,7 +259,7 @@ void WebFrameImpl::LogScriptWarning(NSString* script, NSError* error) {
                 << "\nfailed with error: " << error_string
                 << "\nand exception: " << exception;
 
-  UMA_HISTOGRAM_BOOLEAN("IOS.Javascript.ScriptExecutionFailed", true);
+  UMA_HISTOGRAM_BOOLEAN("IOS.JavaScript.ScriptExecutionFailed", true);
 
   if (!base::FeatureList::IsEnabled(features::kLogJavaScriptErrors)) {
     return;

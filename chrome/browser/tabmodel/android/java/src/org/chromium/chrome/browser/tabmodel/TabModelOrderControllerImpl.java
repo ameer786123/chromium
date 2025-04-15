@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAttributeKeys;
 import org.chromium.chrome.browser.tab.TabAttributes;
@@ -16,6 +19,7 @@ import org.chromium.chrome.browser.tab.TabLaunchType;
  * <p>TODO(crbug.com/40152902): Move to chrome/browser/tabmodel/internal when all usages are
  * modularized.
  */
+@NullMarked
 class TabModelOrderControllerImpl implements TabModelOrderController {
     private static final int NO_TAB = -1;
     private final TabModelSelector mTabModelSelector;
@@ -104,9 +108,11 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
         TabModel currentModel = mTabModelSelector.getCurrentModel();
         int count = currentModel.getCount();
         for (int i = count - 1; i >= startIndex; i--) {
-            Tab tab = currentModel.getTabAt(i);
+            Tab tab = currentModel.getTabAtChecked(i);
             if (tab.getParentId() == openerId
-                    && TabAttributes.from(tab).get(TabAttributeKeys.GROUPED_WITH_PARENT, true)) {
+                    && assumeNonNull(
+                            TabAttributes.from(tab)
+                                    .get(TabAttributeKeys.GROUPED_WITH_PARENT, true))) {
                 return i;
             }
         }
@@ -118,6 +124,7 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
                 mTabModelSelector
                         .getTabGroupModelFilterProvider()
                         .getTabGroupModelFilter(newTab.isIncognito());
+        assumeNonNull(filter);
         return filter.getValidPosition(newTab, position);
     }
 
@@ -126,7 +133,7 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
         TabModel currentModel = mTabModelSelector.getCurrentModel();
         int count = currentModel.getCount();
         for (int i = 0; i < count; i++) {
-            TabAttributes.from(currentModel.getTabAt(i))
+            TabAttributes.from(currentModel.getTabAtChecked(i))
                     .set(TabAttributeKeys.GROUPED_WITH_PARENT, false);
         }
     }
@@ -152,7 +159,9 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
                         && type != TabLaunchType.FROM_LONGPRESS_BACKGROUND_IN_GROUP
                         && type != TabLaunchType.FROM_RECENT_TABS
                         && type != TabLaunchType.FROM_SYNC_BACKGROUND
-                        && type != TabLaunchType.FROM_COLLABORATION_BACKGROUND_IN_GROUP)
+                        && type != TabLaunchType.FROM_COLLABORATION_BACKGROUND_IN_GROUP
+                        && type != TabLaunchType.FROM_BOOKMARK_BAR_BACKGROUND
+                        && type != TabLaunchType.FROM_REPARENTING_BACKGROUND)
                 || (!mTabModelSelector.isIncognitoBrandedModelSelected()
                         && isNewTabIncognitoBranded);
     }

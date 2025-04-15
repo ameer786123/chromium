@@ -14,11 +14,9 @@
 namespace blink {
 
 CSSAtRuleID CssAtRuleID(StringView name) {
-  if (EqualIgnoringASCIICase(name, "view-transition")) {
-    if (RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled()) {
-      return CSSAtRuleID::kCSSAtRuleViewTransition;
-    }
-    return CSSAtRuleID::kCSSAtRuleInvalid;
+  if (RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled() &&
+      EqualIgnoringASCIICase(name, "view-transition")) {
+    return CSSAtRuleID::kCSSAtRuleViewTransition;
   }
   if (EqualIgnoringASCIICase(name, "charset")) {
     return CSSAtRuleID::kCSSAtRuleCharset;
@@ -142,14 +140,18 @@ CSSAtRuleID CssAtRuleID(StringView name) {
   if (EqualIgnoringASCIICase(name, "right-bottom")) {
     return CSSAtRuleID::kCSSAtRuleRightBottom;
   }
-  if (EqualIgnoringASCIICase(name, "function")) {
+
+  if (RuntimeEnabledFeatures::CSSFunctionsEnabled() &&
+      EqualIgnoringASCIICase(name, "function")) {
     return CSSAtRuleID::kCSSAtRuleFunction;
   }
-  if (EqualIgnoringASCIICase(name, "mixin")) {
-    return CSSAtRuleID::kCSSAtRuleMixin;
-  }
-  if (EqualIgnoringASCIICase(name, "apply")) {
-    return CSSAtRuleID::kCSSAtRuleApplyMixin;
+  if (RuntimeEnabledFeatures::CSSMixinsEnabled()) {
+    if (EqualIgnoringASCIICase(name, "mixin")) {
+      return CSSAtRuleID::kCSSAtRuleMixin;
+    }
+    if (EqualIgnoringASCIICase(name, "apply")) {
+      return CSSAtRuleID::kCSSAtRuleApplyMixin;
+    }
   }
 
   return CSSAtRuleID::kCSSAtRuleInvalid;
@@ -246,8 +248,8 @@ StringView CssAtRuleIDToString(CSSAtRuleID id) {
     case CSSAtRuleID::kCSSAtRuleApplyMixin:
       return "@apply";
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+    case CSSAtRuleID::kCount:
+      NOTREACHED();
   };
 }
 
@@ -328,8 +330,8 @@ std::optional<WebFeature> AtRuleFeature(CSSAtRuleID rule_id) {
     case CSSAtRuleID::kCSSAtRuleApplyMixin:
       return WebFeature::kCSSMixins;
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED_IN_MIGRATION();
-      return std::nullopt;
+    case CSSAtRuleID::kCount:
+      NOTREACHED();
   }
 }
 

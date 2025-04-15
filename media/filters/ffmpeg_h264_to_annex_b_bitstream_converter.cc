@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "media/ffmpeg/ffmpeg_common.h"
 #include "media/formats/mp4/box_definitions.h"
@@ -35,7 +36,7 @@ bool FFmpegH264ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
     if (!stream_codec_parameters_->extradata ||
         stream_codec_parameters_->extradata_size <= 0) {
       DVLOG(2) << __func__ << ": Empty extra data";
-      return false;
+      return true;
     }
 
     avc_config = std::make_unique<mp4::AVCDecoderConfigurationRecord>();
@@ -90,7 +91,7 @@ bool FFmpegH264ToAnnexBBitstreamConverter::ConvertPacket(AVPacket* packet) {
   av_packet_unref(packet);
 
   // Finally, replace the values in the input packet.
-  memcpy(packet, &dest_packet, sizeof(*packet));
+  UNSAFE_TODO(memcpy(packet, &dest_packet, sizeof(*packet)));
   return true;
 }
 

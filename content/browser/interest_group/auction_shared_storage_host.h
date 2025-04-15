@@ -9,15 +9,13 @@
 #include "content/services/auction_worklet/public/mojom/auction_shared_storage_host.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
+#include "services/network/public/mojom/shared_storage.mojom-forward.h"
 #include "url/origin.h"
-
-namespace storage {
-class SharedStorageManager;
-}  // namespace storage
 
 namespace content {
 
 class RenderFrameHostImpl;
+class StoragePartitionImpl;
 
 // Implements the mojo interface used by the auction worklets, to receive
 // shared storage requests and then pass them on to `SharedStorageManager` to
@@ -25,8 +23,7 @@ class RenderFrameHostImpl;
 class CONTENT_EXPORT AuctionSharedStorageHost
     : public auction_worklet::mojom::AuctionSharedStorageHost {
  public:
-  explicit AuctionSharedStorageHost(
-      storage::SharedStorageManager* shared_storage_manager);
+  explicit AuctionSharedStorageHost(StoragePartitionImpl* storage_partition);
 
   AuctionSharedStorageHost(const AuctionSharedStorageHost&) = delete;
   AuctionSharedStorageHost& operator=(const AuctionSharedStorageHost&) = delete;
@@ -41,9 +38,17 @@ class CONTENT_EXPORT AuctionSharedStorageHost
           receiver);
 
   // auction_worklet::mojom::AuctionSharedStorageHost:
-  void SharedStorageUpdate(blink::mojom::SharedStorageModifierMethodPtr method,
-                           auction_worklet::mojom::AuctionWorkletFunction
-                               source_auction_worklet_function) override;
+  void SharedStorageUpdate(
+      network::mojom::SharedStorageModifierMethodWithOptionsPtr
+          method_with_options,
+      auction_worklet::mojom::AuctionWorkletFunction
+          source_auction_worklet_function) override;
+  void SharedStorageBatchUpdate(
+      std::vector<network::mojom::SharedStorageModifierMethodWithOptionsPtr>
+          methods_with_options,
+      const std::optional<std::string>& with_lock,
+      auction_worklet::mojom::AuctionWorkletFunction
+          source_auction_worklet_function) override;
 
  private:
   struct ReceiverContext;
@@ -52,10 +57,9 @@ class CONTENT_EXPORT AuctionSharedStorageHost
                     ReceiverContext>
       receiver_set_;
 
-  // `this` is owned by a `DocumentService`, and `shared_storage_manager_` is
-  // owned by the `StoragePartitionImpl`. Thus, `shared_storage_manager_` must
+  // `this` is owned by a `DocumentService`. Thus, `storage_partition_` must
   // outlive `this`.
-  raw_ptr<storage::SharedStorageManager> shared_storage_manager_;
+  raw_ptr<StoragePartitionImpl> storage_partition_;
 };
 
 }  // namespace content

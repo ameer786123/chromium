@@ -10,13 +10,14 @@
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/web_applications/daily_metrics_helper.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
+#include "chrome/browser/web_applications/web_app_utils.h"
 #include "components/services/app_service/public/cpp/preferred_apps_list.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/webapps/browser/banners/app_banner_manager.h"
 #include "components/webapps/browser/banners/installable_web_app_check_result.h"
 #include "components/webapps/browser/banners/web_app_banner_data.h"
@@ -35,9 +36,11 @@ using IdSet = std::set<webapps::AppId>;
 // normal browser window.
 void EmitUkmMetricsForTab(tabs::TabInterface* tab) {
   BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
+  CHECK(browser);
   Profile* profile = browser->GetProfile();
   auto* web_app_helper =
       web_app::WebAppTabHelper::FromWebContents(tab->GetContents());
+  CHECK(web_app_helper);
   std::optional<webapps::AppId> app_id = web_app_helper->app_id();
   CHECK(app_id);
 
@@ -67,10 +70,9 @@ void EmitUkmMetricsForTab(tabs::TabInterface* tab) {
 #else
   interaction.captures_links = registrar.CapturesLinksInScope(*app_id);
 #endif
-
   interaction.promotable = !registrar.IsDiyApp(*app_id);
 
-  if (tab->IsInForeground() && browser->IsActive()) {
+  if (tab->IsActivated() && browser->IsActive()) {
     interaction.foreground_duration = base::Seconds(kTimerIntervalInSeconds);
   } else {
     interaction.background_duration = base::Seconds(kTimerIntervalInSeconds);
@@ -83,10 +85,20 @@ void EmitUkmMetricsForTab(tabs::TabInterface* tab) {
 // Checks whether metrics should be emitted. If so, updates `emitted_ids` and
 // emits metrics.
 void MaybeEmitUkmMetricsForTab(tabs::TabInterface* tab, IdSet& emitted_ids) {
+  CHECK(tab->GetContents());
   auto* web_app_helper =
       web_app::WebAppTabHelper::FromWebContents(tab->GetContents());
+  if (!web_app_helper) {
+    return;
+  }
   std::optional<webapps::AppId> app_id = web_app_helper->app_id();
-  CHECK(app_id);
+
+  // A tab in an app window doesn't necessarily have to be in-scope of that
+  // app. In can be out of scope, or simply not have it's navigation committed
+  // yet.
+  if (!app_id) {
+    return;
+  }
 
   // We only emit UKM metrics a single time for a given AppId.
   if (base::Contains(emitted_ids, *app_id)) {
@@ -179,8 +191,17 @@ void SamplingMetricsProvider::EmitMetrics() {
 
   IdSet emitted_ukm_ids;
   for (BrowserWindowInterface* browser : GetAllBrowserWindowInterfaces()) {
+    if (!AreWebAppsEnabled(browser->GetProfile())) {
+      continue;
+    }
     // If this is a standalone app window.
     if (browser->GetAppBrowserController()) {
+      // A browser may be being closed due to empty tabs. See
+      // https://crbug.com/378020140.
+      if (!browser->GetActiveTabInterface()) {
+        continue;
+      }
+
       ++standalone_pwas_count;
 
       // TODO(https://crbug.com/358404364): This function does not work on macOS
@@ -205,7 +226,7 @@ void SamplingMetricsProvider::EmitMetrics() {
         std::optional<webapps::AppId> app_id = web_app_helper->app_id();
         if (app_id) {
           ++tabbed_pwas_count;
-          if (tab->IsInForeground() && browser->IsActive()) {
+          if (tab->IsActivated() && browser->IsActive()) {
             tabbed_pwas_in_active_use = true;
           }
 
@@ -230,16 +251,18 @@ void SamplingMetricsProvider::EmitMetrics() {
           // If the tab does not have an app id, it might be promotable.
           auto* app_banner_manager =
               webapps::AppBannerManager::FromWebContents(tab->GetContents());
-          std::optional<webapps::WebAppBannerData> banner_data =
-              app_banner_manager->GetCurrentWebAppBannerData();
-          webapps::InstallableWebAppCheckResult installable =
-              app_banner_manager->GetInstallableWebAppCheckResult();
+          if (app_banner_manager) {
+            std::optional<webapps::WebAppBannerData> banner_data =
+                app_banner_manager->GetCurrentWebAppBannerData();
+            webapps::InstallableWebAppCheckResult installable =
+                app_banner_manager->GetInstallableWebAppCheckResult();
 
-          if (banner_data &&
-              installable ==
-                  webapps::InstallableWebAppCheckResult::kYes_Promotable) {
-            MaybeEmitUkmMetricsForPromotable(tab, *banner_data,
-                                             emitted_ukm_ids);
+            if (banner_data &&
+                installable ==
+                    webapps::InstallableWebAppCheckResult::kYes_Promotable) {
+              MaybeEmitUkmMetricsForPromotable(tab, *banner_data,
+                                               emitted_ukm_ids);
+            }
           }
         }
       }

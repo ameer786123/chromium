@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "base/barrier_callback.h"
 #include "base/functional/bind.h"
@@ -18,7 +19,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -52,7 +52,7 @@ void InvokeCallbacksForSuspectedChanges(
     PasswordChangesOrError changes_or_error) {
   DCHECK(notifying_callback);
   bool success =
-      !absl::holds_alternative<PasswordStoreBackendError>(changes_or_error);
+      !std::holds_alternative<PasswordStoreBackendError>(changes_or_error);
 
   std::move(notifying_callback)
       .Run(GetPasswordChangesOrNulloptOnFailure(std::move(changes_or_error)));
@@ -231,47 +231,16 @@ void PasswordStore::RemoveLogin(const base::Location& location,
                              this, LoginsChangedTrigger::Deletion)));
 }
 
-void PasswordStore::RemoveLoginsByURLAndTime(
-    const base::Location& location,
-    const base::RepeatingCallback<bool(const GURL&)>& url_filter,
-    base::Time delete_begin,
-    base::Time delete_end,
-    base::OnceClosure completion,
-    base::OnceCallback<void(bool)> sync_completion) {
-  DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  if (!backend_) {
-    std::move(sync_completion).Run(false);
-    return;  // Once the shutdown started, ignore new requests.
-  }
-
-  if (post_init_callback_) {
-    post_init_callback_ =
-        std::move(post_init_callback_)
-            .Then(base::BindOnce(&PasswordStore::RemoveLoginsByURLAndTime, this,
-                                 location, url_filter, delete_begin, delete_end,
-                                 std::move(completion),
-                                 std::move(sync_completion)));
-    return;
-  }
-
-  backend_->RemoveLoginsByURLAndTimeAsync(
-      location, url_filter, delete_begin, delete_end,
-      std::move(sync_completion),
-      base::BindOnce(&GetPasswordChangesOrNulloptOnFailure)
-          .Then(
-              base::BindOnce(&PasswordStore::NotifyLoginsChangedOnMainSequence,
-                             this, LoginsChangedTrigger::BatchDeletion))
-          .Then(std::move(completion)));
-}
-
 void PasswordStore::RemoveLoginsCreatedBetween(
     const base::Location& location,
     base::Time delete_begin,
     base::Time delete_end,
-    base::OnceCallback<void(bool)> completion) {
+    base::OnceCallback<void(bool)> completion,
+    base::OnceCallback<void(bool)> sync_completion) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
   if (!backend_) {
     std::move(completion).Run(false);
+    std::move(sync_completion).Run(false);
     return;  // Once the shutdown started, ignore new requests.
   }
 
@@ -280,7 +249,8 @@ void PasswordStore::RemoveLoginsCreatedBetween(
         std::move(post_init_callback_)
             .Then(base::BindOnce(&PasswordStore::RemoveLoginsCreatedBetween,
                                  this, location, delete_begin, delete_end,
-                                 std::move(completion)));
+                                 std::move(completion),
+                                 std::move(sync_completion)));
     return;
   }
 
@@ -288,7 +258,7 @@ void PasswordStore::RemoveLoginsCreatedBetween(
       base::BindOnce(&PasswordStore::NotifyLoginsChangedOnMainSequence, this,
                      LoginsChangedTrigger::BatchDeletion);
   backend_->RemoveLoginsCreatedBetweenAsync(
-      location, delete_begin, delete_end,
+      location, delete_begin, delete_end, std::move(sync_completion),
       base::BindOnce(&InvokeCallbacksForSuspectedChanges, std::move(callback),
                      std::move(completion)));
 }
@@ -558,13 +528,13 @@ void PasswordStore::NotifyLoginsRetainedOnMainSequence(
   }
 
   // Clients don't expect errors yet, so just wait for the next notification.
-  if (absl::holds_alternative<PasswordStoreBackendError>(result)) {
+  if (std::holds_alternative<PasswordStoreBackendError>(result)) {
     return;
   }
 
   std::vector<PasswordForm> retained_logins;
-  retained_logins.reserve(absl::get<LoginsResult>(result).size());
-  for (auto& login : absl::get<LoginsResult>(result)) {
+  retained_logins.reserve(std::get<LoginsResult>(result).size());
+  for (auto& login : std::get<LoginsResult>(result)) {
     retained_logins.push_back(std::move(login));
   }
 

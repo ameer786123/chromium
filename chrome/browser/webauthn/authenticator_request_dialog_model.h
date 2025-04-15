@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/functional/callback_forward.h"
@@ -18,7 +19,8 @@
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
 #include "chrome/browser/webauthn/authenticator_transport.h"
-#include "chrome/browser/webauthn/observable_authenticator_list.h"
+#include "chrome/browser/webauthn/local_authentication_token.h"
+#include "content/public/browser/authenticator_request_client_delegate.h"
 #include "content/public/browser/global_routing_id.h"
 #include "device/fido/discoverable_credential_metadata.h"
 #include "device/fido/fido_constants.h"
@@ -26,11 +28,6 @@
 #include "device/fido/fido_types.h"
 #include "device/fido/pin.h"
 #include "device/fido/public_key_credential_user_entity.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-
-#if BUILDFLAG(IS_MAC)
-#include "crypto/scoped_lacontext.h"
-#endif  // BUILDFLAG(IS_MAC)
 
 namespace content {
 class RenderFrameHost;
@@ -41,8 +38,19 @@ struct VectorIcon;
 }
 
 struct AccountInfo;
+class AuthenticatorRequestDialogViewController;
 class Profile;
 
+using PasswordCredentialPair = std::pair<std::u16string, std::u16string>;
+
+enum class EnclaveEnabledStatus {
+  kDisabled,
+  kEnabled,
+  kEnabledAndReauthNeeded,
+};
+
+using UIPresentation =
+    content::AuthenticatorRequestClientDelegate::UIPresentation;
 //                ┌───────┐
 //                │ View  │
 //                └───────┘ Events are
@@ -83,14 +91,11 @@ class Profile;
   /* powered. Valid action when at step: kBlePowerOnManual, */                \
   /* kBlePowerOnAutomatic. */                                                 \
   AUTHENTICATOR_REQUEST_EVENT_0(ContinueWithFlowAfterBleAdapterPowered)       \
-  /* Called when the enclave authenticator is available for a request. */     \
-  AUTHENTICATOR_REQUEST_EVENT_0(EnclaveEnabled)                               \
-  /* Called when the enclave authenticator needs a reauth before it is */     \
-  /* available for a request. */                                              \
-  AUTHENTICATOR_REQUEST_EVENT_0(EnclaveNeedsReauth)                           \
-  /* Called when the ChromeOS authenticator is ready to handle a pending */   \
+  /* Called when the enclave authenticator is available for a request or */   \
+  /* the enclave authenticator needs a reauth before it is available for a */ \
   /* request. */                                                              \
-  AUTHENTICATOR_REQUEST_EVENT_0(OnChromeOSGPMRequestReady)                    \
+  AUTHENTICATOR_REQUEST_EVENT_1(EnclaveEnabledStatusChanged,                  \
+                                EnclaveEnabledStatus)                         \
   AUTHENTICATOR_REQUEST_EVENT_0(OnBioEnrollmentDone)                          \
   /* Called when the power state of the Bluetooth adapter has changed. */     \
   AUTHENTICATOR_REQUEST_EVENT_0(OnBluetoothPoweredStateChanged)               \
@@ -112,8 +117,7 @@ class Profile;
   AUTHENTICATOR_REQUEST_EVENT_0(OnGPMConfirmOffTheRecordCreate)               \
   /* Called when the user clicks "Forgot PIN" during UV. */                   \
   AUTHENTICATOR_REQUEST_EVENT_0(OnForgotGPMPinPressed)                        \
-  /* Called when the user clicks “Manage Devices” to manage their */      \
-  /* phones. */                                                               \
+  /* Called when the user clicks Manage Devices to manage their phones. */    \
   AUTHENTICATOR_REQUEST_EVENT_0(OnManageDevicesClicked)                       \
   /* OnOffTheRecordInterstitialAccepted is called when the user accepts */    \
   /* the interstitial that warns that platform/caBLE authenticators may */    \
@@ -169,8 +173,8 @@ class Profile;
   AUTHENTICATOR_REQUEST_EVENT_1(OnHavePIN, std::u16string)                    \
   /* Called when a local Touch ID prompt finishes. The first parameter is */  \
   /* true for success, false for failure. */                                  \
-  /* On success, the emitter must set the model's |lacontext| to an */        \
-  /* authenticated LAContext. */                                              \
+  /* On success, the emitter must set the model's `local_auth_token` to an */ \
+  /* authenticated one. In MacOS this is a ScopedLAContext. */                \
   AUTHENTICATOR_REQUEST_EVENT_1(OnTouchIDComplete, bool)                      \
   /* Called when GAIA reauth has completed. The argument is the reauth */     \
   /* proof token. */                                                          \
@@ -179,7 +183,10 @@ class Profile;
   AUTHENTICATOR_REQUEST_EVENT_1(OnModelDestroyed,                             \
                                 AuthenticatorRequestDialogModel*)             \
   /* Called when the GPM passkeys are reset successfully or not. */           \
-  AUTHENTICATOR_REQUEST_EVENT_1(OnGpmPasskeysReset, bool)
+  AUTHENTICATOR_REQUEST_EVENT_1(OnGpmPasskeysReset, bool)                     \
+  /* Called when a password mechanism is selected */                          \
+  AUTHENTICATOR_REQUEST_EVENT_1(OnPasswordCredentialSelected,                 \
+                                PasswordCredentialPair)
 
 // AuthenticatorRequestDialogModel holds the UI state for a WebAuthn request.
 // This class is refcounted so that its ownership can be shared between the
@@ -194,9 +201,14 @@ struct AuthenticatorRequestDialogModel
   enum class Step {
     // The UX flow has not started yet, the dialog should still be hidden.
     kNotStarted,
-    // Conditionally mediated UI. No dialog is shown, instead credentials are
-    // offered to the user on the password autofill prompt.
-    kConditionalMediation,
+    // Passkey autofill (i.e. WebAuthn get() with conditional mediation). No
+    // dialog is shown, instead credentials are offered to the user on the
+    // password autofill prompt.
+    kPasskeyAutofill,
+    // During passkey upgrade (i.e. WebAuthn create() with conditional
+    // mediation), the WebAuthn tab-modal dialog is not used. A separate dialog
+    // controller implements its own UI.
+    kPasskeyUpgrade,
     kMechanismSelection,
     // The request errored out before completing. Error will only be sent
     // after user interaction.
@@ -252,10 +264,7 @@ struct AuthenticatorRequestDialogModel
     // a single available credential and choosing one from a list of multiple
     // options.
     kSelectAccount,
-    kSelectSingleAccount,
     kPreSelectAccount,
-    // TODO(crbug.com/40284700): Merge with kSelectPriorityMechanism.
-    kPreSelectSingleAccount,
     // kSelectPriorityMechanism lets the user confirm a single "priority"
     // mechanism.
     kSelectPriorityMechanism,
@@ -282,7 +291,11 @@ struct AuthenticatorRequestDialogModel
     // Changing GPM PIN.
     kGPMReauthForPinReset,
     kGPMLockedPin,
-    kMaxValue = kGPMLockedPin,
+    // ChallengeUrl failure.
+    kErrorFetchingChallenge,
+    // OS authentication after selecting a password.
+    kPasswordOsAuth,
+    kMaxValue = kPasswordOsAuth,
   };
 
   // Views and controllers implement this interface to receive events, which
@@ -322,24 +335,25 @@ struct AuthenticatorRequestDialogModel
       const std::vector<uint8_t> user_id;
     };
     using Credential = base::StrongAlias<class CredentialTag, CredentialInfo>;
+    using Password = base::StrongAlias<class PasswordTag, std::monostate>;
     using Transport =
         base::StrongAlias<class TransportTag, AuthenticatorTransport>;
-    using WindowsAPI = base::StrongAlias<class WindowsAPITag, absl::monostate>;
+    using WindowsAPI = base::StrongAlias<class WindowsAPITag, std::monostate>;
     using ICloudKeychain =
-        base::StrongAlias<class iCloudKeychainTag, absl::monostate>;
+        base::StrongAlias<class iCloudKeychainTag, std::monostate>;
     using Phone = base::StrongAlias<class PhoneTag, std::string>;
-    using AddPhone = base::StrongAlias<class AddPhoneTag, absl::monostate>;
-    using Enclave = base::StrongAlias<class EnclaveTag, absl::monostate>;
-    using SignInAgain =
-        base::StrongAlias<class SignInAgainTag, absl::monostate>;
-    using Type = absl::variant<Credential,
-                               Transport,
-                               WindowsAPI,
-                               Phone,
-                               AddPhone,
-                               ICloudKeychain,
-                               Enclave,
-                               SignInAgain>;
+    using AddPhone = base::StrongAlias<class AddPhoneTag, std::monostate>;
+    using Enclave = base::StrongAlias<class EnclaveTag, std::monostate>;
+    using SignInAgain = base::StrongAlias<class SignInAgainTag, std::monostate>;
+    using Type = std::variant<Credential,
+                              Password,
+                              Transport,
+                              WindowsAPI,
+                              Phone,
+                              AddPhone,
+                              ICloudKeychain,
+                              Enclave,
+                              SignInAgain>;
 
     Mechanism(Type type,
               std::u16string name,
@@ -366,6 +380,13 @@ struct AuthenticatorRequestDialogModel
     CABLE_V2_SERVER_LINK,
     CABLE_V2_2ND_FACTOR,
   };
+
+  // Returns a user-friendly description for a |type|. If |type| is kPhone, a
+  // |phone_name| must be passed.
+  static std::u16string GetMechanismDescription(
+      const device::DiscoverableCredentialMetadata& cred,
+      const std::optional<std::string>& phone_name,
+      UIPresentation ui_presentation = UIPresentation::kModal);
 
   explicit AuthenticatorRequestDialogModel(
       content::RenderFrameHost* render_frame_host);
@@ -398,6 +419,10 @@ struct AuthenticatorRequestDialogModel
   void SetStep(Step step);
 
   void DisableUiOrShowLoadingDialog();
+
+  void set_ui_presentation(UIPresentation presentation) {
+    ui_presentation = presentation;
+  }
 
   // generation is incremented each time the request is restarted so that events
   // from different request generations can be distinguished.
@@ -433,6 +458,8 @@ struct AuthenticatorRequestDialogModel
   std::optional<device::DiscoverableCredentialMetadata> preselected_cred;
   // Whether the platform can check biometrics and has biometrics configured.
   std::optional<bool> platform_has_biometrics;
+  UIPresentation ui_presentation = UIPresentation::kModal;
+
   // offer_try_again_in_ui indicates whether a button to retry the request
   // should be included on the dialog sheet shown when encountering certain
   // errors.
@@ -442,6 +469,12 @@ struct AuthenticatorRequestDialogModel
   // offered on the QR sheet.
   bool show_security_key_on_qr_sheet = false;
   bool is_off_the_record = false;
+
+  // Tracks whether the model is in the GPM onboarding state.
+  // This value is set/reset only in GPMEnclaveController::OnGPMSelected and
+  // read only to record metrics (WebAuthentication.OnboardingEvents) during the
+  // onboarding flow.
+  bool in_onboarding_flow = false;
 
   std::optional<int> max_bio_samples;
   std::optional<int> bio_samples_remaining;
@@ -474,11 +507,10 @@ struct AuthenticatorRequestDialogModel
   // except for the cancel button.
   bool ui_disabled_ = false;
 
-#if BUILDFLAG(IS_MAC)
-  // lacontext contains an authenticated LAContext after a successful Touch ID
-  // prompt.
-  std::optional<crypto::ScopedLAContext> lacontext;
-#endif  // BUILDFLAG(IS_MAC)
+  // local_auth_token contains an authentication token after a successful local
+  // authentication. In MacOS this is a wrapped LAContext and it is after a
+  // successful Touch ID prompt.
+  std::optional<webauthn::LocalAuthenticationToken> local_auth_token;
 
   // Returns the AccountInfo for the profile associated with the request.
   std::optional<AccountInfo> GetGpmAccountInfo();
@@ -499,6 +531,7 @@ struct AuthenticatorRequestDialogModel
 
   Step step_ = Step::kNotStarted;
   const std::optional<content::GlobalRenderFrameHostId> frame_host_id;
+  std::unique_ptr<AuthenticatorRequestDialogViewController> view_controller_;
 };
 
 std::ostream& operator<<(std::ostream& os,

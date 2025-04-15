@@ -92,7 +92,7 @@
 //      "high_level_stats": {
 //        // Which fraction of fields had the heuristic type match the tester
 //        // type.
-//        "fraction_machtes": 0.7258244384259996,
+//        "fraction_matches": 0.7258244384259996,
 //        // Number of fields for which the heuristic type matched the tester
 //        // type or did not match.
 //        "matches": 9112,
@@ -101,7 +101,7 @@
 //      // Same staistics as above, drilled down by tester type.
 //      "per_type_stats": {
 //         "{tester_type}": {
-//            "fraction_machtes": 0.9132743362831859,
+//            "fraction_matches": 0.9132743362831859,
 //            "matches": 1032,
 //            "mismatches": 98
 //         },
@@ -178,6 +178,22 @@ bool EnableMLClassification() {
   return enable_ml_classification;
 }
 
+bool TesterAndHeuristicTypeMatch(std::string_view tester_type,
+                                 std::string_view heuristic_type) {
+  // Testers don't distinguish between standalone CVC fields and other CVC
+  // fields.
+  if (tester_type == "CREDIT_CARD_VERIFICATION_CODE" &&
+      heuristic_type == "CREDIT_CARD_STANDALONE_VERIFICATION_CODE") {
+    return true;
+  }
+  return tester_type == heuristic_type;
+}
+
+// Returns a/b or -1 in case b is 0.
+double SafeFraction(double a, double b) {
+  return b != 0 ? a / b : -1.0;
+}
+
 // Helper class that aggregates metrics and diagnostic data about field
 // classifications that matched or mismatched the expecations.
 class ResultAnalyzer {
@@ -237,7 +253,7 @@ void ResultAnalyzer::AnalyzeClassification(const FormStructure& form_structure,
 
     // Record metrics on the divergence between tester and heuristics.
     if (fields_in_scope_.contains(tester_type)) {
-      if (tester_type == heuristic_type) {
+      if (TesterAndHeuristicTypeMatch(tester_type, heuristic_type)) {
         ++matches_;
         ++match_by_type_count_[tester_type];
         json_fields[i].GetDict().Set("last_correctness", "correct");
@@ -266,8 +282,8 @@ base::Value ResultAnalyzer::GetResult() {
   base::Value::Dict high_level_stats;
   high_level_stats.Set("matches", matches_);
   high_level_stats.Set("mismatches", mismatches_);
-  high_level_stats.Set("fraction_machtes",
-                       matches_ / (double)(matches_ + mismatches_));
+  high_level_stats.Set("fraction_matches",
+                       SafeFraction(matches_, matches_ + mismatches_));
   result.Set("high_level_stats", std::move(high_level_stats));
 
   // Per type stats.
@@ -280,8 +296,8 @@ base::Value ResultAnalyzer::GetResult() {
       base::Value::Dict tester_type_stats;
       tester_type_stats.Set("matches", matches);
       tester_type_stats.Set("mismatches", mismatches);
-      tester_type_stats.Set("fraction_machtes",
-                            matches / (double)(matches + mismatches));
+      tester_type_stats.Set("fraction_matches",
+                            SafeFraction(matches, matches + mismatches));
       per_type_stats.Set(type, std::move(tester_type_stats));
     }
   }
@@ -300,7 +316,7 @@ base::Value ResultAnalyzer::GetResult() {
 // Returns the path containing test input files,
 // components/test/data/autofill/heuristics-json/.
 const base::FilePath& GetInputDir() {
-  static base::NoDestructor<base::FilePath> dir([]() {
+  static base::NoDestructor<base::FilePath> dir([] {
     base::FilePath dir;
     base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &dir);
     return dir.AppendASCII("components")
@@ -355,12 +371,15 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
 
   if (const std::string* label = field_dict.FindString("label_attr")) {
     field.set_label(base::UTF8ToUTF16(*label));
+    // Unfortunately, the data doesn't include the label source.
+    field.set_label_source(FormFieldData::LabelSource::kForId);
   }
   field.set_form_control_type(FormControlType::kInputText);
   if (const std::string* json_type = field_dict.FindString("type_attr")) {
     std::string type = *json_type == "select" ? "select-one" : *json_type;
-    field.set_form_control_type(autofill::StringToFormControlTypeDiscouraged(
-        type, /*fallback=*/autofill::FormControlType::kInputText));
+    field.set_form_control_type(
+        StringToFormControlTypeDiscouraged(type).value_or(
+            FormControlType::kInputText));
   }
   if (const std::string* autocomplete =
           field_dict.FindString("autocomplete_attr")) {
@@ -474,8 +493,7 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
     // Similarly to AutofillManager::ParseFormsAsync, the heuristics are
     // executed after the ML model. If ML predictions are enabled, this does
     // not override the heuristic types but performs rationalization.
-    form_structure->DetermineHeuristicTypes(client_country, nullptr,
-                                            log_manager);
+    form_structure->DetermineHeuristicTypes(client_country, log_manager);
 
     result_analyzer.AnalyzeClassification(*form_structure, form.GetDict());
   }
@@ -498,7 +516,7 @@ FormFieldData ParseFieldFromJsonDict(const base::Value::Dict& field_dict,
     std::ostringstream result;
     result << caption << ": Fraction matches " << std::fixed
            << std::setprecision(2)
-           << (*dict.FindDouble("fraction_machtes") * 100.0) << "%, "
+           << (*dict.FindDouble("fraction_matches") * 100.0) << "%, "
            << "Matches: " << *dict.FindInt("matches") << ", "
            << "Mismatches: " << *dict.FindInt("mismatches") << std::endl;
     return result.str();
@@ -581,10 +599,8 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
              "--run-internal-tests --test-launcher-timeout 100000 "
              "to execute these tests.";
     }
-#if !BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
-    ASSERT_NE(GetActiveHeuristicSource(), HeuristicSource::kLegacyRegexes)
+    ASSERT_TRUE(BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS))
         << "Internal tests are only supported with internal parsing patterns";
-#endif
     ASSERT_GE(TestTimeouts::test_launcher_timeout().InSeconds(), 100)
         << "This is a long-running test; you must specify "
            "--test-launcher-timeout to have a value of at least 100000.";
@@ -615,16 +631,24 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
 
   std::vector<base::test::FeatureRef> enabled_features = {
       // Support for new field types.
-      features::kAutofillUseAUAddressModel,
-      features::kAutofillUseCAAddressModel,
-      features::kAutofillUseDEAddressModel,
       features::kAutofillUseFRAddressModel,
-      features::kAutofillUseITAddressModel,
-      features::kAutofillUsePLAddressModel,
+      features::kAutofillUseNLAddressModel,
+      features::kAutofillUseINAddressModel,
+      features::kAutofillSupportPhoneticNameForJP,
       features::kAutofillEnableExpirationDateImprovements,
+      features::kAutofillSupportLastNamePrefix,
+      features::kAutofillEnableLoyaltyCardsFilling,
       // Other improvements.
-      features::kAutofillEnableCacheForRegexMatching};
-  std::vector<base::test::FeatureRef> disabled_features = {};
+      features::kAutofillEnableCacheForRegexMatching,
+      features::kAutofillEnableSupportForParsingWithSharedLabels,
+      features::kAutofillImproveCityFieldClassification,
+      features::kAutofillUseNegativePatternForAllAttributes,
+  };
+  std::vector<base::test::FeatureRef> disabled_features = {
+      // TODO(crbug.com/320965828): Understand the changes to the expectations
+      // caused by this feature.
+      features::kAutofillBetterLocalHeuristicPlaceholderSupport,
+  };
 
   auto init_feature_to_value = [&](base::test::FeatureRef feature, bool value) {
     if (value) {
@@ -633,14 +657,6 @@ TEST_P(HeuristicClassificationTests, EndToEnd) {
       disabled_features.push_back(feature);
     }
   };
-
-  // If you start the test with
-  // `--enable-features=AutofillEnableAddressFieldParserNG` the new autofill
-  // parser is used.
-  const bool kEnableAddressFieldParserNG = base::FeatureList::IsEnabled(
-      features::kAutofillEnableAddressFieldParserNG);
-  init_feature_to_value(features::kAutofillUseINAddressModel,
-                        kEnableAddressFieldParserNG);
 
   std::vector<std::string> structured_fields_disable_address_lines = {
       "BR", "MX", "IN"};
@@ -744,7 +760,7 @@ std::string GenerateTestName(
   std::string name = info.param.BaseName()
                          .ReplaceExtension(FILE_PATH_LITERAL(""))
                          .MaybeAsASCII();
-  base::ranges::replace_if(name, [](char c) { return !std::isalnum(c); }, '_');
+  std::ranges::replace_if(name, [](char c) { return !std::isalnum(c); }, '_');
   return name;
 }
 

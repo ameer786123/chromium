@@ -11,13 +11,26 @@
 #include "ash/birch/birch_item.h"
 #include "ash/birch/coral_constants.h"
 #include "base/functional/callback_forward.h"
+#include "base/json/json_writer.h"
 #include "ui/base/models/image_model.h"
 #include "url/gurl.h"
 
 namespace ash {
 
+class BirchChipButtonBase;
+
 class ASH_EXPORT BirchCoralItem : public BirchItem {
  public:
+  // The actions that perform to a coral group. These values are persisted to
+  // logs. Entries should not be renumbered and numeric values should never be
+  // reused.
+  enum class ActionType {
+    kRestore,
+    kLaunchToNewDesk,
+    kSaveAsDeskTemplate,
+    kMaxValue = kSaveAsDeskTemplate,
+  };
+
   BirchCoralItem(const std::u16string& coral_title,
                  const std::u16string& coral_text,
                  CoralSource source,
@@ -28,6 +41,9 @@ class ASH_EXPORT BirchCoralItem : public BirchItem {
   bool operator==(const BirchCoralItem& rhs) const;
   ~BirchCoralItem() override;
 
+  // The callback function for the press on the given `birch_chip_button`.
+  void LaunchGroup(BirchChipButtonBase* birch_chip_button);
+
   const base::Token& group_id() const { return group_id_; }
 
   // BirchItem:
@@ -37,6 +53,8 @@ class ASH_EXPORT BirchCoralItem : public BirchItem {
   void LoadIcon(LoadIconCallback callback) const override;
   BirchAddonType GetAddonType() const override;
   std::u16string GetAddonAccessibleName() const override;
+
+  base::Value::Dict ToCoralItemDetails() const;
 
  private:
   // Helper method that calls `birch_client` to retrieve the image from

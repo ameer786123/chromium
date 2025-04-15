@@ -16,6 +16,7 @@
 #import "base/ios/ns_error_util.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/no_destructor.h"
+#import "base/notreached.h"
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/autofill/ios/browser/autofill_java_script_feature.h"
@@ -26,14 +27,15 @@
 #import "components/dom_distiller/core/url_constants.h"
 #import "components/google/core/common/google_util.h"
 #import "components/language/ios/browser/language_detection_java_script_feature.h"
-#import "components/password_manager/core/common/password_manager_features.h"
 #import "components/password_manager/ios/password_manager_java_script_feature.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/supervised_user/core/browser/supervised_user_interstitial.h"
 #import "components/translate/ios/browser/translate_java_script_feature.h"
 #import "components/version_info/version_info.h"
 #import "ios/chrome/browser/autofill/model/bottom_sheet/autofill_bottom_sheet_java_script_feature.h"
+#import "ios/chrome/browser/browser_container/model/edit_menu_tab_helper.h"
 #import "ios/chrome/browser/content_settings/model/host_content_settings_map_factory.h"
+#import "ios/chrome/browser/enterprise/connectors/ios_enterprise_interstitial.h"
 #import "ios/chrome/browser/flags/chrome_switches.h"
 #import "ios/chrome/browser/follow/model/follow_java_script_feature.h"
 #import "ios/chrome/browser/https_upgrades/model/https_upgrade_service_factory.h"
@@ -45,6 +47,8 @@
 #import "ios/chrome/browser/permissions/model/media_api_usage_java_script_feature.h"
 #import "ios/chrome/browser/prerender/model/prerender_service.h"
 #import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_java_script_feature.h"
 #import "ios/chrome/browser/reading_list/model/offline_page_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/offline_url_utils.h"
 #import "ios/chrome/browser/safe_browsing/model/password_protection_java_script_feature.h"
@@ -91,6 +95,7 @@
 #import "ios/components/security_interstitials/lookalikes/lookalike_url_error.h"
 #import "ios/components/security_interstitials/safe_browsing/safe_browsing_error.h"
 #import "ios/components/security_interstitials/safe_browsing/safe_browsing_unsafe_resource_container.h"
+#import "ios/components/ui_util/dynamic_type_util.h"
 #import "ios/components/webui/web_ui_url_constants.h"
 #import "ios/net/protocol_handler_util.h"
 #import "ios/public/provider/chrome/browser/url_rewriters/url_rewriters_api.h"
@@ -112,9 +117,10 @@ namespace {
 // The tag describing the product name with a placeholder for the version.
 const char kProductTagWithPlaceholder[] = "CriOS/%s";
 
-// Returns the safe browsing error page HTML.
+// Returns the consumer or Enterprise safe browsing error page HTML.
 NSString* GetSafeBrowsingErrorPageHTML(web::WebState* web_state,
-                                       int64_t navigation_id) {
+                                       int64_t navigation_id,
+                                       NSInteger error_code) {
   // Fetch the unsafe resource causing this error page from the WebState's
   // container.
   SafeBrowsingUnsafeResourceContainer* container =
@@ -123,8 +129,28 @@ NSString* GetSafeBrowsingErrorPageHTML(web::WebState* web_state,
       container->GetMainFrameUnsafeResource();
 
   // Construct the blocking page and associate it with the WebState.
-  std::unique_ptr<security_interstitials::IOSSecurityInterstitialPage> page =
-      SafeBrowsingBlockingPage::Create(*resource);
+  std::unique_ptr<security_interstitials::IOSSecurityInterstitialPage> page;
+  switch (static_cast<SafeBrowsingErrorCode>(error_code)) {
+    case SafeBrowsingErrorCode::kUnsafeResource:
+      page = SafeBrowsingBlockingPage::Create(*resource);
+      break;
+
+    case SafeBrowsingErrorCode::kEnterpriseBlock:
+      page =
+          enterprise_connectors::IOSEnterpriseInterstitial::CreateBlockingPage(
+              *resource);
+      break;
+
+    case SafeBrowsingErrorCode::kEnterpriseWarn:
+      page =
+          enterprise_connectors::IOSEnterpriseInterstitial::CreateWarningPage(
+              *resource);
+      break;
+
+    default:
+      NOTREACHED() << "Unsupported safe browsing error code " << error_code;
+  }
+
   std::string error_page_content = page->GetHtmlContents();
   security_interstitials::IOSBlockingPageTabHelper::FromWebState(web_state)
       ->AssociateBlockingPage(navigation_id, std::move(page));
@@ -210,7 +236,8 @@ NSString* GetSupervisedUserErrorPageHTML(web::WebState* web_state,
           profile->GetPrefs(), error_info->filtering_behavior_reason(),
           container->IsRemoteApprovalPendingForUrl(url),
           error_info->is_main_frame(),
-          GetApplicationContext()->GetApplicationLocale());
+          GetApplicationContext()->GetApplicationLocale(),
+          ui_util::SystemSuggestedFontSizeMultiplier());
 
   security_interstitials::IOSBlockingPageTabHelper::FromWebState(web_state)
       ->AssociateBlockingPage(navigation_id, std::move(page));
@@ -253,8 +280,21 @@ ChromeWebClient::ChromeWebClient() {}
 ChromeWebClient::~ChromeWebClient() {}
 
 std::unique_ptr<web::WebMainParts> ChromeWebClient::CreateWebMainParts() {
+#if BUILDFLAG(USE_BLINK)
+  CHECK(main_parts_);
+  return std::move(main_parts_);
+#else
   return std::make_unique<IOSChromeMainParts>(
       *base::CommandLine::ForCurrentProcess());
+#endif
+}
+
+void ChromeWebClient::InitializeFieldTrialAndFeatureList() {
+#if BUILDFLAG(USE_BLINK)
+  main_parts_ = std::make_unique<IOSChromeMainParts>(
+      *base::CommandLine::ForCurrentProcess());
+  main_parts_->InitializeFieldTrialAndFeatureList();
+#endif
 }
 
 void ChromeWebClient::PreWebViewCreation() const {}
@@ -284,13 +324,15 @@ std::string ChromeWebClient::GetUserAgent(web::UserAgentType type) const {
       command_line->HasSwitch(switches::kUserAgent)) {
     std::string user_agent =
         command_line->GetSwitchValueASCII(switches::kUserAgent);
-    if (net::HttpUtil::IsValidHeaderValue(user_agent))
+    if (net::HttpUtil::IsValidHeaderValue(user_agent)) {
       return user_agent;
+    }
     LOG(WARNING) << "Ignored invalid value for flag --" << switches::kUserAgent;
   }
 
-  if (type == web::UserAgentType::DESKTOP)
+  if (type == web::UserAgentType::DESKTOP) {
     return web::BuildDesktopUserAgent(GetDesktopProduct());
+  }
   return web::BuildMobileUserAgent(GetMobileProduct());
 }
 
@@ -327,10 +369,7 @@ std::vector<web::JavaScriptFeature*> ChromeWebClient::GetJavaScriptFeatures(
     web::BrowserState* browser_state) const {
   static base::NoDestructor<PrintJavaScriptFeature> print_feature;
   std::vector<web::JavaScriptFeature*> features;
-  if (base::FeatureList::IsEnabled(
-          password_manager::features::kPasswordReuseDetectionEnabled)) {
-    features.push_back(PasswordProtectionJavaScriptFeature::GetInstance());
-  }
+  features.push_back(PasswordProtectionJavaScriptFeature::GetInstance());
 
   ProfileIOS* profile = ProfileIOS::FromBrowserState(browser_state);
   JavaScriptConsoleFeature* java_script_console_feature =
@@ -373,6 +412,10 @@ std::vector<web::JavaScriptFeature*> ChromeWebClient::GetJavaScriptFeatures(
 
   features.push_back(
       SupervisedUserInterstitialJavaScriptFeature::GetInstance());
+
+  if (base::FeatureList::IsEnabled(kEnableReaderModeDistillerHeuristic)) {
+    features.push_back(ReaderModeJavaScriptFeature::GetInstance());
+  }
 
   if (base::FeatureList::IsEnabled(
           kJavaScriptPermissionBasedAPIMetricsEnabled)) {
@@ -418,10 +461,8 @@ void ChromeWebClient::PrepareErrorPage(
       base::ios::GetFinalUnderlyingErrorFromError(error);
   if ([final_underlying_error.domain
           isEqualToString:kSafeBrowsingErrorDomain]) {
-    // Only kUnsafeResourceErrorCode is supported.
-    DCHECK_EQ(kUnsafeResourceErrorCode, final_underlying_error.code);
-    std::move(callback).Run(
-        GetSafeBrowsingErrorPageHTML(web_state, navigation_id));
+    std::move(callback).Run(GetSafeBrowsingErrorPageHTML(
+        web_state, navigation_id, final_underlying_error.code));
   } else if ([final_underlying_error.domain
                  isEqualToString:kLookalikeUrlErrorDomain]) {
     // Only kLookalikeUrlErrorCode is supported.
@@ -559,4 +600,12 @@ bool ChromeWebClient::IsInsecureFormWarningEnabled(
   }
   return base::FeatureList::IsEnabled(
       security_interstitials::features::kInsecureFormSubmissionInterstitial);
+}
+
+void ChromeWebClient::BuildEditMenu(web::WebState* web_state,
+                                    id<UIMenuBuilder> builder) const {
+  EditMenuTabHelper* tab_helper = EditMenuTabHelper::FromWebState(web_state);
+  if (tab_helper) {
+    tab_helper->BuildEditMenu(builder);
+  }
 }

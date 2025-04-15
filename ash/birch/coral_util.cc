@@ -4,6 +4,7 @@
 
 #include "ash/birch/coral_util.h"
 
+#include "ash/constants/ash_pref_names.h"
 #include "ash/multi_user/multi_user_window_manager_impl.h"
 #include "ash/public/cpp/saved_desk_delegate.h"
 #include "ash/session/session_controller_impl.h"
@@ -73,6 +74,45 @@ TabsAndApps SplitContentData(
   }
 
   return split;
+}
+
+base::Value::List EntitiesToListValue(
+    const std::vector<coral::mojom::EntityPtr>& entities) {
+  auto list = base::Value::List();
+  for (const coral::mojom::EntityPtr& entity : entities) {
+    auto entity_value = base::Value::Dict();
+    if (entity->is_tab()) {
+      entity_value.Set("Tab", base::Value::Dict()
+                                  .Set("Title", entity->get_tab()->title)
+                                  .Set("Url", entity->get_tab()->url.spec()));
+    }
+    if (entity->is_app()) {
+      entity_value.Set("App", base::Value::Dict()
+                                  .Set("Title", entity->get_app()->title)
+                                  .Set("Id", entity->get_app()->id));
+    }
+    list.Append(std::move(entity_value));
+  }
+  return list;
+}
+
+std::string GroupToString(const coral::mojom::GroupPtr& group) {
+  auto root = base::Value::Dict().Set(
+      "Group",
+      base::Value::Dict()
+          .Set("Title", group->title.value_or("No title"))
+          .Set("Entities", coral_util::EntitiesToListValue(group->entities)));
+  return root.DebugString();
+}
+
+bool IsCoralFeedbackAllowedByPolicy(PrefService* pref_service) {
+  return pref_service->GetInteger(prefs::kGenAISmartGroupingSettings) ==
+         base::to_underlying(GenAISmartGroupingSettings::kAllowed);
+}
+
+bool IsCoralAllowedByPolicy(PrefService* pref_service) {
+  return pref_service->GetInteger(prefs::kGenAISmartGroupingSettings) !=
+         base::to_underlying(GenAISmartGroupingSettings::kDisabled);
 }
 
 }  // namespace ash::coral_util

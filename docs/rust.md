@@ -19,8 +19,11 @@ The Rust toolchain is enabled for and supports all platforms and development
 environments that are supported by the Chromium project. The first milestone
 to include full production-ready support was M119.
 
-Rust is approved by Chrome ATLs for production use in
-[certain third-party scenarios](../docs/adding_to_third_party.md#Rust).
+Rust can be used anywhere in the Chromium repository (not just `//third_party`)
+subject to [current interop capabilities][interop-rust-doc], however it is
+currently subject to a internal approval and FYI process. Googlers can view
+go/chrome-rust for details. New usages of Rust are documented at
+[`rust-fyi@chromium.org`](https://groups.google.com/a/chromium.org/g/rust-fyi).
 
 For questions or help, reach out to `rust-dev@chromium.org` or `#rust` on the
 [Chromium Slack](https://www.chromium.org/developers/slack/).
@@ -73,21 +76,12 @@ To use a third-party crate "bar" version 3 from first party code:
    * `vpython3 ./tools/crates/run_gnrt.py gen`
    * Or, directly through (nightly) cargo:
      `cargo run --release --manifest-path tools/crates/gnrt/Cargo.toml --target-dir out/gnrt gen`
-1. Verify if all new dependencies are already audited by running `cargo vet`
-   See [`rust-unsafe.md#cargo-vet-policy`](rust-unsafe.md#cargo-vet-policy) for
-   more details.  This boils down to:
-   * `./tools/crates/run_cargo_vet.py check`
-   * If `check` fails, then there are missing audits, which need to be added to
-     `//third_party/rust/chromium_crates_io/supply-chain/audits.toml`.
 1. Add the new files to git:
    * `git add -f third_party/rust/chromium_crates_io/vendor`.
      (The `-f` is important, as files may be skipped otherwise from a
      `.gitignore` inside the crate.)
    * `git add third_party/rust`
-1. Upload the CL. If there is any `unsafe` usage then Security experts will need to
-   audit the "ub-risk" level.  See
-   [`rust-unsafe.md#code-review-policy`](rust-unsafe.md#code-review-policy) for
-   more details.
+1. Upload the CL and get a review from `//third_party/rust/OWNERS`.
 
 ### Cargo features
 
@@ -110,6 +104,10 @@ might exist if the "foo" crate was patched with a couple of changes:
 //third_party/rust/chromium_crates_io/patches/foo/patches/0001-Edit-the-Cargo-toml.diff
 //third_party/rust/chromium_crates_io/patches/foo/patches/0002-Other-changes.diff
 ```
+
+Patches are applied with `-p6 --directory
+third_party/rust/chromium_crates_io/vendor/<crate>-<version>`, effectively
+ignoring the version numbers in the patch files.
 
 The recommended procedure to create such patches is:
 
@@ -230,21 +228,65 @@ GN template (not the built-in `rust_library`) to integrate properly into the
 mixed-language Chromium build and get the correct compiler options applied to
 them.
 
-The [CXX](https://cxx.rs) tool is used for generating C++ bindings to Rust
-code. Since it requires explicit declarations in Rust, an wrapper shim around a
-pure Rust library is needed. Add these Rust shims that contain the CXX
-`bridge` macro to the `cxx_bindings` GN variable in the `rust_static_library`
-to have CXX generate a C++ header for that file. To include the C++ header
-file, rooted in the `gen` output directory, use
-```
-#include "the/path/to/the/rust/file.rs.h"
-```
+See `rust-ffi.md` for information on C++/Rust FFI.
 
-# Debugging hints
+# Unstable features
 
-There are not yet Rust wrappers for Chromium's base logging APIs. We recommend
-use of Rust's standard [`eprintln`](https://doc.rust-lang.org/std/macro.eprintln.html)
-and [`dbg`](https://doc.rust-lang.org/std/macro.dbg.html) macros.
+Unstable features are **unsupported** by default in Chromium. Any use of an
+unstable language or library feature should be agreed upon by the Rust toolchain
+team before enabling it.
+
+Since Chromium imports the Rust toolchain at its HEAD and builds it in a
+nightly-like configuration, it is technically possible to depend on unstable
+features. However, unstable features often change in a backwards incompatible
+way without a warning. If such incompatible changes are introduced, importing a
+new version of toolchain now requires the owner to fix forward, instead of being
+an automated process. This makes toolchain upgrades prohibitively difficult.
+
+When an exception is required, consider:
+
+-   Whether the unstable feature brings significant value that is unattainable
+    in stable alternatives
+-   The risk of breaking changes to the feature
+-   Ways to fallback in case a backward-incompatible toolchain change is
+    introduced
+
+A list of exceptions is maintained in
+[`../tools/rust/unstable_rust_feature_usage.md`](../tools/rust/unstable_rust_feature_usage.md).
+
+# Logging
+
+Use the [log](https://docs.rs/log) crate's macros in place of base `LOG`
+macros from C++. They do the same things. The `debug!` macro maps to
+`DLOG(INFO)`, the `info!` macro maps to `LOG(INFO)`, and `warn!` and `error!`
+map to `LOG(WARNING)` and `LOG(ERROR)` respectively. The additional `trace!`
+macro maps to `DLOG(INFO)` (but there is [WIP to map it to `DVLOG(INFO)`](
+https://chromium-review.googlesource.com/c/chromium/src/+/5996820)).
+
+Note that the standard library also includes a helpful
+[`dbg!`](https://doc.rust-lang.org/std/macro.dbg.html) macro which writes
+everything about a variable to `stderr`.
+
+Logging may not yet work in component builds:
+[crbug.com/374023535](https://crbug.com/374023535).
+
+# Tracing
+
+TODO: [crbug.com/377915495](https://crbug.com/377915495).
+
+# Strings
+
+Prefer to use [`BString`](https://docs.rs/bstr/latest/bstr/struct.BString.html)
+and [`BStr`](https://docs.rs/bstr/latest/bstr/struct.BStr.html) to work with
+strings in first-party code instead of `std::String` and `str`. These types do
+not require the strings to be valid UTF-8, and avoid error handling or panic
+crashes when working with strings from C++ and/or from the web. Because the
+web is not UTF-8 encoded, many strings in Chromium are also not.
+
+In cross-language bindings, `&[u8]` can be used to represent a string until
+native support for `BStr` is available in our interop tooling. A `u8` slice
+can be converted to `BStr` or treated as a string with
+[`ByteSlice`](https://docs.rs/bstr/latest/bstr/trait.ByteSlice.html).
 
 # Using VSCode
 
@@ -306,3 +348,5 @@ but you can still add dependencies manually to your `Cargo.toml`:
 [dependencies]
 log = "0.4"
 ```
+
+[interop-rust-doc]: https://docs.google.com/document/d/1kvgaVMB_isELyDQ4nbMJYWrqrmL3UZI4tDxnyxy9RTE/edit?tab=t.0#heading=h.fpqr6hf3c3j0

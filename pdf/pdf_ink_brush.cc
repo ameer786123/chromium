@@ -36,7 +36,7 @@ float GetOpacity(PdfInkBrush::Type type) {
     case PdfInkBrush::Type::kHighlighter:
       // LINT.IfChange(HighlighterOpacity)
       return 0.4f;
-      // LINT.ThenChange(//chrome/browser/resources/pdf/elements/ink_color_selector.ts:HighlighterOpacity)
+      // LINT.ThenChange(//chrome/browser/resources/pdf/pdf_viewer_utils.ts:HighlighterOpacity)
     case PdfInkBrush::Type::kPen:
       return 1.0f;
   }
@@ -55,8 +55,6 @@ ink::Color GetInkColorFromSkColor(SkColor color) {
 }
 
 ink::Brush CreateInkBrush(PdfInkBrush::Type type, SkColor color, float size) {
-  CHECK(PdfInkBrush::IsToolSizeInRange(size));
-
   // TODO(crbug.com/353942923): Use real values here.
   ink::BrushTip tip;
   tip.corner_rounding = GetCornerRounding(type);

@@ -4,9 +4,12 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
+import android.content.Context;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.FloatProperty;
 
+import org.chromium.base.MathUtils;
 import org.chromium.chrome.browser.layouts.components.VirtualView;
 
 import java.util.List;
@@ -57,10 +60,28 @@ public abstract class StripLayoutView implements VirtualView {
                 }
             };
 
+    /** A property for animations to use for changing the trailingMargin of the view. */
+    public static final FloatProperty<StripLayoutView> TRAILING_MARGIN =
+            new FloatProperty<>("trailingMargin") {
+                @Override
+                public void setValue(StripLayoutView object, float value) {
+                    object.setTrailingMargin(value);
+                }
+
+                @Override
+                public Float get(StripLayoutView object) {
+                    return object.getTrailingMargin();
+                }
+            };
+
+    // The view's context.
+    protected Context mContext;
+
     // Position variables.
     protected final RectF mDrawBounds = new RectF();
     private float mIdealX;
     private float mOffsetX;
+    private float mOffsetY;
 
     // Touch target bound variables.
     private float mTouchTargetInsetLeft;
@@ -73,6 +94,9 @@ public abstract class StripLayoutView implements VirtualView {
     private boolean mVisible = true;
     private boolean mCollapsed;
     private boolean mIsIncognito;
+    private boolean mIsForegrounded;
+    private boolean mIsDraggedOffStrip;
+    private boolean mWillClose;
 
     // A11y variables.
     private String mAccessibilityDescription = "";
@@ -80,43 +104,46 @@ public abstract class StripLayoutView implements VirtualView {
     // Event handlers.
     private final StripLayoutViewOnClickHandler mOnClickHandler;
 
+    // Tab group share properties.
+    private boolean mShowNotificationBubble;
+
+    // Trailing margin applied when the view is hovered over.
+    private float mTrailingMargin;
+
     /**
      * @param incognito The incognito state of the view.
      * @param clickHandler StripLayoutViewOnClickHandler for this view.
+     * @param context The context for the view.
      */
-    protected StripLayoutView(boolean incognito, StripLayoutViewOnClickHandler clickHandler) {
+    protected StripLayoutView(
+            boolean incognito, StripLayoutViewOnClickHandler clickHandler, Context context) {
         mIsIncognito = incognito;
         mOnClickHandler = clickHandler;
+        mContext = context;
     }
 
     /**
-     * This is used to help calculate the view's position and is not used for rendering.
-     *
-     * @param x The ideal position, in an infinitely long strip, of this view.
+     * Sets the ideal position, in an infinitely long strip, of this view. This is used to help
+     * calculate the view's position and is not used for rendering.
      */
     public void setIdealX(float x) {
         mIdealX = x;
     }
 
     /**
-     * This is used to help calculate the view's position and is not used for rendering.
-     *
-     * @return The ideal position, in an infinitely long strip, of this view.
+     * Returns the ideal position, in an infinitely long strip, of this view. This is used to help
+     * calculate the view's position and is not used for rendering.
      */
     public float getIdealX() {
         return mIdealX;
     }
 
-    /**
-     * @return The horizontal position of the view.
-     */
+    /** Returns the horizontal position of the view. */
     public float getDrawX() {
         return mDrawBounds.left;
     }
 
-    /**
-     * @param x The horizontal position of the view.
-     */
+    /** Sets the horizontal position of the view. */
     public void setDrawX(float x) {
         mDrawBounds.right = x + mDrawBounds.width();
         mDrawBounds.left = x;
@@ -124,16 +151,12 @@ public abstract class StripLayoutView implements VirtualView {
         updateTouchTargetBounds(mTouchTargetBounds);
     }
 
-    /**
-     * @return The vertical position of the view.
-     */
+    /** Returns the vertical position of the view. */
     public float getDrawY() {
         return mDrawBounds.top;
     }
 
-    /**
-     * @param y The vertical position of the view.
-     */
+    /** Sets the vertical position of the view. */
     public void setDrawY(float y) {
         mDrawBounds.bottom = y + mDrawBounds.height();
         mDrawBounds.top = y;
@@ -142,31 +165,54 @@ public abstract class StripLayoutView implements VirtualView {
     }
 
     /**
-     * @return The width of the view.
+     * This is used to help calculate the view's position and is not used for rendering.
+     *
+     * @param trailingMargin The trailing margin of the view (used for margins when reordering,
+     *     etc.).
      */
+    public void setTrailingMargin(float trailingMargin) {
+        mTrailingMargin = trailingMargin;
+    }
+
+    /**
+     * This is used to help calculate the view's position and is not used for rendering.
+     *
+     * @return The trailing margin of the view.
+     */
+    public float getTrailingMargin() {
+        return mTrailingMargin;
+    }
+
+    /**
+     * Represents how much this view's width should be counted when positioning views in the stack.
+     * The view has a full width weight of 1 when it is fully translated up onto the strip. This
+     * linearly decreases to 0 as it is translated down off the strip. The view visually has the
+     * same width, but the other views will smoothly slide out of the way to make/take room.
+     *
+     * @return The weight from 0 to 1 that the width of this view should have on the stack.
+     */
+    public float getWidthWeight() {
+        return MathUtils.clamp(1.f - (getDrawY() / getHeight()), 0.f, 1.f);
+    }
+
+    /** Returns the width of the view. */
     public float getWidth() {
         return mDrawBounds.width();
     }
 
-    /**
-     * @param width The width of the view.
-     */
+    /** Sets the width of the view. */
     public void setWidth(float width) {
         mDrawBounds.right = mDrawBounds.left + width;
         // Update touch target bounds
         updateTouchTargetBounds(mTouchTargetBounds);
     }
 
-    /**
-     * @return The height of the view.
-     */
+    /** Returns the height of the view. */
     public float getHeight() {
         return mDrawBounds.height();
     }
 
-    /**
-     * @param height The height of the view.
-     */
+    /** Sets the height of the view. */
     public void setHeight(float height) {
         mDrawBounds.bottom = mDrawBounds.top + height;
         // Update touch target bounds
@@ -174,37 +220,67 @@ public abstract class StripLayoutView implements VirtualView {
     }
 
     /**
-     * Sets the signed distance the drawX will be away from the view's idealX.
-     *
-     * @param offsetX The offset of the view (used for drag and drop, slide animating, etc).
+     * Sets the signed distance the drawX will be away from the view's idealX. This horizontal
+     * offset is used for drag and drop, slide animating, etc.
      */
     public void setOffsetX(float offsetX) {
         mOffsetX = offsetX;
     }
 
     /**
-     * Gets the signed distance the drawX will be away from the view's idealX.
-     *
-     * @return The offset of the view (used for drag and drop, slide animating, etc).
+     * Returns signed distance the drawX will be away from the view's idealX. This horizontal offset
+     * is used for drag and drop, slide animating, etc.
      */
     public float getOffsetX() {
         return mOffsetX;
     }
 
     /**
-     * @return Whether or not this {@link StripLayoutView} should be drawn.
+     * Sets the signed distance the drawY will be away from the view's ideal position. This vertical
+     * offset is used for open/close animations.
      */
+    public void setOffsetY(float offsetY) {
+        mOffsetY = offsetY;
+    }
+
+    /**
+     * Returns the vertical offset of the view. This vertical offset is used for open/close
+     * animations.
+     */
+    public float getOffsetY() {
+        return mOffsetY;
+    }
+
+    /** Returns whether or not this {@link StripLayoutView} should be drawn. */
     public boolean isVisible() {
         return mVisible;
     }
 
-    /**
-     * @param visible Whether or not this {@link StripLayoutView} should be drawn.
-     */
+    /** Sets whether or not this {@link StripLayoutView} should be drawn. */
     public void setVisible(boolean visible) {
         if (mVisible == visible) return;
         mVisible = visible;
         onVisibilityChanged(mVisible);
+    }
+
+    /**
+     * Sets whether the notification bubble is shown on the view. When set to true, a notification
+     * dot will appear on the view to indicate that this group has been updated by other members in
+     * the shared group.
+     *
+     * @param showBubble Whether to show the bubble.
+     */
+    public void setNotificationBubbleShown(boolean showBubble) {
+        mShowNotificationBubble = showBubble;
+    }
+
+    /**
+     * Checks whether the notification bubble is shown.
+     *
+     * @return Whether the notification bubble is shown.
+     */
+    public boolean getNotificationBubbleShown() {
+        return mShowNotificationBubble;
     }
 
     /**
@@ -214,36 +290,58 @@ public abstract class StripLayoutView implements VirtualView {
      */
     void onVisibilityChanged(boolean newVisibility) {}
 
-    /**
-     * @return Whether or not this {@link StripLayoutView} is collapsed.
-     */
+    /** Returns whether or not this {@link StripLayoutView} is collapsed. */
     public boolean isCollapsed() {
         return mCollapsed;
     }
 
-    /**
-     * @param collapsed Whether or not this {@link StripLayoutView} is collapsed.
-     */
+    /** Sets whether or not this {@link StripLayoutView} is collapsed. */
     public void setCollapsed(boolean collapsed) {
         mCollapsed = collapsed;
     }
 
-    /**
-     * @return The incognito state of the view.
-     */
+    /** Returns the incognito state of the view. */
     public boolean isIncognito() {
         return mIsIncognito;
     }
 
-    /**
-     * @param state The incognito state of the view.
-     */
-    public void setIncognito(boolean state) {
-        mIsIncognito = state;
+    /** Sets the incognito state of the view. */
+    public void setIncognito(boolean isIncognito) {
+        mIsIncognito = isIncognito;
+    }
+
+    /** Returns {@code true} if the view is foregrounded for reorder, {@code false} otherwise. */
+    public boolean isForegrounded() {
+        return mIsForegrounded;
+    }
+
+    /** Sets whether or not the given view should be foregrounded for reorder. */
+    public void setIsForegrounded(boolean isForegrounded) {
+        mIsForegrounded = isForegrounded;
+    }
+
+    /** Sets whether or not the view is dragged off the strip and should be hidden. */
+    public void setIsDraggedOffStrip(boolean isDraggedOffStrip) {
+        mIsDraggedOffStrip = isDraggedOffStrip;
+    }
+
+    /** Returns whether or not the view is dragged off the strip and should be hidden. */
+    public boolean isDraggedOffStrip() {
+        return mIsDraggedOffStrip;
+    }
+
+    /** Marks that the view will be closed due to an incoming TabModel update. */
+    public void setWillClose() {
+        mWillClose = true;
+    }
+
+    /** Returns whether or not the view will be closed due to an incoming TabModel update. */
+    public boolean willClose() {
+        return mWillClose;
     }
 
     /**
-     * Get a list of virtual views for accessibility events.
+     * Populates the given list with virtual views for accessibility events.
      *
      * @param views A List to populate with virtual views.
      */
@@ -251,9 +349,7 @@ public abstract class StripLayoutView implements VirtualView {
         views.add(this);
     }
 
-    /**
-     * @param description A string describing the resource.
-     */
+    /** Sets a string describing the resource. */
     public void setAccessibilityDescription(String description) {
         mAccessibilityDescription = description;
     }
@@ -264,21 +360,11 @@ public abstract class StripLayoutView implements VirtualView {
         return mAccessibilityDescription;
     }
 
-    /**
-     * @param x The x offset of the click.
-     * @param y The y offset of the click.
-     * @return Whether or not that gesture occurred inside of the touch target.
-     */
     @Override
     public boolean checkClickedOrHovered(float x, float y) {
         return mTouchTargetBounds.contains(x, y);
     }
 
-    /**
-     * Get the view's touch target.
-     *
-     * @param outTarget to set to the touch target bounds.
-     */
     @Override
     public void getTouchTarget(RectF outTarget) {
         outTarget.set(mTouchTargetBounds);
@@ -289,9 +375,7 @@ public abstract class StripLayoutView implements VirtualView {
         mOnClickHandler.onClick(time, this);
     }
 
-    /**
-     * @return Return cached touch target bounds.
-     */
+    /** Returns cached touch target bounds. */
     protected RectF getTouchTargetBounds() {
         return mTouchTargetBounds;
     }
@@ -299,17 +383,35 @@ public abstract class StripLayoutView implements VirtualView {
     /**
      * Apply insets to touch target bounds.
      *
-     * @param left - Left inset to apply to touch target.
-     * @param top - Top inset to apply to touch target.
-     * @param right - Right inset to apply to touch target.
-     * @param bottom - Bottom inset to apply to touch target.
+     * @param left Left inset to apply to touch target.
+     * @param top Top inset to apply to touch target.
+     * @param right Right inset to apply to touch target.
+     * @param bottom Bottom inset to apply to touch target.
      */
-    protected void setTouchTargetInsets(Float left, Float top, Float right, Float bottom) {
+    public void setTouchTargetInsets(Float left, Float top, Float right, Float bottom) {
         if (left != null) mTouchTargetInsetLeft = left;
         if (right != null) mTouchTargetInsetRight = right;
         if (top != null) mTouchTargetInsetTop = top;
         if (bottom != null) mTouchTargetInsetBottom = bottom;
         updateTouchTargetBounds(mTouchTargetBounds);
+    }
+
+    protected float getDpToPx() {
+        return mContext.getResources().getDisplayMetrics().density;
+    }
+
+    /**
+     * Populates {@code out} with a {@link Rect} where a context menu should be located.
+     *
+     * @param out The output {@link Rect}.
+     */
+    public void getAnchorRect(Rect out) {
+        float dpToPx = getDpToPx();
+        out.set(
+                Math.round(getDrawX() * dpToPx),
+                Math.round(getDrawY() * dpToPx),
+                Math.round((getDrawX() + getWidth()) * dpToPx),
+                Math.round((getDrawY() + getHeight()) * dpToPx));
     }
 
     private void updateTouchTargetBounds(RectF outTarget) {

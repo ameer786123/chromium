@@ -6,26 +6,36 @@
 
 #include <vector>
 
+#include "base/containers/to_vector.h"
+#include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/net/server_certificate_database.h"
-#include "chrome/browser/net/server_certificate_database.pb.h"
-#include "chrome/browser/net/server_certificate_database_service.h"
+#include "base/task/thread_pool.h"
 #include "chrome/browser/net/server_certificate_database_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/certificate_dialogs.h"
+#include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/webui/certificate_manager/certificate_manager_handler.h"
 #include "chrome/browser/ui/webui/certificate_manager/certificate_manager_utils.h"
-#include "chrome/browser/ui/webui/certificate_viewer_webui.h"
+#include "chrome/browser/ui/webui/certificate_viewer/certificate_viewer_webui.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/net/x509_certificate_model.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
+#include "components/server_certificate_database/server_certificate_database.h"
+#include "components/server_certificate_database/server_certificate_database.pb.h"
+#include "components/server_certificate_database/server_certificate_database_service.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "crypto/sha2.h"
+#include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/shell_dialogs/selected_file_info.h"
 
 namespace {
 
@@ -33,6 +43,7 @@ void PopulateUserCertsAsync(
     CertificateManagerPageHandler::GetCertificatesCallback callback,
     chrome_browser_server_certificate_database::CertificateTrust::
         CertificateTrustType trust,
+    bool can_delete,
     std::vector<net::ServerCertificateDatabase::CertInformation>
         server_cert_infos) {
   std::vector<certificate_manager_v2::mojom::SummaryCertInfoPtr> cert_infos;
@@ -42,13 +53,43 @@ void PopulateUserCertsAsync(
     }
     x509_certificate_model::X509CertificateModel model(
         net::x509_util::CreateCryptoBuffer(cert_info.der_cert), "");
-    // TODO(crbug.com/40928765): is_deletable should be set to false if
-    // CACertificateManagementAllowed is set to None.
     cert_infos.push_back(certificate_manager_v2::mojom::SummaryCertInfo::New(
-        cert_info.sha256hash_hex, model.GetTitle(),
-        /*is_deletable=*/true));
+        cert_info.sha256hash_hex, model.GetTitle(), can_delete));
   }
   std::move(callback).Run(std::move(cert_infos));
+}
+
+void ReloadAllUserCerts(base::WeakPtr<UserCertSource> user_cert_source,
+                        base::OnceCallback<void(bool)> update_callback,
+                        bool success) {
+  if (user_cert_source && success) {
+    user_cert_source->TriggerReload();
+  }
+  std::move(update_callback).Run(success);
+}
+
+void UpdateCertificateAsync(
+    base::WeakPtr<Profile> profile,
+    base::WeakPtr<UserCertSource> user_cert_source,
+    net::ServerCertificateDatabase::CertInformation cert_info,
+    base::OnceCallback<void(bool)> update_callback) {
+  if (!profile || !user_cert_source) {
+    std::move(update_callback).Run(false);
+    return;
+  }
+  net::ServerCertificateDatabaseService* server_cert_service =
+      net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
+          profile.get());
+  if (!server_cert_service) {
+    std::move(update_callback).Run(false);
+    return;
+  }
+  std::vector<net::ServerCertificateDatabase::CertInformation> cert_infos;
+  cert_infos.push_back(std::move(cert_info));
+  server_cert_service->AddOrUpdateUserCertificates(
+      std::move(cert_infos),
+      base::BindOnce(&ReloadAllUserCerts, user_cert_source,
+                     std::move(update_callback)));
 }
 
 void ViewCertificateAsync(
@@ -56,6 +97,8 @@ void ViewCertificateAsync(
     chrome_browser_server_certificate_database::CertificateTrust::
         CertificateTrustType trust,
     base::WeakPtr<content::WebContents> web_contents,
+    base::WeakPtr<Profile> profile,
+    base::WeakPtr<UserCertSource> user_cert_source,
     std::vector<net::ServerCertificateDatabase::CertInformation>
         server_cert_infos) {
   // Containing web contents went away (e.g. user navigated away). Don't
@@ -75,11 +118,26 @@ void ViewCertificateAsync(
     }
     if (hash == crypto::SHA256Hash(cert_info.der_cert)) {
       // Found the cert, open cert viewer dialog if able and return.
-      // TODO (crbug.com/40928765): Allow modifying constraints through the
-      // certificate viewer.
-      ShowCertificateDialog(
-          std::move(web_contents),
-          net::x509_util::CreateCryptoBuffer(cert_info.der_cert));
+      if (base::FeatureList::IsEnabled(
+              ::features::kEnableCertManagementUIV2EditCerts)) {
+        if (IsCACertificateManagementAllowed(*profile->GetPrefs())) {
+          ShowCertificateDialog(
+              std::move(web_contents),
+              net::x509_util::CreateCryptoBuffer(cert_info.der_cert),
+              cert_info.cert_metadata,
+              base::BindRepeating(&UpdateCertificateAsync, profile,
+                                  user_cert_source));
+        } else {
+          ShowCertificateDialog(
+              std::move(web_contents),
+              net::x509_util::CreateCryptoBuffer(cert_info.der_cert),
+              cert_info.cert_metadata, base::NullCallback());
+        }
+      } else {
+        ShowCertificateDialog(
+            std::move(web_contents),
+            net::x509_util::CreateCryptoBuffer(cert_info.der_cert));
+      }
       return;
     }
   }
@@ -111,36 +169,6 @@ void ExportCertificatesAsync(
                               std::move(export_certs), file_name);
 }
 
-void DeleteCertificateResultAsync(
-    CertificateManagerPageHandler::DeleteCertificateCallback callback,
-    bool result) {
-  if (result) {
-    std::move(callback).Run(
-        certificate_manager_v2::mojom::ActionResult::NewSuccess(
-            certificate_manager_v2::mojom::SuccessResult::kSuccess));
-    return;
-  }
-  std::move(callback).Run(certificate_manager_v2::mojom::ActionResult::NewError(
-      "Error deleting certificate"));
-}
-
-void GotDeleteConfirmation(
-    const std::string& sha256hash_hex,
-    CertificateManagerPageHandler::DeleteCertificateCallback callback,
-    base::WeakPtr<Profile> profile,
-    bool confirmed) {
-  if (confirmed && profile) {
-    net::ServerCertificateDatabaseService* server_cert_service =
-        net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
-            profile.get());
-    server_cert_service->DeleteCertificate(
-        sha256hash_hex,
-        base::BindOnce(&DeleteCertificateResultAsync, std::move(callback)));
-    return;
-  }
-  std::move(callback).Run(nullptr);
-}
-
 }  // namespace
 
 UserCertSource::UserCertSource(
@@ -155,19 +183,27 @@ UserCertSource::UserCertSource(
       profile_(profile),
       remote_client_(remote_client) {}
 
+UserCertSource::~UserCertSource() {
+  if (select_file_dialog_) {
+    select_file_dialog_->ListenerDestroyed();
+  }
+}
+
 void UserCertSource::GetCertificateInfos(
     CertificateManagerPageHandler::GetCertificatesCallback callback) {
   net::ServerCertificateDatabaseService* server_cert_service =
       net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
           profile_);
   if (!base::FeatureList::IsEnabled(
-          ::features::kEnableCertManagementUIV2Write)) {
+          ::features::kEnableCertManagementUIV2Write) ||
+      !server_cert_service) {
     std::vector<certificate_manager_v2::mojom::SummaryCertInfoPtr> cert_infos;
     std::move(callback).Run(std::move(cert_infos));
     return;
   }
-  server_cert_service->GetAllCertificates(
-      base::BindOnce(&PopulateUserCertsAsync, std::move(callback), trust_));
+  bool can_delete = IsCACertificateManagementAllowed(*profile_->GetPrefs());
+  server_cert_service->GetAllCertificates(base::BindOnce(
+      &PopulateUserCertsAsync, std::move(callback), trust_, can_delete));
 }
 
 void UserCertSource::ViewCertificate(
@@ -176,8 +212,12 @@ void UserCertSource::ViewCertificate(
   net::ServerCertificateDatabaseService* server_cert_service =
       net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
           profile_);
+  if (!server_cert_service) {
+    return;
+  }
   server_cert_service->GetAllCertificates(base::BindOnce(
-      &ViewCertificateAsync, sha256_hex_hash, trust_, web_contents));
+      &ViewCertificateAsync, sha256_hex_hash, trust_, web_contents,
+      profile_->GetWeakPtr(), weak_ptr_factory_.GetWeakPtr()));
 }
 
 void UserCertSource::ExportCertificates(
@@ -185,22 +225,202 @@ void UserCertSource::ExportCertificates(
   net::ServerCertificateDatabaseService* server_cert_service =
       net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
           profile_);
+  if (!server_cert_service) {
+    return;
+  }
   server_cert_service->GetAllCertificates(base::BindOnce(
       &ExportCertificatesAsync, web_contents, trust_, export_file_name_));
 }
 
 void UserCertSource::DeleteCertificate(
+    const std::string& display_name,
     const std::string& sha256hash_hex,
     CertificateManagerPageHandler::DeleteCertificateCallback callback) {
-  // TODO(crbug.com/40928765): This should early return if
-  // CACertificateManagementAllowed is set to None.
+  PrefService* prefs = profile_->GetPrefs();
+  // This error string does not need localization since it will not be shown on
+  // UI. If the pref is not set, the UI to delete certificates will not be
+  // shown.
+  if (!IsCACertificateManagementAllowed(*prefs)) {
+    std::move(callback).Run(
+        certificate_manager_v2::mojom::ActionResult::NewError(
+            "Deleting certificates is not allowed"));
+    return;
+  }
   (*remote_client_)
       ->AskForConfirmation(
           l10n_util::GetStringFUTF8(
               IDS_SETTINGS_CERTIFICATE_MANAGER_V2_DELETE_CERT_TITLE,
-              base::UTF8ToUTF16(sha256hash_hex)),
+              base::UTF8ToUTF16(display_name)),
           l10n_util::GetStringUTF8(
               IDS_SETTINGS_CERTIFICATE_MANAGER_V2_DELETE_SERVER_CERT_DESCRIPTION),
-          base::BindOnce(&GotDeleteConfirmation, sha256hash_hex,
-                         std::move(callback), profile_->GetWeakPtr()));
+          base::BindOnce(&UserCertSource::GotDeleteConfirmation,
+                         weak_ptr_factory_.GetWeakPtr(), sha256hash_hex,
+                         std::move(callback)));
+}
+
+void UserCertSource::GotDeleteConfirmation(
+    const std::string& sha256hash_hex,
+    CertificateManagerPageHandler::DeleteCertificateCallback callback,
+    bool confirmed) {
+  if (confirmed) {
+    net::ServerCertificateDatabaseService* server_cert_service =
+        net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
+            profile_.get());
+    if (server_cert_service) {
+      server_cert_service->DeleteCertificate(
+          sha256hash_hex,
+          base::BindOnce(&UserCertSource::DeleteCertificateResultAsync,
+                         weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+      return;
+    }
+  }
+  std::move(callback).Run(nullptr);
+}
+
+void UserCertSource::DeleteCertificateResultAsync(
+    CertificateManagerPageHandler::DeleteCertificateCallback callback,
+    bool result) {
+  if (result) {
+    // Trigger metadata refresh on local certs page to update count.
+    (*remote_client_)->TriggerMetadataUpdate();
+
+    std::move(callback).Run(
+        certificate_manager_v2::mojom::ActionResult::NewSuccess(
+            certificate_manager_v2::mojom::SuccessResult::kSuccess));
+    return;
+  }
+  std::move(callback).Run(certificate_manager_v2::mojom::ActionResult::NewError(
+      "Error deleting certificate"));
+}
+
+void UserCertSource::ImportCertificate(
+    base::WeakPtr<content::WebContents> web_contents,
+    CertificateManagerPageHandler::ImportCertificateCallback callback) {
+  if (!web_contents || select_file_dialog_) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  PrefService* prefs = profile_->GetPrefs();
+  // This error string does not need localization since it will not be shown on
+  // UI. If the pref is not set, the UI to delete certificates will not be
+  // shown.
+  if (!IsCACertificateManagementAllowed(*prefs)) {
+    std::move(callback).Run(
+        certificate_manager_v2::mojom::ActionResult::NewError(
+            "Importing certificates is not allowed"));
+    return;
+  }
+
+  import_callback_ = std::move(callback);
+  select_file_dialog_ = ui::SelectFileDialog::Create(
+      this, std::make_unique<ChromeSelectFilePolicy>(web_contents.get()));
+
+  ui::SelectFileDialog::FileTypeInfo file_type_info;
+  file_type_info.extensions = {
+      {FILE_PATH_LITERAL("der"), FILE_PATH_LITERAL("cer"),
+       FILE_PATH_LITERAL("crt"), FILE_PATH_LITERAL("pem"),
+       FILE_PATH_LITERAL("p7b"), FILE_PATH_LITERAL("p7c")}};
+  file_type_info.include_all_files = true;
+  select_file_dialog_->SelectFile(
+      ui::SelectFileDialog::SELECT_OPEN_FILE, std::u16string(),
+      base::FilePath(), &file_type_info, 1, FILE_PATH_LITERAL("der"),
+      web_contents->GetTopLevelNativeWindow(), nullptr);
+}
+
+void UserCertSource::FileSelected(const ui::SelectedFileInfo& file, int index) {
+  select_file_dialog_ = nullptr;
+  // Use CONTINUE_ON_SHUTDOWN since this is only for reading a file, if it
+  // doesn't complete before shutdown the file still exists, and even if the
+  // browser blocked on completing this task, the import isn't actually done
+  // yet, so just blocking shutdown on the file read wouldn't accomplish
+  // anything. CONTINUE_ON_SHUTDOWN should be safe as base::ReadFileToBytes
+  // doesn't access any global state.
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&base::ReadFileToBytes, file.path()),
+      base::BindOnce(&UserCertSource::FileRead,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void UserCertSource::FileSelectionCanceled() {
+  select_file_dialog_ = nullptr;
+  std::move(import_callback_).Run(nullptr);
+}
+
+void UserCertSource::FileRead(std::optional<std::vector<uint8_t>> file_bytes) {
+  if (!file_bytes) {
+    std::move(import_callback_)
+        .Run(certificate_manager_v2::mojom::ActionResult::NewError(
+            l10n_util::GetStringUTF8(
+                IDS_SETTINGS_CERTIFICATE_MANAGER_V2_READ_FILE_ERROR)));
+    return;
+  }
+  net::CertificateList certs_to_import =
+      net::X509Certificate::CreateCertificateListFromBytes(
+          file_bytes.value(), net::X509Certificate::FORMAT_AUTO);
+
+  if (certs_to_import.size() != 1) {
+    if (certs_to_import.size() == 0) {
+      std::move(import_callback_)
+          .Run(certificate_manager_v2::mojom::ActionResult::NewError(
+              l10n_util::GetStringUTF8(
+                  IDS_SETTINGS_CERTIFICATE_MANAGER_V2_IMPORT_INVALID_FILE)));
+      return;
+    }
+    std::move(import_callback_)
+        .Run(certificate_manager_v2::mojom::ActionResult::NewError(
+            l10n_util::GetStringUTF8(
+                IDS_SETTINGS_CERTIFICATE_MANAGER_V2_MULTIPLE_CERT_ERROR)));
+    return;
+  }
+
+  scoped_refptr<net::X509Certificate> cert_to_import = certs_to_import[0];
+
+  net::ServerCertificateDatabaseService* server_cert_service =
+      net::ServerCertificateDatabaseServiceFactory::GetForBrowserContext(
+          profile_);
+  if (!server_cert_service) {
+    std::move(import_callback_).Run(nullptr);
+    return;
+  }
+
+  net::ServerCertificateDatabase::CertInformation cert_info(
+      cert_to_import->cert_span());
+  cert_info.cert_metadata.mutable_trust()->set_trust_type(trust_);
+
+  std::vector<net::ServerCertificateDatabase::CertInformation> cert_infos;
+  cert_infos.push_back(std::move(cert_info));
+  server_cert_service->AddOrUpdateUserCertificates(
+      std::move(cert_infos),
+      base::BindOnce(&UserCertSource::ImportCertificateResult,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void UserCertSource::ImportCertificateResult(bool success) {
+  if (success) {
+    // Trigger metadata refresh on local certs page to update count.
+    (*remote_client_)->TriggerMetadataUpdate();
+
+    std::move(import_callback_)
+        .Run(certificate_manager_v2::mojom::ActionResult::NewSuccess(
+            certificate_manager_v2::mojom::SuccessResult::kSuccess));
+    return;
+  }
+  std::move(import_callback_)
+      .Run(certificate_manager_v2::mojom::ActionResult::NewError(
+          l10n_util::GetStringUTF8(
+              IDS_SETTINGS_CERTIFICATE_MANAGER_V2_IMPORT_ERROR_TITLE)));
+}
+
+void UserCertSource::TriggerReload() {
+  (*remote_client_)
+      ->TriggerReload(
+          {certificate_manager_v2::mojom::CertificateSource::kUserTrustedCerts,
+           certificate_manager_v2::mojom::CertificateSource::
+               kUserIntermediateCerts,
+           certificate_manager_v2::mojom::CertificateSource::
+               kUserDistrustedCerts});
 }

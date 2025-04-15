@@ -51,12 +51,10 @@ class BundleClientProxy : public mojom::CompositorFrameSinkClient {
 
   void OnBeginFrame(const BeginFrameArgs& args,
                     const FrameTimingDetailsMap& timing_details,
-                    bool frame_ack,
                     std::vector<ReturnedResource> resources) override {
     if (auto* bundle = GetBundle()) {
       bundle->EnqueueOnBeginFrame(frame_sink_id_.sink_id(), args,
-                                  timing_details, frame_ack,
-                                  std::move(resources));
+                                  timing_details, std::move(resources));
     }
   }
 
@@ -133,10 +131,6 @@ void CompositorFrameSinkImpl::SetWantsAnimateOnlyBeginFrames() {
   support_->SetWantsAnimateOnlyBeginFrames();
 }
 
-void CompositorFrameSinkImpl::SetWantsBeginFrameAcks() {
-  support_->SetWantsBeginFrameAcks();
-}
-
 void CompositorFrameSinkImpl::SetAutoNeedsBeginFrame() {
   support_->SetAutoNeedsBeginFrame();
 }
@@ -187,20 +181,6 @@ void CompositorFrameSinkImpl::SubmitCompositorFrameInternal(
 void CompositorFrameSinkImpl::DidNotProduceFrame(
     const BeginFrameAck& begin_frame_ack) {
   support_->DidNotProduceFrame(begin_frame_ack);
-}
-
-void CompositorFrameSinkImpl::DidAllocateSharedBitmap(
-    base::ReadOnlySharedMemoryRegion region,
-    const SharedBitmapId& id) {
-  if (!support_->DidAllocateSharedBitmap(std::move(region), id)) {
-    DLOG(ERROR) << "DidAllocateSharedBitmap failed for duplicate "
-                << "SharedBitmapId";
-    compositor_frame_sink_receiver_.reset();
-  }
-}
-
-void CompositorFrameSinkImpl::DidDeleteSharedBitmap(const SharedBitmapId& id) {
-  support_->DidDeleteSharedBitmap(id);
 }
 
 void CompositorFrameSinkImpl::InitializeCompositorFrameSinkType(

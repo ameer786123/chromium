@@ -38,8 +38,9 @@ CreateModelExecutionStreamingResponder(
     AbortSignal* signal,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     AIMetrics::AISessionType session_type,
-    base::OnceCallback<void(std::optional<uint64_t> current_tokens)>
-        complete_callback);
+    base::OnceCallback<void(mojom::blink::ModelExecutionContextInfoPtr)>
+        complete_callback,
+    base::RepeatingClosure overflow_callback);
 
 // Creates a ModelStreamingResponder that handles the streaming output of the
 // model execution. The responder will resolves given resolver with the full
@@ -52,8 +53,15 @@ CreateModelExecutionResponder(
     ScriptPromiseResolver<IDLString>* resolver,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     AIMetrics::AISessionType session_type,
-    base::OnceCallback<void(std::optional<uint64_t> current_tokens)>
-        complete_callback);
+    base::OnceCallback<void(mojom::blink::ModelExecutionContextInfoPtr)>
+        complete_callback,
+    base::RepeatingClosure overflow_callback);
+
+// Creates a closed ReadableStream without any chunk.
+MODULES_EXPORT
+ReadableStream* CreateEmptyReadableStream(
+    ScriptState* script_state,
+    AIMetrics::AISessionType session_type);
 
 }  // namespace blink
 

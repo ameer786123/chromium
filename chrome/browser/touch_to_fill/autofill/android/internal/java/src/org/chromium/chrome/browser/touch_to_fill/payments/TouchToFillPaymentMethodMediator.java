@@ -49,9 +49,10 @@ import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMeth
 import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.TermsLabelProperties;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.IbanRecordType;
+import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
-import org.chromium.components.payments.InputProtector;
+import org.chromium.components.payments.ui.InputProtector;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -246,13 +247,13 @@ class TouchToFillPaymentMethodMediator {
                 RecordHistogram.recordEnumeratedHistogram(
                         TOUCH_TO_FILL_CREDIT_CARD_OUTCOME_HISTOGRAM,
                         TouchToFillCreditCardOutcome.DISMISS,
-                        TouchToFillCreditCardOutcome.MAX_VALUE + 1);
+                        TouchToFillCreditCardOutcome.MAX_VALUE);
             } else {
                 assert mIbans != null;
                 RecordHistogram.recordEnumeratedHistogram(
                         TOUCH_TO_FILL_IBAN_OUTCOME_HISTOGRAM,
                         TouchToFillIbanOutcome.DISMISS,
-                        TouchToFillIbanOutcome.MAX_VALUE + 1);
+                        TouchToFillIbanOutcome.MAX_VALUE);
             }
         }
     }
@@ -302,10 +303,13 @@ class TouchToFillPaymentMethodMediator {
             FillableItemCollectionInfo itemCollectionInfo,
             Function<TouchToFillPaymentMethodProperties.CardImageMetaData, Drawable>
                     cardImageFunction) {
-        int drawableId = card.getIssuerIconDrawableId();
+        int drawableId = suggestion.getIconId();
         GURL artUrl =
-                AutofillUiUtils.shouldShowCustomIcon(card.getCardArtUrl(), card.getIsVirtual())
-                        ? card.getCardArtUrl()
+                AutofillUiUtils.shouldShowCustomIcon(
+                                suggestion.getCustomIconUrl(),
+                                suggestion.getSuggestionType()
+                                        == SuggestionType.VIRTUAL_CREDIT_CARD_ENTRY)
+                        ? suggestion.getCustomIconUrl()
                         : new GURL("");
         TouchToFillPaymentMethodProperties.CardImageMetaData cardImageMetaData =
                 new TouchToFillPaymentMethodProperties.CardImageMetaData(drawableId, artUrl);
@@ -394,14 +398,14 @@ class TouchToFillPaymentMethodMediator {
         RecordHistogram.recordEnumeratedHistogram(
                 TOUCH_TO_FILL_CREDIT_CARD_OUTCOME_HISTOGRAM,
                 outcome,
-                TouchToFillCreditCardOutcome.MAX_VALUE + 1);
+                TouchToFillCreditCardOutcome.MAX_VALUE);
     }
 
     private static void recordTouchToFillIbanOutcomeHistogram(@TouchToFillIbanOutcome int outcome) {
         RecordHistogram.recordEnumeratedHistogram(
                 TOUCH_TO_FILL_IBAN_OUTCOME_HISTOGRAM,
                 outcome,
-                TouchToFillIbanOutcome.MAX_VALUE + 1);
+                TouchToFillIbanOutcome.MAX_VALUE);
     }
 
     void setInputProtectorForTesting(InputProtector inputProtector) {

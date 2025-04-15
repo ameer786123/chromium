@@ -46,9 +46,12 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.ActivityResultRegistry;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.OptIn;
 import androidx.annotation.RequiresApi;
 import androidx.fragment.app.Fragment;
 import androidx.webkit.WebViewClientCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Log;
@@ -82,9 +85,6 @@ public class WebViewBrowserFragment extends Fragment {
     private static final String RESOURCE_GEO = "RESOURCE_GEO";
     // Our imaginary WebKit permission to request when loading a file:// URL.
     private static final String RESOURCE_FILE_URL = "RESOURCE_FILE_URL";
-    // Our imaginary WebKit permissions to request when loading a file:// URL on T+.
-    private static final String RESOURCE_IMAGES_URL = "RESOURCE_IMAGES_URL";
-    private static final String RESOURCE_VIDEO_URL = "RESOURCE_VIDEO_URL";
     // WebKit permissions with no corresponding Android permission can always be granted.
     private static final String NO_ANDROID_PERMISSION = "NO_ANDROID_PERMISSION";
 
@@ -101,10 +101,6 @@ public class WebViewBrowserFragment extends Fragment {
         sPermissions = new HashMap<>();
         sPermissions.put(RESOURCE_GEO, Manifest.permission.ACCESS_FINE_LOCATION);
         sPermissions.put(RESOURCE_FILE_URL, Manifest.permission.READ_EXTERNAL_STORAGE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            sPermissions.put(RESOURCE_IMAGES_URL, Manifest.permission.READ_MEDIA_IMAGES);
-            sPermissions.put(RESOURCE_VIDEO_URL, Manifest.permission.READ_MEDIA_VIDEO);
-        }
         sPermissions.put(
                 PermissionRequest.RESOURCE_AUDIO_CAPTURE, Manifest.permission.RECORD_AUDIO);
         sPermissions.put(PermissionRequest.RESOURCE_MIDI_SYSEX, NO_ANDROID_PERMISSION);
@@ -369,23 +365,33 @@ public class WebViewBrowserFragment extends Fragment {
     }
 
     @Override
+    @OptIn(markerClass = WebViewCompat.ExperimentalSaveState.class)
     public void onSaveInstanceState(Bundle savedInstanceState) {
         super.onSaveInstanceState(savedInstanceState);
-        // Deliberately don't catch TransactionTooLargeException here.
-        mWebView.saveState(savedInstanceState);
 
-        // TODO(timav): Remove this hack after http://crbug.com/626202 is fixed.
-        // Drop the saved state of it is too long since Android N and above
-        // can't handle large states without a crash.
-        byte[] webViewState = savedInstanceState.getByteArray(SAVE_RESTORE_STATE_KEY);
-        if (webViewState != null && webViewState.length > MAX_STATE_LENGTH) {
-            savedInstanceState.remove(SAVE_RESTORE_STATE_KEY);
-            String message =
-                    String.format(
-                            Locale.US,
-                            "Can't save state: %dkb is too long",
-                            webViewState.length / 1024);
-            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SAVE_STATE)) {
+            WebViewCompat.saveState(
+                    mWebView,
+                    savedInstanceState,
+                    MAX_STATE_LENGTH,
+                    /* includeForwardState= */ true);
+        } else {
+            // Deliberately don't catch TransactionTooLargeException here.
+            mWebView.saveState(savedInstanceState);
+
+            // TODO(timav): Remove this hack after http://crbug.com/626202 is fixed.
+            // Drop the saved state of it is too long since Android N and above
+            // can't handle large states without a crash.
+            byte[] webViewState = savedInstanceState.getByteArray(SAVE_RESTORE_STATE_KEY);
+            if (webViewState != null && webViewState.length > MAX_STATE_LENGTH) {
+                savedInstanceState.remove(SAVE_RESTORE_STATE_KEY);
+                String message =
+                        String.format(
+                                Locale.US,
+                                "Can't save state: %dkb is too long",
+                                webViewState.length / 1024);
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show();
+            }
         }
     }
 

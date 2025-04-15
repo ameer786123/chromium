@@ -18,6 +18,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_handlers/content_scripts_handler.h"
+#include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "extensions/test/test_content_script_load_waiter.h"
 #include "extensions/test/test_extension_dir.h"
@@ -48,36 +49,13 @@ class DesktopAndroidExtensionsBrowserTest : public AndroidBrowserTest {
 
   // Attempts to parse and load an extension from the given `file_path` and add
   // it to the extensions system (which will also activate the extension).
-  // Returns the extension on success; on failure, returns null and adds a test
-  // failure.
+  // Returns the extension on success; on failure, returns null.
   const Extension* LoadExtensionFromDirectory(const base::FilePath& file_path) {
-    base::ScopedAllowBlockingForTesting allow_blocking;
-
-    std::string load_error;
-    scoped_refptr<Extension> extension = file_util::LoadExtension(
-        file_path, mojom::ManifestLocation::kUnpacked, 0, &load_error);
-    if (!extension) {
-      ADD_FAILURE() << "Failed to parse extension: " << load_error;
-      return nullptr;
-    }
-
     content::BrowserContext* browser_context =
         GetActiveWebContents()->GetBrowserContext();
-
-    auto* android_system = static_cast<DesktopAndroidExtensionSystem*>(
-        ExtensionSystem::Get(browser_context));
-    std::string error;
-    if (!android_system->AddExtension(extension, error)) {
-      ADD_FAILURE() << "Failed to add extension: " << error;
-    }
-
-    ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context);
-    if (!registry->enabled_extensions().Contains(extension->id())) {
-      ADD_FAILURE() << "Extension is not properly enabled.";
-      return nullptr;
-    }
-
-    return extension.get();
+    return (static_cast<DesktopAndroidExtensionSystem*>(
+                ExtensionSystem::Get(browser_context)))
+        ->LoadExtensionFromDirectory(file_path);
   }
 };
 
@@ -407,6 +385,94 @@ IN_PROC_BROWSER_TEST_F(DesktopAndroidExtensionsBrowserTest,
   scoped_refptr<const Extension> extension =
       LoadExtensionFromDirectory(test_dir.UnpackedPath());
   ASSERT_TRUE(extension);
+  ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
+}
+
+// Tests reading a chrome.extension.* property.
+IN_PROC_BROWSER_TEST_F(DesktopAndroidExtensionsBrowserTest,
+                       ExtensionPropertyRead) {
+  static constexpr char kManifest[] =
+      R"({
+           "name": "chrome.extension property read",
+           "version": "0.1",
+           "manifest_version": 3,
+           "background": {"service_worker": "background.js"}
+         })";
+  static constexpr char kBackgroundJs[] =
+      R"(chrome.test.runTests([
+           function readProperty() {
+              // Test that we can read a property.
+              let incognito = chrome.extension.inIncognitoContext;
+              chrome.test.assertFalse(incognito);
+              chrome.test.succeed();
+           }
+         ]);)";
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(kManifest);
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), kBackgroundJs);
+
+  ResultCatcher result_catcher;
+  scoped_refptr<const Extension> extension =
+      LoadExtensionFromDirectory(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
+}
+
+// Tests passing a basic message between extension contexts.
+IN_PROC_BROWSER_TEST_F(DesktopAndroidExtensionsBrowserTest, MessagePassing) {
+  static constexpr char kManifest[] =
+      R"({
+           "name": "Message passing",
+           "version": "0.1",
+           "manifest_version": 3,
+           "background": {"service_worker": "background.js"}
+         })";
+
+  // A service worker that will send a message and wait for a reply.
+  static constexpr char kBackgroundJs[] =
+      R"(chrome.test.runTests([
+           async function sendMessage() {
+             // We wait for the C++ side to be ready; this allows us to open a
+             // tab to listen to the message we'll send.
+             await chrome.test.sendMessage('ready');
+
+             const reply = await chrome.runtime.sendMessage('ping');
+             chrome.test.assertEq('pong', reply);
+             chrome.test.succeed();
+           },
+         ]);)";
+  // This is a basic page that will reply to an incoming message.
+  static constexpr char kPageHtml[] =
+      R"(<html><script src="page.js"></script></html>)";
+  static constexpr char kPageJs[] =
+      R"(chrome.runtime.onMessage.addListener(async(msg, sender, sendReply) => {
+           chrome.test.assertEq(msg, 'ping');
+           sendReply('pong');
+         });)";
+
+  TestExtensionDir test_dir;
+  test_dir.WriteManifest(kManifest);
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), kBackgroundJs);
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.js"), kPageJs);
+  test_dir.WriteFile(FILE_PATH_LITERAL("page.html"), kPageHtml);
+
+  ResultCatcher result_catcher;
+  ExtensionTestMessageListener listener("ready", ReplyBehavior::kWillReply);
+  scoped_refptr<const Extension> extension =
+      LoadExtensionFromDirectory(test_dir.UnpackedPath());
+  ASSERT_TRUE(extension);
+
+  ASSERT_TRUE(listener.WaitUntilSatisfied());
+
+  // Open a tab to the listening page, and reply to the extension when it's
+  // loaded.
+  GURL extension_page = extension->GetResourceURL("page.html");
+  EXPECT_TRUE(content::NavigateToURL(GetActiveWebContents(), extension_page));
+  EXPECT_TRUE(content::WaitForLoadStop(GetActiveWebContents()));
+  EXPECT_EQ(extension_page, GetActiveWebContents()->GetLastCommittedURL());
+
+  listener.Reply("done");
+
   ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 }
 

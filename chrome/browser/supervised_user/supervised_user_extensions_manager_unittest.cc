@@ -22,6 +22,7 @@
 #include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/pref_names.h"
 #include "components/version_info/version_info.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature_channel.h"
@@ -59,6 +60,7 @@ class SupervisedUserExtensionsManagerTestBase
   void TearDown() override {
     // Flush the message loop, to ensure all posted tasks run.
     base::RunLoop().RunUntilIdle();
+    ExtensionServiceTestBase::TearDown();
   }
 
   void CheckLocalApprovalMigrationForDesktopState(
@@ -217,22 +219,19 @@ TEST_P(SupervisedUserExtensionsManagerTest,
     EXPECT_FALSE(manager_->MustRemainInstalled(extension.get(), &error_2));
     EXPECT_TRUE(error_2.empty());
 
-    std::u16string error_3;
     extensions::disable_reason::DisableReason reason =
         extensions::disable_reason::DISABLE_NONE;
-    EXPECT_TRUE(
-        manager_->MustRemainDisabled(extension.get(), &reason, &error_3));
+    EXPECT_TRUE(manager_->MustRemainDisabled(extension.get(), &reason));
     EXPECT_EQ(extensions::disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED,
               reason);
-    EXPECT_FALSE(error_3.empty());
+
+    std::u16string error_3;
+    EXPECT_TRUE(manager_->UserMayModifySettings(extension.get(), &error_3));
+    EXPECT_TRUE(error_3.empty());
 
     std::u16string error_4;
-    EXPECT_TRUE(manager_->UserMayModifySettings(extension.get(), &error_4));
+    EXPECT_TRUE(manager_->UserMayInstall(extension.get(), &error_4));
     EXPECT_TRUE(error_4.empty());
-
-    std::u16string error_5;
-    EXPECT_TRUE(manager_->UserMayInstall(extension.get(), &error_5));
-    EXPECT_TRUE(error_5.empty());
   }
 
 #if DCHECK_IS_ON()
@@ -254,8 +253,8 @@ TEST_P(SupervisedUserExtensionsManagerTest,
       MakeExtension("extension_test_1");
   scoped_refptr<const Extension> locally_approved_extn =
       MakeExtension("local_extension_test_1");
-  service()->AddExtension(approved_extn.get());
-  service()->AddExtension(locally_approved_extn.get());
+  registrar()->AddExtension(approved_extn);
+  registrar()->AddExtension(locally_approved_extn);
 
   // Mark one extension as already parent-approved in the corresponding
   // preference.
@@ -342,14 +341,13 @@ TEST_P(SupervisedUserExtensionsManagerTest,
   // Install an extension.
   scoped_refptr<const Extension> extn_with_switch_off =
       MakeExtension("extension_test_1");
-  service()->OnExtensionInstalled(extn_with_switch_off.get(),
-                                  /*page_ordinal=*/syncer::StringOrdinal());
+  registrar()->OnExtensionInstalled(extn_with_switch_off.get(),
+                                    /*page_ordinal=*/syncer::StringOrdinal());
 
   extensions::disable_reason::DisableReason reason;
-  std::u16string error;
   EXPECT_FALSE(manager_->IsExtensionAllowed(*extn_with_switch_off.get()));
-  EXPECT_TRUE(manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason,
-                                           &error));
+  EXPECT_TRUE(
+      manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason));
 
   histogram_tester.ExpectTotalCount(
       extensions::kExtensionApprovalsCountOnExtensionToggleHistogramName, 0);
@@ -386,16 +384,15 @@ TEST_P(SupervisedUserExtensionsManagerTest,
   // Install an extension.
   scoped_refptr<const Extension> extn_with_switch_on =
       MakeExtension("extension_test_2");
-  service()->OnExtensionInstalled(extn_with_switch_on.get(),
-                                  /*page_ordinal=*/syncer::StringOrdinal());
+  registrar()->OnExtensionInstalled(extn_with_switch_on.get(),
+                                    /*page_ordinal=*/syncer::StringOrdinal());
 
   bool is_extension_approved =
       GetExtensionsManagingToggle() == ExtensionsManagingToggle::kExtensions;
   EXPECT_EQ(is_extension_approved,
             manager_->IsExtensionAllowed(*extn_with_switch_on.get()));
   EXPECT_EQ(is_extension_approved,
-            !manager_->MustRemainDisabled(extn_with_switch_on.get(), &reason,
-                                          &error));
+            !manager_->MustRemainDisabled(extn_with_switch_on.get(), &reason));
   EXPECT_EQ(is_extension_approved,
             profile()
                 ->GetPrefs()
@@ -463,14 +460,13 @@ TEST_P(SupervisedUserExtensionsManagerTest,
   // Install an extension.
   scoped_refptr<const Extension> extn_with_switch_off =
       MakeExtension("extension_test_1");
-  service()->OnExtensionInstalled(extn_with_switch_off.get(),
-                                  /*page_ordinal=*/syncer::StringOrdinal());
+  registrar()->OnExtensionInstalled(extn_with_switch_off.get(),
+                                    /*page_ordinal=*/syncer::StringOrdinal());
 
   extensions::disable_reason::DisableReason reason;
-  std::u16string error;
   EXPECT_FALSE(manager_->IsExtensionAllowed(*extn_with_switch_off.get()));
-  EXPECT_TRUE(manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason,
-                                           &error));
+  EXPECT_TRUE(
+      manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason));
 
   // Set the Extensions switch to ON. The extension should have been granted
   // parent approval when the SkipParentApprovalToInstallExtension preference is
@@ -483,8 +479,7 @@ TEST_P(SupervisedUserExtensionsManagerTest,
   EXPECT_EQ(is_extension_approved,
             manager_->IsExtensionAllowed(*extn_with_switch_off.get()));
   EXPECT_EQ(is_extension_approved,
-            !manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason,
-                                          &error));
+            !manager_->MustRemainDisabled(extn_with_switch_off.get(), &reason));
   EXPECT_EQ(is_extension_approved,
             profile()
                 ->GetPrefs()
@@ -499,10 +494,10 @@ TEST_P(SupervisedUserExtensionsManagerTest, RevokeLocalApproval) {
 
   scoped_refptr<const Extension> locally_approved_extn1 =
       MakeExtension("extension_test_1");
-  service()->AddExtension(locally_approved_extn1.get());
+  registrar()->AddExtension(locally_approved_extn1);
   scoped_refptr<const Extension> locally_approved_extn2 =
       MakeExtension("extension_test_2");
-  service()->AddExtension(locally_approved_extn2.get());
+  registrar()->AddExtension(locally_approved_extn2);
 
   // Create the object under test.
   MakeSupervisedUserExtensionsManager();
@@ -525,7 +520,7 @@ TEST_P(SupervisedUserExtensionsManagerTest, RevokeLocalApproval) {
       registry()->enabled_extensions().Contains(locally_approved_extn1->id()));
 
   // Uninstalling the extension also removes the local approval.
-  ASSERT_TRUE(service()->UninstallExtension(
+  ASSERT_TRUE(registrar()->UninstallExtension(
       locally_approved_extn1->id(), extensions::UNINSTALL_REASON_FOR_TESTING,
       nullptr));
   EXPECT_FALSE(
@@ -533,7 +528,7 @@ TEST_P(SupervisedUserExtensionsManagerTest, RevokeLocalApproval) {
 
   // Granting parent approval (typically from another client) removes the local
   // approval. The extension remains allowed.
-  manager_->AddExtensionApproval(*locally_approved_extn2.get());
+  manager_->AddExtensionApproval(*locally_approved_extn2);
   EXPECT_FALSE(
       local_approved_extensions_pref.contains(locally_approved_extn2->id()));
   EXPECT_TRUE(manager_->IsExtensionAllowed(*locally_approved_extn2));
@@ -637,7 +632,7 @@ TEST_P(AddingSupervisionTest,
 
   scoped_refptr<const Extension> existing_extension =
       MakeExtension("extension_test_2");
-  service()->AddExtension(existing_extension.get());
+  registrar()->AddExtension(existing_extension);
 
   supervised_user::LocallyParentApprovedExtensionsMigrationState
       expected_migragtion_state = supervised_user::

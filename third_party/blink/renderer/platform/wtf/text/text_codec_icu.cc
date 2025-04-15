@@ -426,7 +426,8 @@ String TextCodecICU::Decode(base::span<const uint8_t> data,
     int uchars_decoded =
         DecodeToBuffer(buffer, buffer_limit, source, source_limit, offsets,
                        flush != FlushBehavior::kDoNotFlush, err);
-    result.Append(buffer, uchars_decoded);
+    result.Append(
+        base::span(buffer).first(static_cast<size_t>(uchars_decoded)));
   } while (err == U_BUFFER_OVERFLOW_ERROR);
 
   if (U_FAILURE(err)) {
@@ -637,7 +638,7 @@ static void NotReachedEntityCallback(const void* context,
                                      UChar32 code_point,
                                      UConverterCallbackReason reason,
                                      UErrorCode* err) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 class TextCodecInput final {

@@ -15,28 +15,26 @@ import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.containsString;
 
-import static org.chromium.base.test.transit.Condition.whether;
-import static org.chromium.base.test.transit.LogicalElement.uiThreadLogicalElement;
 import static org.chromium.base.test.transit.ViewSpec.viewSpec;
 
+import androidx.annotation.Nullable;
 import androidx.test.espresso.Espresso;
 import androidx.test.espresso.NoMatchingViewException;
 
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.transit.Condition;
-import org.chromium.base.test.transit.ConditionStatus;
 import org.chromium.base.test.transit.Elements;
 import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.transit.Transition;
 import org.chromium.base.test.transit.TravelException;
-import org.chromium.base.test.transit.UiThreadCondition;
+import org.chromium.base.test.transit.ViewElement;
 import org.chromium.base.test.transit.ViewSpec;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.browser.hub.R;
-import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.test.transit.layouts.LayoutTypeVisibleCondition;
 import org.chromium.chrome.test.transit.page.PageStation;
 import org.chromium.chrome.test.transit.tabmodel.TabModelSelectorCondition;
 
@@ -45,11 +43,9 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
     public static final ViewSpec HUB_TOOLBAR = viewSpec(withId(R.id.hub_toolbar));
     public static final ViewSpec HUB_PANE_HOST = viewSpec(withId(R.id.hub_pane_host));
     public static final ViewSpec HUB_MENU_BUTTON =
-            viewSpec(
-                    isDescendantOfA(withId(R.id.hub_toolbar)),
-                    withId(org.chromium.chrome.R.id.menu_button));
+            HUB_TOOLBAR.descendant(withId(org.chromium.chrome.R.id.menu_button));
     public static final ViewSpec HUB_PANE_SWITCHER =
-            viewSpec(allOf(isDescendantOfA(withId(R.id.hub_toolbar)), withId(R.id.pane_switcher)));
+            HUB_TOOLBAR.descendant(withId(R.id.pane_switcher));
 
     // The non-regular toggle tab button contentDescription is a substring found in the string:
     // R.string.accessibility_tab_switcher_standard_stack.
@@ -60,6 +56,8 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
             viewSpec(withContentDescription(R.string.accessibility_tab_switcher_incognito_stack));
 
     protected Supplier<TabModelSelector> mTabModelSelectorSupplier;
+    protected @Nullable ViewElement mRegularTabsButton;
+    protected @Nullable ViewElement mIncognitoTabsButton;
     protected final boolean mIncognitoTabsExist;
     protected final boolean mRegularTabsExist;
 
@@ -82,17 +80,14 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
         elements.declareView(HUB_PANE_HOST);
         elements.declareView(HUB_MENU_BUTTON);
 
+        // TODO(crbug.com/386819654): Add a member of type ViewElement representing tab group pane
+        mRegularTabsButton = elements.declareView(REGULAR_TOGGLE_TAB_BUTTON);
         if (mIncognitoTabsExist) {
-            elements.declareView(REGULAR_TOGGLE_TAB_BUTTON);
-            elements.declareView(INCOGNITO_TOGGLE_TAB_BUTTON);
+            mIncognitoTabsButton = elements.declareView(INCOGNITO_TOGGLE_TAB_BUTTON);
         }
 
-        elements.declareLogicalElement(
-                uiThreadLogicalElement(
-                        "LayoutManager is showing TAB_SWITCHER (Hub)",
-                        this::isHubLayoutShowing,
-                        mActivityElement));
-        elements.declareEnterCondition(new HubLayoutNotInTransition());
+        elements.declareEnterCondition(
+                new LayoutTypeVisibleCondition(mActivityElement, LayoutType.TAB_SWITCHER));
     }
 
     /** Returns the {@link Condition} that acts as {@link Supplier<TabModelSelector>}. */
@@ -153,10 +148,6 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
         return selectPane(PaneId.INCOGNITO_TAB_SWITCHER, IncognitoTabSwitcherStation.class);
     }
 
-    private ConditionStatus isHubLayoutShowing(ChromeTabbedActivity activity) {
-        return whether(activity.getLayoutManager().isLayoutVisible(LayoutType.TAB_SWITCHER));
-    }
-
     private void clickPaneSwitcherForPaneWithContentDescription(String contentDescription) {
         // TODO(crbug.com/40287437): Content description seems reasonable for now, this might get
         // harder once we use a recycler view with text based buttons.
@@ -165,28 +156,5 @@ public abstract class HubBaseStation extends Station<ChromeTabbedActivity> {
                                 isDescendantOfA(HUB_PANE_SWITCHER.getViewMatcher()),
                                 withContentDescription(containsString(contentDescription))))
                 .perform(click());
-    }
-
-    private class HubLayoutNotInTransition extends UiThreadCondition {
-        private HubLayoutNotInTransition() {
-            dependOnSupplier(mActivityElement, "ChromeTabbedActivity");
-        }
-
-        @Override
-        protected ConditionStatus checkWithSuppliers() {
-            LayoutManager layoutManager = mActivityElement.get().getLayoutManager();
-            boolean startingToShow = layoutManager.isLayoutStartingToShow(LayoutType.TAB_SWITCHER);
-            boolean startingToHide = layoutManager.isLayoutStartingToHide(LayoutType.TAB_SWITCHER);
-            return whether(
-                    !startingToShow && !startingToHide,
-                    "startingToShow=%b, startingToHide=%b",
-                    startingToShow,
-                    startingToHide);
-        }
-
-        @Override
-        public String buildDescription() {
-            return "LayoutManager is not in transition to or from TAB_SWITCHER (Hub)";
-        }
     }
 }

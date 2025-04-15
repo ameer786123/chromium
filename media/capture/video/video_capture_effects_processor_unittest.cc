@@ -16,7 +16,6 @@
 #include "base/time/time.h"
 #include "components/viz/test/test_context_provider.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
-#include "gpu/command_buffer/client/test_gpu_memory_buffer_manager.h"
 #include "media/base/video_frame_metadata.h"
 #include "media/base/video_types.h"
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
@@ -26,11 +25,15 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 #include "services/video_effects/public/mojom/video_effects_processor.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+
+static_assert(BUILDFLAG(ENABLE_VIDEO_EFFECTS),
+              "enable_video_effects must be true.");
 
 namespace media {
 
@@ -114,12 +117,10 @@ class VideoCaptureEffectsProcessorTest
 
     auto& gpu_channel_host = VideoCaptureGpuChannelHost::GetInstance();
     gpu_channel_host.SetSharedImageInterface(test_sii_);
-    gpu_channel_host.SetGpuMemoryBufferManager(&test_gmb_manager_);
   }
 
   void TearDown() override {
     auto& gpu_channel_host = VideoCaptureGpuChannelHost::GetInstance();
-    gpu_channel_host.SetGpuMemoryBufferManager(nullptr);
     gpu_channel_host.SetSharedImageInterface(nullptr);
   }
 
@@ -129,7 +130,6 @@ class VideoCaptureEffectsProcessorTest
   base::test::TaskEnvironment task_environment_;
 
   scoped_refptr<gpu::TestSharedImageInterface> test_sii_;
-  gpu::TestGpuMemoryBufferManager test_gmb_manager_;
 
   std::optional<VideoEffectsProcessor> video_effects_processor_;
 
@@ -207,6 +207,48 @@ TEST_P(VideoCaptureEffectsProcessorTest, PostProcessBufferSucceeds) {
   capture_processor_->PostProcessBuffer(
       std::move(in_buffer), std::move(info),
       VideoCaptureBufferType::kGpuMemoryBuffer, std::move(out_buffer),
+      VideoCaptureFormat(coded_size, kValidFrameRate,
+                         VideoPixelFormat::PIXEL_FORMAT_NV12),
+      VideoCaptureBufferType::kGpuMemoryBuffer,
+      post_process_future.GetCallback());
+
+  EXPECT_TRUE(post_process_future.Wait());
+}
+
+TEST_P(VideoCaptureEffectsProcessorTest, PostProcessExternalBufferSucceeds) {
+  const VideoPixelFormat pixel_format = GetPixelFormat();
+  if (pixel_format != VideoPixelFormat::PIXEL_FORMAT_NV12) {
+    // The post-processor does not support formats other than NV12 for on-GPU
+    // data yet - skip this test.
+    GTEST_SKIP();
+  }
+
+  base::test::TestFuture<base::expected<PostProcessDoneInfo,
+                                        video_effects::mojom::PostProcessError>>
+      post_process_future;
+
+  const gfx::Size coded_size = kValidFrameSize;
+  std::vector<uint8_t> frame_data(coded_size.Area64() *
+                                  GetBitsPerPixel(pixel_format) / 8);
+  std::iota(frame_data.begin(), frame_data.end(), 1);
+
+  mojom::VideoFrameInfoPtr info = mojom::VideoFrameInfo::New(
+      kValidTimeDelta, media::VideoFrameMetadata{}, pixel_format, coded_size,
+      gfx::Rect(coded_size), /*is_premapped=*/false,
+      gfx::ColorSpace::CreateREC709(), media::mojom::PlaneStridesPtr{});
+
+  CapturedExternalVideoBuffer in_buffer(
+      gfx::GpuMemoryBufferHandle(),
+      VideoCaptureFormat(coded_size, kValidFrameRate, PIXEL_FORMAT_NV12),
+      gfx::ColorSpace::CreateREC709());
+
+  VideoCaptureDevice::Client::Buffer out_buffer(
+      /*buffer_id=*/1, /*frame_feedback_id=*/1,
+      std::make_unique<HandleProvider>(),
+      std::make_unique<ScopedAccessPermission>());
+
+  capture_processor_->PostProcessExternalBuffer(
+      std::move(in_buffer), std::move(info), std::move(out_buffer),
       VideoCaptureFormat(coded_size, kValidFrameRate,
                          VideoPixelFormat::PIXEL_FORMAT_NV12),
       VideoCaptureBufferType::kGpuMemoryBuffer,

@@ -4,6 +4,7 @@
 
 #include "components/component_updater/component_updater_service.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -18,8 +19,9 @@
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
+#include "base/notreached.h"
 #include "base/sequence_checker.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -171,7 +173,7 @@ void CrxUpdateService::Start() {
       config_->InitialDelay(), config_->NextCheckDelay(),
       base::BindRepeating(
           base::IgnoreResult(&CrxUpdateService::CheckForUpdates),
-          base::Unretained(this)),
+          weak_ptr_factory_.GetWeakPtr()),
       base::DoNothing());
 }
 
@@ -244,7 +246,7 @@ bool CrxUpdateService::DoUnregisterComponent(const std::string& id) {
 
   const bool result = components_.find(id)->second.installer->Uninstall();
 
-  const auto pos = base::ranges::find(components_order_, id);
+  const auto pos = std::ranges::find(components_order_, id);
   if (pos != components_order_.end()) {
     components_order_.erase(pos);
   }
@@ -258,8 +260,8 @@ bool CrxUpdateService::DoUnregisterComponent(const std::string& id) {
 std::vector<std::string> CrxUpdateService::GetComponentIDs() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::vector<std::string> ids;
-  for (const auto& it : components_) {
-    ids.push_back(it.first);
+  for (const auto& [app_id, registration] : components_) {
+    ids.push_back(app_id);
   }
   return ids;
 }
@@ -385,19 +387,19 @@ void CrxUpdateService::OnDemandUpdateInternal(const std::string& id,
                             UPDATE_TYPE_COUNT);
 
   auto crx_data_callback = base::BindOnce(&CrxUpdateService::GetCrxComponents,
-                                          base::Unretained(this));
+                                          weak_ptr_factory_.GetWeakPtr());
   auto update_complete_callback = base::BindOnce(
-      &CrxUpdateService::OnUpdateComplete, base::Unretained(this),
+      &CrxUpdateService::OnUpdateComplete, weak_ptr_factory_.GetWeakPtr(),
       std::move(callback), base::TimeTicks::Now());
-
-  if (priority == Priority::FOREGROUND) {
-    update_client_->Install(id, std::move(crx_data_callback), {},
-                            std::move(update_complete_callback));
-  } else if (priority == Priority::BACKGROUND) {
-    update_client_->Update({id}, std::move(crx_data_callback), {}, false,
-                           std::move(update_complete_callback));
-  } else {
-    NOTREACHED_IN_MIGRATION();
+  switch (priority) {
+    case Priority::FOREGROUND:
+      update_client_->Install(id, std::move(crx_data_callback), {},
+                              std::move(update_complete_callback));
+      break;
+    case Priority::BACKGROUND:
+      update_client_->Update({id}, std::move(crx_data_callback), {}, false,
+                             std::move(update_complete_callback));
+      break;
   }
 }
 
@@ -417,10 +419,10 @@ bool CrxUpdateService::CheckForUpdates(
   update_client_->Update(
       components_order_,
       base::BindOnce(&CrxUpdateService::GetCrxComponents,
-                     base::Unretained(this)),
+                     weak_ptr_factory_.GetWeakPtr()),
       {}, false,
       base::BindOnce(&CrxUpdateService::OnUpdateComplete,
-                     base::Unretained(this),
+                     weak_ptr_factory_.GetWeakPtr(),
                      base::BindOnce(
                          [](UpdateScheduler::OnFinishedCallback on_finished,
                             update_client::Error /*error*/) {

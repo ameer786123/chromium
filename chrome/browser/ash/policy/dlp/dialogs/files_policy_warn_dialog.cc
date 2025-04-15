@@ -78,8 +78,7 @@ const std::u16string GetDestinationComponent(DlpFileDestination destination) {
       return l10n_util::GetStringUTF16(
           IDS_FILE_BROWSER_DLP_COMPONENT_MICROSOFT_ONEDRIVE);
     case data_controls::Component::kUnknownComponent:
-      NOTREACHED_IN_MIGRATION();
-      return u"";
+      NOTREACHED();
   }
 }
 
@@ -332,7 +331,7 @@ void FilesPolicyWarnDialog::MaybeAddJustificationPanel() {
   justification_field_container->SetLayoutManager(
       std::make_unique<views::FillLayout>());
   justification_field_container->SetBackground(
-      views::CreateThemedRoundedRectBackground(
+      views::CreateRoundedRectBackground(
           ash::kColorAshControlBackgroundColorInactive, 8, 0));
 
   justification_field_ = justification_field_container->AddChildView(

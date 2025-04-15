@@ -7,12 +7,16 @@
 #include <utility>
 
 #include "base/containers/contains.h"
-#include "base/functional/bind.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/not_fatal_until.h"
 #include "base/task/single_thread_task_runner.h"
+#include "media/base/media_switches.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -115,8 +119,10 @@ bool MultiBuffer::GlobalLRU::Pruneable() const {
 
 void MultiBuffer::GlobalLRU::SchedulePrune() {
   if (Pruneable() && !background_pruning_pending_) {
-    task_runner_->PostDelayedTask(
-        FROM_HERE, base::BindOnce(&MultiBuffer::GlobalLRU::PruneTask, this),
+    PostDelayedCrossThreadTask(
+        *task_runner_, FROM_HERE,
+        CrossThreadBindOnce(&MultiBuffer::GlobalLRU::PruneTask,
+                            WTF::RetainedRef(this)),
         base::Seconds(kBlockPruneInterval));
     background_pruning_pending_ = true;
   }
@@ -206,8 +212,7 @@ void MultiBuffer::AddReader(const BlockId& pos, Reader* reader) {
     BlockId closest_block;
     if (i.value()) {
       // Shouldn't happen, we already tested that Contains(pos) is true.
-      NOTREACHED_IN_MIGRATION();
-      closest_block = pos;
+      NOTREACHED();
     } else if (i == present_.begin()) {
       closest_block = -1;
     } else {
@@ -347,7 +352,8 @@ std::unique_ptr<MultiBuffer::DataProvider> MultiBuffer::RemoveProvider(
 }
 
 MultiBuffer::ProviderState MultiBuffer::SuggestProviderState(
-    const BlockId& pos) const {
+    const BlockId& pos,
+    bool is_stale) const {
   MultiBufferBlockId next_reader_pos = ClosestNextEntry(readers_, pos);
   if (next_reader_pos != std::numeric_limits<MultiBufferBlockId>::max() &&
       (next_reader_pos - pos <= kMaxWaitForWriterOffset || !RangeSupported())) {
@@ -357,6 +363,13 @@ MultiBuffer::ProviderState MultiBuffer::SuggestProviderState(
     if (next_writer_pos > next_reader_pos) {
       return ProviderStateLoad;
     }
+  }
+
+  // When kMultiBufferNeverDefer is enabled, providers will submit themselves
+  // for cleanup after being deferred for too long.
+  if (base::FeatureList::IsEnabled(media::kMultiBufferNeverDefer)) {
+    return is_stale && RangeSupported() ? ProviderStateDead
+                                        : ProviderStateDefer;
   }
 
   MultiBufferBlockId previous_reader_pos =
@@ -437,7 +450,7 @@ void MultiBuffer::OnDataProviderEvent(DataProvider* provider_tmp) {
   // readers to seek or self-destruct and clean up any associated writers.
   auto i = writer_index_.find(pos);
   if (i != writer_index_.end() && i->second.get() == provider_tmp) {
-    switch (SuggestProviderState(pos)) {
+    switch (SuggestProviderState(pos, provider_tmp->IsStale())) {
       case ProviderStateLoad:
         // Not sure we actually need to do this
         provider_tmp->SetDeferred(false);
@@ -449,6 +462,12 @@ void MultiBuffer::OnDataProviderEvent(DataProvider* provider_tmp) {
         RemoveProvider(provider_tmp);
         break;
     }
+  }
+}
+
+void MultiBuffer::StopWriters() {
+  for (auto& entry : writer_index_) {
+    entry.second->Invalidate();
   }
 }
 

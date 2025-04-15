@@ -100,7 +100,7 @@ StringView HyphenationMinikin::WordToHyphenate(
       --end;
     *num_leading_chars_out = static_cast<unsigned>(begin - text.Characters8());
     CHECK_GE(end, begin);
-    return StringView(begin, static_cast<unsigned>(end - begin));
+    return StringView(base::span(begin, end));
   }
   const UChar* begin = text.Characters16();
   int index = 0;
@@ -123,7 +123,7 @@ StringView HyphenationMinikin::WordToHyphenate(
   }
   *num_leading_chars_out = index;
   CHECK_GE(len, index);
-  return StringView(begin + index, len - index);
+  return StringView(text, index, len - index);
 }
 
 Vector<uint8_t> HyphenationMinikin::Hyphenate(const StringView& text) const {
@@ -133,13 +133,10 @@ Vector<uint8_t> HyphenationMinikin::Hyphenate(const StringView& text) const {
   if (text.Is8Bit()) {
     String text16_bit = text.ToString();
     text16_bit.Ensure16Bit();
-    hyphenator_->hyphenate(
-        &result, reinterpret_cast<const uint16_t*>(text16_bit.Characters16()),
-        text16_bit.length());
+    hyphenator_->hyphenate(&result, text16_bit.SpanUint16().data(),
+                           text16_bit.length());
   } else {
-    hyphenator_->hyphenate(
-        &result, reinterpret_cast<const uint16_t*>(text.Characters16()),
-        text.length());
+    hyphenator_->hyphenate(&result, text.SpanUint16().data(), text.length());
   }
   return result;
 }

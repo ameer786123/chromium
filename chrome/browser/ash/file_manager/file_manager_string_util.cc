@@ -6,8 +6,6 @@
 
 #include <math.h>
 
-#include "ash/components/arc/arc_features.h"
-#include "ash/components/arc/arc_util.h"
 #include "ash/constants/ash_features.h"
 #include "ash/system/time/calendar_utils.h"
 #include "ash/system/time/date_helper.h"
@@ -37,6 +35,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/experiences/arc/arc_features.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
@@ -1159,6 +1159,7 @@ void AddStringsGeneric(base::Value::Dict* dict) {
   SET_STRING("ONEDRIVE_FROZEN_ACCOUNT_SUBTITLE",
              IDS_FILE_BROWSER_ONEDRIVE_FROZEN_ACCOUNT_SUBTITLE);
   SET_STRING("ONEDRIVE_OFFLINE_TITLE", IDS_FILE_BROWSER_ONEDRIVE_OFFLINE_TITLE);
+  SET_STRING("ONEDRIVE", IDS_OFFICE_CLOUD_PROVIDER_ONEDRIVE);
 }  // NOLINT(readability/fn_size): Structure of AddStringsGeneric function
    // should be easy to manage.
 
@@ -1279,6 +1280,8 @@ void AddStringsForSkyVault(base::Value::Dict* dict) {
                 l10n_util::GetStringUTF16(IDS_POLICY_SKYVAULT_MIGRATION_BANNER),
                 l10n_util::GetStringUTF16(IDS_OFFICE_CLOUD_PROVIDER_ONEDRIVE),
                 /*offset=*/nullptr));
+  dict->Set("SKYVAULT_DELETION_BANNER",
+            l10n_util::GetStringUTF16(IDS_POLICY_SKYVAULT_DELETION_BANNER));
   dict->Set("SKYVAULT_MISCONFIGURED_POLICY_MESSAGE",
             l10n_util::GetStringUTF16(
                 IDS_POLICY_SKYVAULT_MISCONFIGURED_POLICY_MESSAGE));
@@ -1370,8 +1373,6 @@ void AddFileManagerFeatureStrings(const std::string& locale,
   DCHECK(profile);
 
   dict->Set("HIDE_SPACE_INFO", ash::DemoSession::IsDeviceInDemoMode());
-  dict->Set("ARC_USB_STORAGE_UI_ENABLED",
-            base::FeatureList::IsEnabled(arc::kUsbStorageUIFeature));
   dict->Set("ARC_VM_ENABLED", arc::IsArcVmEnabled());
   dict->Set("FILES_LOCAL_IMAGE_SEARCH",
             ash::features::IsFilesLocalImageSearchEnabled());
@@ -1396,8 +1397,7 @@ void AddFileManagerFeatureStrings(const std::string& locale,
   dict->Set("MATERIALIZED_VIEWS", base::FeatureList::IsEnabled(
                                       ash::features::kFilesMaterializedViews));
 
-  if (base::FeatureList::IsEnabled(features::kDataLeakPreventionPolicy) &&
-      base::FeatureList::IsEnabled(
+  if (base::FeatureList::IsEnabled(
           features::kDataLeakPreventionFilesRestriction)) {
     policy::DlpRulesManager* rules_manager =
         policy::DlpRulesManagerFactory::GetForPrimaryProfile();

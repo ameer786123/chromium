@@ -4,10 +4,6 @@
 
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-#include <GLES3/gl3.h>
-
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/logging.h"
@@ -17,6 +13,7 @@
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/ipc/common/vulkan_ycbcr_info.h"
+#include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_version_info.h"
 
 #if BUILDFLAG(SKIA_USE_DAWN)
@@ -540,8 +537,7 @@ wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
       "SIFServiceUtils ToDawnFormat error");
   crash_reporter::ScopedCrashKeyString crash_key_scope(&crash_key,
                                                        format.ToString());
-  NOTREACHED_IN_MIGRATION() << "Unsupported format: " << format.ToString();
-  return wgpu::TextureFormat::Undefined;
+  NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 
 wgpu::TextureFormat ToDawnTextureViewFormat(viz::SharedImageFormat format,
@@ -703,23 +699,8 @@ skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
 #if BUILDFLAG(ENABLE_VULKAN)
     if (ycbcr_info) {
       // Populate the YCbCr info of the DawnTextureInfo from the Chromium info.
-      wgpu::YCbCrVkDescriptor ycbcr_desc = {};
-      ycbcr_desc.vkFormat = ycbcr_info->image_format;
-      ycbcr_desc.vkYCbCrModel = ycbcr_info->suggested_ycbcr_model;
-      ycbcr_desc.vkYCbCrRange = ycbcr_info->suggested_ycbcr_range;
-      ycbcr_desc.vkXChromaOffset = ycbcr_info->suggested_xchroma_offset;
-      ycbcr_desc.vkYChromaOffset = ycbcr_info->suggested_ychroma_offset;
-      ycbcr_desc.vkChromaFilter =
-          ycbcr_info->format_features &
-                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT
-              ? wgpu::FilterMode::Linear
-              : wgpu::FilterMode::Nearest;
-      ycbcr_desc.externalFormat = ycbcr_info->external_format;
-
-      // NOTE: Chromium does not use this feature.
-      ycbcr_desc.forceExplicitReconstruction = false;
-
-      dawn_texture_info.fYcbcrVkDescriptor = ycbcr_desc;
+      dawn_texture_info.fYcbcrVkDescriptor =
+          ToDawnYCbCrVkDescriptor(ycbcr_info.value());
     }
 #endif
 
@@ -729,6 +710,30 @@ skgpu::graphite::TextureInfo GraphitePromiseTextureInfo(
 #endif
   }
 }
+
+#if BUILDFLAG(ENABLE_VULKAN) && BUILDFLAG(SKIA_USE_DAWN)
+wgpu::YCbCrVkDescriptor ToDawnYCbCrVkDescriptor(
+    const VulkanYCbCrInfo& ycbcr_info) {
+  wgpu::YCbCrVkDescriptor ycbcr_desc = {};
+
+  ycbcr_desc.vkFormat = ycbcr_info.image_format;
+  ycbcr_desc.vkYCbCrModel = ycbcr_info.suggested_ycbcr_model;
+  ycbcr_desc.vkYCbCrRange = ycbcr_info.suggested_ycbcr_range;
+  ycbcr_desc.vkXChromaOffset = ycbcr_info.suggested_xchroma_offset;
+  ycbcr_desc.vkYChromaOffset = ycbcr_info.suggested_ychroma_offset;
+  ycbcr_desc.vkChromaFilter =
+      ycbcr_info.format_features &
+              VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT
+          ? wgpu::FilterMode::Linear
+          : wgpu::FilterMode::Nearest;
+  ycbcr_desc.externalFormat = ycbcr_info.external_format;
+
+  // NOTE: Chromium does not use this feature.
+  ycbcr_desc.forceExplicitReconstruction = false;
+
+  return ycbcr_desc;
+}
+#endif
 
 #if BUILDFLAG(SKIA_USE_DAWN)
 skgpu::graphite::DawnTextureInfo DawnBackendTextureInfo(
@@ -771,16 +776,21 @@ skgpu::graphite::TextureInfo FallbackGraphiteBackendTextureInfo(
     const skgpu::graphite::TextureInfo& texture_info) {
 #if BUILDFLAG(SKIA_USE_DAWN)
   skgpu::graphite::DawnTextureInfo info;
-  if (skgpu::graphite::TextureInfos::GetDawnTextureInfo(texture_info, &info) &&
-      info.fFormat == wgpu::TextureFormat::Undefined) {
+  if (!skgpu::graphite::TextureInfos::GetDawnTextureInfo(texture_info, &info)) {
+    return texture_info;
+  }
+  // Fallback image needs to be renderable in order to draw to it.
+  info.fUsage |= wgpu::TextureUsage::RenderAttachment;
+  if (info.fFormat == wgpu::TextureFormat::Undefined) {
     // For multiplanar textures, the fFormat of promise images is Undefined,
     // so the fViewFormat should be used to create fallback textures.
     info.fFormat = info.fViewFormat;
     info.fAspect = wgpu::TextureAspect::All;
-    return skgpu::graphite::TextureInfos::MakeDawn(info);
   }
-#endif
+  return skgpu::graphite::TextureInfos::MakeDawn(info);
+#else
   return texture_info;
+#endif
 }
 
 }  // namespace gpu

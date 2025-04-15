@@ -61,7 +61,6 @@ import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.TabFaviconFetch
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
 import org.chromium.chrome.browser.tasks.tab_management.TabListMediator.ShoppingPersistedTabDataFetcher;
 import org.chromium.chrome.browser.tasks.tab_management.TabProperties.TabActionState;
-import org.chromium.chrome.tab_ui.R;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Junit Tests for {@link TabGridViewBinder}. */
@@ -413,7 +412,10 @@ public final class TabGridViewBinderUnitTest {
     }
 
     @Test
-    @DisableFeatures(ChromeFeatureList.DATA_SHARING)
+    @DisableFeatures({
+        ChromeFeatureList.DATA_SHARING,
+        ChromeFeatureList.DATA_SHARING_JOIN_ONLY
+    })
     public void testPriceDrop_PriceCardView() {
         mModel.set(
                 TabProperties.SHOPPING_PERSISTED_TAB_DATA_FETCHER,

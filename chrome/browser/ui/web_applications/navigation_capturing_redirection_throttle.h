@@ -10,8 +10,6 @@
 #include "content/public/browser/navigation_throttle.h"
 #include "ui/base/window_open_disposition.h"
 
-class Profile;
-
 namespace web_app {
 
 // This handler is executed after a redirection chain, and attempts to 'correct'
@@ -41,10 +39,6 @@ class NavigationCapturingRedirectionThrottle
  private:
   explicit NavigationCapturingRedirectionThrottle(
       content::NavigationHandle* navigation_handle);
-
-  ThrottleCheckResult HandleRequest();
-
-  raw_ref<Profile> profile_;
 };
 
 }  // namespace web_app

@@ -106,7 +106,7 @@ void MediaRecorderEncoderWrapper::EnterErrorState(
   pending_encode_tasks_ = {};
   params_in_encode_ = {};
   CHECK(on_error_cb_);
-  std::move(on_error_cb_).Run();
+  std::move(on_error_cb_).Run(status);
 }
 
 void MediaRecorderEncoderWrapper::Reconfigure(const gfx::Size& frame_size,
@@ -164,7 +164,8 @@ void MediaRecorderEncoderWrapper::CreateAndInitialize(
                                 /*is_hardware_encoder=*/gpu_factories_);
   encoder_->Initialize(
       profile_, options_,
-      /*info_cb=*/base::DoNothing(),
+      WTF::BindRepeating(&MediaRecorderEncoderWrapper::OnVideoEncoderInfo,
+                         weak_factory_.GetWeakPtr()),
       WTF::BindRepeating(&MediaRecorderEncoderWrapper::OutputEncodeData,
                          weak_factory_.GetWeakPtr()),
       WTF::BindOnce(&MediaRecorderEncoderWrapper::InitializeDone,
@@ -272,8 +273,7 @@ void MediaRecorderEncoderWrapper::OutputEncodeData(
 
   auto buffer = media::DecoderBuffer::FromArray(std::move(output.data));
   if (encode_alpha_) {
-    buffer->WritableSideData().alpha_data.assign(output.alpha_data.begin(),
-                                                 output.alpha_data.end());
+    buffer->WritableSideData().alpha_data = std::move(output.alpha_data);
   }
   buffer->set_is_key_frame(output.key_frame);
 

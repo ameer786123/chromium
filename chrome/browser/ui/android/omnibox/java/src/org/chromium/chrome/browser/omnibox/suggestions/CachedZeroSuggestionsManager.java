@@ -17,15 +17,16 @@ import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.KEY_Z
 import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.KEY_ZERO_SUGGEST_URL_PREFIX;
 
 import android.content.SharedPreferences;
+import android.text.TextUtils;
 import android.util.Base64;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
@@ -37,6 +38,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /** CachedZeroSuggestionsManager manages caching and restoring zero suggestions. */
+@NullMarked
 public class CachedZeroSuggestionsManager {
     /** Jump-Start Omnibox: the context of the most recently visited page. */
     public static class JumpStartContext {
@@ -52,29 +54,60 @@ public class CachedZeroSuggestionsManager {
         }
     }
 
+    /** Persisted Search Engine metadata. */
+    public static class SearchEngineMetadata {
+        /** The keyword associated with the search engine. */
+        public final String keyword;
+
+        public SearchEngineMetadata(String keyword) {
+            this.keyword = keyword;
+        }
+    }
+
     @VisibleForTesting
     /* package */ static final String KEY_JUMP_START_URL = "omnibox:jump_start:url";
 
     @VisibleForTesting
     /* package */ static final String KEY_JUMP_START_PAGE_CLASS = "omnibox:jump_start:page_class";
 
+    @VisibleForTesting /* package */ static final String KEY_DSE_KEYWORD = "omnibox:dse:keyword";
+
     @VisibleForTesting
     /* package */ static final Set<String> ADDITIONAL_KEYS_TO_ERASE =
             Set.of(KEY_JUMP_START_URL, KEY_JUMP_START_PAGE_CLASS);
 
     /** Save the content of the CachedZeroSuggestionsManager to SharedPreferences cache. */
-    public static void saveToCache(int pageClass, @NonNull AutocompleteResult resultToCache) {
+    @SuppressWarnings("ApplySharedPref")
+    public static void saveToCache(int pageClass, AutocompleteResult resultToCache) {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
 
         var serializedBytes = resultToCache.serialize().toByteArray();
+
+        // Note: this code has very little time to run. Be sure data is persisted. Don't use
+        // asynchronous `apply()` method, because the asynchronously persisted details may never
+        // make it to the data file.
         prefs.edit()
                 .putString(
                         getCacheKey(pageClass),
                         Base64.encodeToString(serializedBytes, Base64.DEFAULT))
-                .apply();
+                .commit();
 
-        // This may take slightly more time once. Changes are applied asynchronously.
         eraseOldCachedData();
+    }
+
+    /** Save the details related to currently selected Search Engine. */
+    public static void saveSearchEngineMetadata(SearchEngineMetadata metadata) {
+        SharedPreferences.Editor editor = ContextUtils.getAppSharedPreferences().edit();
+        editor.putString(KEY_DSE_KEYWORD, metadata.keyword).apply();
+    }
+
+    /** Returns the details of the currently persisted Search Engine. */
+    public static @Nullable SearchEngineMetadata readSearchEngineMetadata() {
+        SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
+        var keyword = prefs.getString(KEY_DSE_KEYWORD, null);
+        if (TextUtils.isEmpty(keyword)) return null;
+
+        return new SearchEngineMetadata(keyword);
     }
 
     /**
@@ -82,7 +115,7 @@ public class CachedZeroSuggestionsManager {
      *
      * @return AutocompleteResult populated with the content of the SharedPreferences cache.
      */
-    static @NonNull AutocompleteResult readFromCache(int pageClass) {
+    static AutocompleteResult readFromCache(int pageClass) {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         String key = getCacheKey(pageClass);
 
@@ -98,12 +131,24 @@ public class CachedZeroSuggestionsManager {
             } catch (InvalidProtocolBufferException e) {
                 // Bad protobuf.
             }
-            prefs.edit().remove(key).apply();
+            eraseCachedSuggestionsByPageClass(pageClass);
         }
         return AutocompleteResult.fromCache(null, null);
     }
 
+    /**
+     * Erase previously stored AutocompleteResult for a given page class from cache.
+     *
+     * @param pageClass the PageClassification to clear cache for
+     */
+    static void eraseCachedSuggestionsByPageClass(int pageClass) {
+        SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
+        String key = getCacheKey(pageClass);
+        prefs.edit().remove(key).apply();
+    }
+
     /** Save the context of the most recently visited page. */
+    @SuppressWarnings("ApplySharedPref")
     public static void saveJumpStartContext(@Nullable JumpStartContext jsContext) {
         SharedPreferences.Editor editor = ContextUtils.getAppSharedPreferences().edit();
         if (jsContext == null || GURL.isEmptyOrInvalid(jsContext.url)) {
@@ -113,7 +158,10 @@ public class CachedZeroSuggestionsManager {
             editor.putString(KEY_JUMP_START_URL, jsContext.url.getSpec());
             editor.putInt(KEY_JUMP_START_PAGE_CLASS, jsContext.pageClass);
         }
-        editor.apply();
+        // Note: this code has very little time to run. Be sure data is persisted. Don't use
+        // asynchronous `apply()` method, because the asynchronously persisted details may never
+        // make it to the data file.
+        editor.commit();
     }
 
     /**
@@ -122,7 +170,7 @@ public class CachedZeroSuggestionsManager {
      * <p>This function always returns a valid object, even if there's no data to read, falling back
      * to the context of a NTP.
      */
-    public static @NonNull JumpStartContext readJumpStartContext() {
+    public static JumpStartContext readJumpStartContext() {
         SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
         String url = prefs.getString(KEY_JUMP_START_URL, UrlConstants.NTP_URL);
         int pageClass =
@@ -142,6 +190,7 @@ public class CachedZeroSuggestionsManager {
         for (String key : ADDITIONAL_KEYS_TO_ERASE) {
             editor.remove(key);
         }
+        // This is a best-effort cleanup which is okay if it doesn't complete before Chrome dies.
         editor.apply();
 
         eraseOldCachedData();
@@ -171,6 +220,7 @@ public class CachedZeroSuggestionsManager {
             editor.remove(KEY_ZERO_SUGGEST_POST_CONTENT_DATA_PREFIX.createKey(index));
             editor.remove(KEY_ZERO_SUGGEST_GROUP_ID_PREFIX.createKey(index));
         }
+        // This is a best-effort cleanup which is okay if it doesn't complete before Chrome dies.
         editor.apply();
     }
 

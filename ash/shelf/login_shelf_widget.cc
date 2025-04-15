@@ -4,7 +4,7 @@
 
 #include "ash/shelf/login_shelf_widget.h"
 
-#include "ash/focus_cycler.h"
+#include "ash/focus/focus_cycler.h"
 #include "ash/root_window_controller.h"
 #include "ash/shelf/login_shelf_view.h"
 #include "ash/shelf/shelf.h"
@@ -16,15 +16,14 @@
 
 namespace ash {
 
-// LoginShelfWidget::LoginShelfWidgetDelegate ----------------------------------
+// LoginShelfWidgetDelegate ----------------------------------------------------
 // The delegate of the login shelf widget.
 
-class LoginShelfWidget::LoginShelfWidgetDelegate
-    : public views::AccessiblePaneView,
-      public views::WidgetDelegate {
+class LoginShelfWidgetDelegate : public views::AccessiblePaneView,
+                                 public views::WidgetDelegate {
  public:
   explicit LoginShelfWidgetDelegate(Shelf* shelf) : shelf_(shelf) {
-    SetOwnedByWidget(true);
+    SetOwnedByWidget(OwnedByWidgetPassKey());
     set_allow_deactivate_on_esc(true);
     SetLayoutManager(std::make_unique<views::FillLayout>());
   }
@@ -88,9 +87,8 @@ LoginShelfWidget::LoginShelfWidget(Shelf* shelf, aura::Window* container)
       delegate_(new LoginShelfWidgetDelegate(shelf)),
       scoped_session_observer_(this) {
   DCHECK(container);
-  login_shelf_view_ = delegate_->AddChildView(std::make_unique<LoginShelfView>(
-      RootWindowController::ForWindow(container)
-          ->lock_screen_action_background_controller()));
+  login_shelf_view_ =
+      delegate_->AddChildView(std::make_unique<LoginShelfView>());
 
   views::Widget::InitParams params(
       views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,

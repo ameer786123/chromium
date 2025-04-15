@@ -18,7 +18,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -38,6 +39,8 @@ import java.util.concurrent.ExecutionException;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class IncognitoProfileDestroyerIntegrationTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
@@ -47,7 +50,6 @@ public class IncognitoProfileDestroyerIntegrationTest {
 
     @Before
     public void setUp() throws InterruptedException {
-        MockitoAnnotations.initMocks(this);
         mActivityTestRule.startMainActivityOnBlankPage();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -91,8 +93,11 @@ public class IncognitoProfileDestroyerIntegrationTest {
         // Close the incognito tab
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        mIncognitoTabModel.closeTabs(
-                                TabClosureParams.closeTab(onlyTab).allowUndo(false).build()));
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(onlyTab).allowUndo(false).build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was destroyed.
         assertIncognitoProfileDestroyed();
@@ -113,8 +118,13 @@ public class IncognitoProfileDestroyerIntegrationTest {
         // Close one incognito tab
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        mIncognitoTabModel.closeTabs(
-                                TabClosureParams.closeTab(firstTab).allowUndo(false).build()));
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(firstTab)
+                                                .allowUndo(false)
+                                                .build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was not destroyed
         assertIncognitoProfileStillAlive();
@@ -157,8 +167,13 @@ public class IncognitoProfileDestroyerIntegrationTest {
         // Close the incognito tab.
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        mIncognitoTabModel.closeTabs(
-                                TabClosureParams.closeTab(firstTab).allowUndo(false).build()));
+                        mIncognitoTabModel
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(firstTab)
+                                                .allowUndo(false)
+                                                .build(),
+                                        /* allowDialog= */ false));
 
         // Verify the incognito Profile was destroyed.
         assertIncognitoProfileDestroyed();

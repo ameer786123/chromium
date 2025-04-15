@@ -23,7 +23,6 @@
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/testing_profile.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
@@ -66,8 +65,8 @@ class ComponentLoaderTest : public ExtensionServiceUserTestBase {
   void SetUp() override {
     ExtensionServiceUserTestBase::InitializeEmptyExtensionService();
     ExtensionServiceUserTestBase::SetUp();
-    extension_system_ = static_cast<TestExtensionSystem*>(
-        ExtensionSystem::Get(testing_profile()));
+    extension_system_ =
+        static_cast<TestExtensionSystem*>(ExtensionSystem::Get(profile()));
 
     extension_path_ =
         GetBasePath().AppendASCII("good")
@@ -79,10 +78,19 @@ class ComponentLoaderTest : public ExtensionServiceUserTestBase {
     ASSERT_TRUE(base::ReadFileToString(
         extension_path_.Append(kManifestFilename),
         &manifest_contents_));
+
+    component_loader_ = ComponentLoader::Get(profile());
+  }
+
+  void TearDown() override {
+    component_loader_ = nullptr;
+    extension_system_ = nullptr;
+    ExtensionServiceUserTestBase::TearDown();
   }
 
  protected:
-  raw_ptr<TestExtensionSystem> extension_system_;
+  raw_ptr<TestExtensionSystem> extension_system_ = nullptr;
+  raw_ptr<ComponentLoader> component_loader_ = nullptr;
 
   // The root directory of the text extension.
   base::FilePath extension_path_;
@@ -100,9 +108,9 @@ class ComponentLoaderTest : public ExtensionServiceUserTestBase {
   // (users for ChromeOS Ash).
   void RunEmitUserHistogramsTest(int nonuser_expected_total_count,
                                  int user_expected_total_count) {
-    service_->component_loader()->set_profile_for_testing(testing_profile());
+    component_loader_->set_profile_for_testing(profile());
     base::HistogramTester histograms;
-    service_->component_loader()->LoadAll();
+    component_loader_->LoadAll();
     histograms.ExpectTotalCount("Extensions.LoadAllComponentTime", 1);
     histograms.ExpectTotalCount("Extensions.LoadAllComponentTime.NonUser",
                                 nonuser_expected_total_count);
@@ -115,43 +123,42 @@ TEST_F(ComponentLoaderTest, ParseManifest) {
   std::optional<base::Value::Dict> manifest;
 
   // Test invalid JSON.
-  manifest =
-      service_->component_loader()->ParseManifest("{ 'test': 3 } invalid");
+  manifest = component_loader_->ParseManifest("{ 'test': 3 } invalid");
   EXPECT_FALSE(manifest);
 
   // Test manifests that are valid JSON, but don't have an object literal
   // at the root. ParseManifest() should always return NULL.
 
-  manifest = service_->component_loader()->ParseManifest(std::string());
+  manifest = component_loader_->ParseManifest(std::string());
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("[{ \"foo\": 3 }]");
+  manifest = component_loader_->ParseManifest("[{ \"foo\": 3 }]");
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("\"Test\"");
+  manifest = component_loader_->ParseManifest("\"Test\"");
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("42");
+  manifest = component_loader_->ParseManifest("42");
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("true");
+  manifest = component_loader_->ParseManifest("true");
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("false");
+  manifest = component_loader_->ParseManifest("false");
   EXPECT_FALSE(manifest);
 
-  manifest = service_->component_loader()->ParseManifest("null");
+  manifest = component_loader_->ParseManifest("null");
   EXPECT_FALSE(manifest);
 
   // Test parsing valid JSON.
 
-  manifest = service_->component_loader()->ParseManifest(
+  manifest = component_loader_->ParseManifest(
       "{ \"test\": { \"one\": 1 }, \"two\": 2 }");
   ASSERT_TRUE(manifest);
   EXPECT_EQ(1, manifest->FindIntByDottedPath("test.one"));
   EXPECT_EQ(2, manifest->FindInt("two"));
 
-  manifest = service_->component_loader()->ParseManifest(manifest_contents_);
+  manifest = component_loader_->ParseManifest(manifest_contents_);
   const std::string* string_value =
       manifest->FindStringByDottedPath("background.page");
   ASSERT_TRUE(string_value);
@@ -161,9 +168,9 @@ TEST_F(ComponentLoaderTest, ParseManifest) {
 // Test that the extension isn't loaded if the extension service isn't ready.
 TEST_F(ComponentLoaderTest, AddWhenNotReady) {
   std::string extension_id =
-      service_->component_loader()->Add(manifest_contents_, extension_path_);
+      component_loader_->Add(manifest_contents_, extension_path_);
   EXPECT_NE("", extension_id);
-  ExtensionRegistry* registry = ExtensionRegistry::Get(testing_profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 }
 
@@ -171,55 +178,55 @@ TEST_F(ComponentLoaderTest, AddWhenNotReady) {
 TEST_F(ComponentLoaderTest, AddWhenReady) {
   extension_system_->SetReady();
   std::string extension_id =
-      service_->component_loader()->Add(manifest_contents_, extension_path_);
+      component_loader_->Add(manifest_contents_, extension_path_);
   EXPECT_NE("", extension_id);
-  ExtensionRegistry* registry = ExtensionRegistry::Get(testing_profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   EXPECT_EQ(1u, registry->enabled_extensions().size());
   EXPECT_TRUE(registry->enabled_extensions().GetByID(extension_id));
 }
 
 TEST_F(ComponentLoaderTest, Remove) {
-  ExtensionRegistry* registry = ExtensionRegistry::Get(testing_profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
 
   // Removing an extension that was never added should be ok.
-  service_->component_loader()->Remove(extension_path_);
+  component_loader_->Remove(extension_path_);
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 
   // Try adding and removing before LoadAll() is called.
-  service_->component_loader()->Add(manifest_contents_, extension_path_);
-  service_->component_loader()->Remove(extension_path_);
-  service_->component_loader()->LoadAll();
+  component_loader_->Add(manifest_contents_, extension_path_);
+  component_loader_->Remove(extension_path_);
+  component_loader_->LoadAll();
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 
   // Load an extension, and check that it's unloaded when Remove() is called.
   extension_system_->SetReady();
   std::string extension_id =
-      service_->component_loader()->Add(manifest_contents_, extension_path_);
+      component_loader_->Add(manifest_contents_, extension_path_);
   EXPECT_EQ(1u, registry->enabled_extensions().size());
-  service_->component_loader()->Remove(extension_path_);
+  component_loader_->Remove(extension_path_);
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 
   // And after calling LoadAll(), it shouldn't get loaded.
-  service_->component_loader()->LoadAll();
+  component_loader_->LoadAll();
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 }
 
 TEST_F(ComponentLoaderTest, LoadAll) {
-  ExtensionRegistry* registry = ExtensionRegistry::Get(testing_profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
 
   // No extensions should be loaded if none were added.
-  service_->component_loader()->LoadAll();
+  component_loader_->LoadAll();
   EXPECT_EQ(0u, registry->enabled_extensions().size());
 
   // Use LoadAll() to load the default extensions.
-  service_->component_loader()->AddDefaultComponentExtensions(false);
-  service_->component_loader()->LoadAll();
+  component_loader_->AddDefaultComponentExtensions(false);
+  component_loader_->LoadAll();
   unsigned int default_count = registry->enabled_extensions().size();
 
   // Clear the list of loaded extensions, and reload with one more.
   extension_system_->extension_service()->UnloadAllExtensionsForTest();
-  service_->component_loader()->Add(manifest_contents_, extension_path_);
-  service_->component_loader()->LoadAll();
+  component_loader_->Add(manifest_contents_, extension_path_);
+  component_loader_->LoadAll();
 
   EXPECT_EQ(default_count + 1, registry->enabled_extensions().size());
 }
@@ -240,16 +247,15 @@ TEST_F(ComponentLoaderTest, LoadAll_NonUserEmitHistograms) {
 
 // Test is flaky. https://crbug.com/1306983
 TEST_F(ComponentLoaderTest, DISABLED_AddOrReplace) {
-  ExtensionRegistry* registry = ExtensionRegistry::Get(testing_profile());
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   ExtensionUnloadedObserver unload_observer(registry);
-  EXPECT_EQ(0u, service_->component_loader()->registered_extensions_count());
+  EXPECT_EQ(0u, component_loader_->registered_extensions_count());
 
   // Allow the Feedback extension, which has a background page, to be loaded.
-  service_->component_loader()->EnableBackgroundExtensionsForTesting();
+  component_loader_->EnableBackgroundExtensionsForTesting();
 
-  service_->component_loader()->AddDefaultComponentExtensions(false);
-  size_t const default_count =
-      service_->component_loader()->registered_extensions_count();
+  component_loader_->AddDefaultComponentExtensions(false);
+  size_t const default_count = component_loader_->registered_extensions_count();
   base::FilePath known_extension = GetBasePath()
       .AppendASCII("override_component_extension");
   base::FilePath unknown_extension = extension_path_;
@@ -257,29 +263,27 @@ TEST_F(ComponentLoaderTest, DISABLED_AddOrReplace) {
       .AppendASCII("this_path_does_not_exist");
 
   // Replace a default component extension.
-  service_->component_loader()->AddOrReplace(known_extension);
-  EXPECT_EQ(default_count,
-            service_->component_loader()->registered_extensions_count());
+  component_loader_->AddOrReplace(known_extension);
+  EXPECT_EQ(default_count, component_loader_->registered_extensions_count());
 
   // Add a new component extension.
-  service_->component_loader()->AddOrReplace(unknown_extension);
+  component_loader_->AddOrReplace(unknown_extension);
   EXPECT_EQ(default_count + 1,
-            service_->component_loader()->registered_extensions_count());
+            component_loader_->registered_extensions_count());
 
   extension_system_->SetReady();
-  service_->component_loader()->LoadAll();
+  component_loader_->LoadAll();
 
   EXPECT_EQ(default_count + 1, registry->enabled_extensions().size());
   EXPECT_EQ(0u, unload_observer.unloaded_count());
 
   // replace loaded component extension.
-  service_->component_loader()->AddOrReplace(known_extension);
+  component_loader_->AddOrReplace(known_extension);
   EXPECT_EQ(default_count + 1, registry->enabled_extensions().size());
   EXPECT_EQ(1u, unload_observer.unloaded_count());
 
   // Add an invalid component extension.
-  std::string extension_id =
-      service_->component_loader()->AddOrReplace(invalid_extension);
+  std::string extension_id = component_loader_->AddOrReplace(invalid_extension);
   EXPECT_TRUE(extension_id.empty());
 }
 

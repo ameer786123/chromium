@@ -5,8 +5,10 @@
 #include "components/viz/service/display/frame_interval_matchers.h"
 
 #include <optional>
+#include <variant>
 
 #include "base/time/time.h"
+#include "perfetto/test/traced_value_test_support.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace viz {
@@ -25,16 +27,16 @@ void ExpectResult(const std::optional<Result> result_opt,
                   FrameIntervalClass frame_interval_class) {
   ASSERT_TRUE(result_opt.has_value());
   const Result& result = result_opt.value();
-  ASSERT_TRUE(absl::holds_alternative<FrameIntervalClass>(result));
-  EXPECT_EQ(frame_interval_class, absl::get<FrameIntervalClass>(result));
+  ASSERT_TRUE(std::holds_alternative<FrameIntervalClass>(result));
+  EXPECT_EQ(frame_interval_class, std::get<FrameIntervalClass>(result));
 }
 
 void ExpectResult(const std::optional<Result> result_opt,
                   base::TimeDelta interval) {
   ASSERT_TRUE(result_opt.has_value());
   const Result& result = result_opt.value();
-  ASSERT_TRUE(absl::holds_alternative<base::TimeDelta>(result));
-  EXPECT_EQ(interval, absl::get<base::TimeDelta>(result));
+  ASSERT_TRUE(std::holds_alternative<base::TimeDelta>(result));
+  EXPECT_EQ(interval, std::get<base::TimeDelta>(result));
 }
 
 void ExpectNullResult(const std::optional<Result> result_opt) {
@@ -450,6 +452,20 @@ TEST(FrameIntervalMatchersTest, VideoConferenceContinuousRange) {
         {ContentFrameIntervalType::kVideo, base::Hertz(35)});
     ExpectResult(matcher.Match(inputs), base::Hertz(40));
   }
+}
+
+// Regression test for https://crbug.com/371227621.
+TEST(FrameIntervalMatcherInputsTest, WriteIntoTrace) {
+  Settings settings;
+  Inputs inputs = BuildDefaultInputs(settings, /*num_sinks=*/1u);
+  FrameIntervalInputs& interval_inputs1 = inputs.inputs_map[FrameSinkId(0, 1)];
+  interval_inputs1.content_interval_info.push_back(
+      {ContentFrameIntervalType::kVideo, base::Milliseconds(32)});
+
+  EXPECT_EQ(perfetto::TracedValueToString(inputs),
+            "{FrameSinkId(0, 1):"
+            "{time_diff_us:0,has_input:false,only_content:false},"
+            "content_info_0:{type:video,interval_us:32000,duplicate_count:0}}");
 }
 
 }  // namespace

@@ -43,6 +43,7 @@ namespace blink {
 class Animation;
 class ContainerNode;
 class CSSStyleSheet;
+class CustomElementRegistry;
 class DOMSelection;
 class Document;
 class Element;
@@ -202,6 +203,8 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
                          const CreateElementFlags,
                          const AtomicString& is);
 
+  virtual CustomElementRegistry* customElementRegistry() const = 0;
+
  protected:
   TreeScope(ContainerNode&, Document&);
   explicit TreeScope(Document&);
@@ -215,13 +218,11 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
                                      ScriptState*,
                                      V8ObservableArrayCSSStyleSheet&,
                                      uint32_t,
-                                     Member<CSSStyleSheet>&,
-                                     ExceptionState&);
+                                     Member<CSSStyleSheet>&);
   static void OnAdoptedStyleSheetDelete(GarbageCollectedMixin*,
                                         ScriptState*,
                                         V8ObservableArrayCSSStyleSheet&,
-                                        uint32_t,
-                                        ExceptionState&);
+                                        uint32_t);
 
   Element* HitTestPointInternal(Node*, HitTestPointType) const;
   Element* FindAnchorWithName(const String& name);

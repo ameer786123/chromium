@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/background_url_loader.h"
 
+#include <variant>
+
 #include "base/check.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -28,7 +30,6 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/navigation/renderer_eviction_reason.mojom-blink.h"
 #include "third_party/blink/public/platform/resource_load_info_notifier_wrapper.h"
@@ -71,13 +72,6 @@ template <>
 struct CrossThreadCopier<std::optional<mojo_base::BigBuffer>> {
   STATIC_ONLY(CrossThreadCopier);
   using Type = std::optional<mojo_base::BigBuffer>;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-template <>
-struct CrossThreadCopier<SegmentedBuffer> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = SegmentedBuffer;
   static Type Copy(Type&& value) { return std::move(value); }
 };
 
@@ -331,11 +325,11 @@ class FakeURLLoaderClient : public URLLoaderClient {
     return std::move(will_follow_callback).Run(new_url);
   }
   void DidSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent) override {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
   void DidReceiveResponse(
       const WebURLResponse& response,
-      absl::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
+      std::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
       std::optional<mojo_base::BigBuffer> cached_metadata) override {
     DCHECK(unfreezable_task_runner_->BelongsToCurrentThread());
     DCHECK(!response_);
@@ -343,11 +337,11 @@ class FakeURLLoaderClient : public URLLoaderClient {
     CHECK(response_body_buffer_.empty());
     response_ = response;
     cached_metadata_ = std::move(cached_metadata);
-    if (absl::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body)) {
+    if (std::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body)) {
       response_body_handle_ =
-          std::move(absl::get<mojo::ScopedDataPipeConsumerHandle>(body));
+          std::move(std::get<mojo::ScopedDataPipeConsumerHandle>(body));
     } else {
-      response_body_buffer_ = std::move(absl::get<SegmentedBuffer>(body));
+      response_body_buffer_ = std::move(std::get<SegmentedBuffer>(body));
     }
   }
   void DidReceiveTransferSizeUpdate(int transfer_size_diff) override {
@@ -428,8 +422,6 @@ class FakeURLLoader : public network::mojom::URLLoader {
     set_priority_log_.push_back(PriorityInfo{
         .priority = priority, .intra_priority_value = intra_priority_value});
   }
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   bool follow_redirect_called() const { return follow_redirect_called_; }
   const std::vector<PriorityInfo>& set_priority_log() const {
@@ -755,7 +747,7 @@ TEST_F(BackgroundResourceFecherTest, CancelSoonAfterStart) {
                       mojo::PendingRemote<network::mojom::URLLoaderClient>
                           client) {
                     // CreateLoaderAndStart should not be called.
-                    CHECK(false);
+                    NOTREACHED();
                   }));
   std::unique_ptr<BackgroundURLLoader> background_url_loader =
       std::make_unique<BackgroundURLLoader>(

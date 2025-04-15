@@ -9,16 +9,11 @@
 
 #import <vector>
 
+@class PasskeyRequestDetails;
 @protocol Credential;
 
-typedef std::vector<uint8_t> SharedKey;
-typedef std::vector<SharedKey> SharedKeyList;
-
-typedef void (^CheckEnrolledCompletionBlock)(BOOL is_enrolled, NSError* error);
-typedef void (^EnrollCompletionBlock)(NSError* error);
-typedef void (^FetchKeysCompletionBlock)(const SharedKeyList& key_list);
 typedef void (^FetchSecurityDomainSecretCompletionBlock)(
-    NSData* security_domain_secret);
+    NSArray<NSData*>* security_domain_secrets);
 
 // A handler to allow children to communicate selected credentials back to the
 // parent. This is essentially a wrapper for
@@ -31,9 +26,7 @@ typedef void (^FetchSecurityDomainSecretCompletionBlock)(
     API_AVAILABLE(ios(17.0));
 
 - (void)userSelectedPasskey:(id<Credential>)passkey
-             clientDataHash:(NSData*)clientDataHash
-         allowedCredentials:(NSArray<NSData*>*)allowedCredentials
-                 allowRetry:(BOOL)allowRetry;
+      passkeyRequestDetails:(PasskeyRequestDetails*)passkeyRequestDetails;
 
 - (void)userCancelledRequestWithErrorCode:(ASExtensionErrorCode)errorCode;
 

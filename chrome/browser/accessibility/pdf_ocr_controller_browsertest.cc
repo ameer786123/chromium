@@ -26,7 +26,7 @@
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/accessibility_switches.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
 #include "chrome/browser/ash/accessibility/speech_monitor.h"
 #else
@@ -34,7 +34,7 @@
 
 #include "chrome/browser/browser_process.h"
 #include "content/public/test/scoped_accessibility_mode_override.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -101,7 +101,7 @@ class PdfOcrControllerBrowserTest : public base::test::WithFeatureOverride,
   }
 
   void EnableScreenReader(bool enabled) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // Enable Chromevox.
     ash::AccessibilityManager::Get()->EnableSpokenFeedback(enabled);
     if (enabled) {
@@ -115,16 +115,18 @@ class PdfOcrControllerBrowserTest : public base::test::WithFeatureOverride,
       scoped_accessibility_override_.reset();
     } else if (!scoped_accessibility_override_) {
       scoped_accessibility_override_.emplace(ui::AXMode::kWebContents |
-                                             ui::AXMode::kScreenReader);
+                                             ui::AXMode::kExtendedProperties);
     }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+    content::BrowserAccessibilityState::GetInstance()->SetScreenReaderAppActive(
+        enabled);
+#endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void EnableSelectToSpeak(bool enabled) {
     ash::AccessibilityManager::Get()->SetSelectToSpeakEnabled(enabled);
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   bool UseOopif() const override { return GetParam(); }
 
@@ -138,7 +140,7 @@ class PdfOcrControllerBrowserTest : public base::test::WithFeatureOverride,
   }
 
  private:
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void DisableEarcons() {
     // Playing earcons from within a test is not only annoying if you're
     // running the test locally, but seems to cause crashes
@@ -260,8 +262,6 @@ IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, WithoutScreenReader) {
   EXPECT_FALSE(ax_mode.has_mode(ui::AXMode::kPDFOcr));
 }
 
-// Lacros does not download the library.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 // Retry download if it fails.
 IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, DownloadRetry) {
   // Forced accessibility affects counting.
@@ -283,9 +283,8 @@ IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, DownloadRetry) {
 
   observer.WaitForDownloads();
 }
-#endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, WithoutSelectToSpeak) {
   EnableSelectToSpeak(false);
 
@@ -301,6 +300,12 @@ IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, WithoutSelectToSpeak) {
 }
 
 IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, WithSelectToSpeak) {
+  // When PDF Searchify is enabled, PDF OCR controller will not trigger OCR in
+  // renderer.
+  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfSearchify)) {
+    GTEST_SKIP();
+  }
+
   EnableSelectToSpeak(true);
 
   screen_ai::PdfOcrControllerFactory::GetForProfile(browser()->profile())
@@ -313,7 +318,7 @@ IN_PROC_BROWSER_TEST_P(PdfOcrControllerBrowserTest, WithSelectToSpeak) {
   ui::AXMode ax_mode = pdf_contents->GetAccessibilityMode();
   EXPECT_TRUE(ax_mode.has_mode(ui::AXMode::kPDFOcr));
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // TODO(crbug.com/40268279): Stop testing both modes after OOPIF PDF viewer
 // launches.

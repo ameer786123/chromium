@@ -11,7 +11,7 @@ export function getHtml(this: ManagedUserProfileNoticeValuePropElement) {
 <main class="tangible-sync-style">
   <img id="product-logo" alt="Chrome logo" role="presentation"
       src="chrome://theme/current-channel-logo@2x">
-  <h1 class="title">${this.title}</h1>
+  <h1 class="title" tabindex="-1">${this.title}</h1>
   <p class="subtitle">${this.subtitle}</p>
   <div class="pill">
       <img id="avatar" class="avatar" alt="" src="${this.pictureUrl}">
@@ -19,7 +19,10 @@ export function getHtml(this: ManagedUserProfileNoticeValuePropElement) {
         <p class="account-name">${this.accountName}</p>
         <p class="email">${this.email}</p>
       </div>
-      <cr-icon class="icon" icon="cr:domain"></cr-icon>
+      ${
+      this.showEnterpriseBadge ?
+          html`<cr-icon class="icon" icon="cr:domain"></cr-icon>` :
+          ''}
   </div>
 </main>
 <!--_html_template_end_-->`;

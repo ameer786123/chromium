@@ -98,7 +98,8 @@ static void WriteLayers(StringBuilder&,
 
 static void PrintBorderStyle(StringBuilder& ts,
                              const EBorderStyle border_style) {
-  ts << getValueName(PlatformEnumToCSSValueID(border_style)) << " ";
+  ts << GetCSSValueNameAs<StringView>(PlatformEnumToCSSValueID(border_style))
+     << " ";
 }
 
 static String GetTagName(Node* n) {
@@ -473,8 +474,7 @@ static void Write(StringBuilder& ts,
 
   WriteIndent(ts, indent);
 
-  if (layer.GetLayoutObject().StyleRef().UsedVisibility() ==
-      EVisibility::kHidden) {
+  if (layer.GetLayoutObject().StyleRef().Visibility() == EVisibility::kHidden) {
     ts << "hidden ";
   }
 
@@ -753,15 +753,20 @@ String CounterValueForElement(Element* element) {
   if (LayoutObject* marker =
           element->PseudoElementLayoutObject(kPseudoIdMarker))
     WriteCounterValuesFromChildren(stream, marker, is_first_counter);
-  if (LayoutObject* before =
-          element->PseudoElementLayoutObject(kPseudoIdBefore))
-    WriteCounterValuesFromChildren(stream, before, is_first_counter);
   if (LayoutObject* check =
-          element->PseudoElementLayoutObject(kPseudoIdCheck)) {
+          element->PseudoElementLayoutObject(kPseudoIdCheckMark)) {
     WriteCounterValuesFromChildren(stream, check, is_first_counter);
+  }
+  if (LayoutObject* before =
+          element->PseudoElementLayoutObject(kPseudoIdBefore)) {
+    WriteCounterValuesFromChildren(stream, before, is_first_counter);
   }
   if (LayoutObject* after = element->PseudoElementLayoutObject(kPseudoIdAfter))
     WriteCounterValuesFromChildren(stream, after, is_first_counter);
+  if (LayoutObject* picker_icon =
+          element->PseudoElementLayoutObject(kPseudoIdPickerIcon)) {
+    WriteCounterValuesFromChildren(stream, picker_icon, is_first_counter);
+  }
   return stream.ReleaseString();
 }
 

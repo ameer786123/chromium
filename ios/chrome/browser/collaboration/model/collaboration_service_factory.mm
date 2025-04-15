@@ -8,9 +8,8 @@
 
 #import "components/collaboration/internal/collaboration_service_impl.h"
 #import "components/collaboration/internal/empty_collaboration_service.h"
-#import "components/keyed_service/ios/browser_state_dependency_manager.h"
+#import "components/data_sharing/public/features.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
-#import "ios/chrome/browser/data_sharing/model/features.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
@@ -45,13 +44,10 @@ CollaborationServiceFactory::~CollaborationServiceFactory() = default;
 std::unique_ptr<KeyedService>
 CollaborationServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  if (!context) {
-    return nullptr;
-  }
+  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
 
-  ProfileIOS* profile = static_cast<ProfileIOS*>(context);
-
-  if (profile->IsOffTheRecord() || !IsSharedTabGroupsJoinEnabled(profile)) {
+  if (!data_sharing::features::IsDataSharingFunctionalityEnabled() ||
+      profile->IsOffTheRecord()) {
     return std::make_unique<EmptyCollaborationService>();
   }
 
@@ -61,10 +57,18 @@ CollaborationServiceFactory::BuildServiceInstanceFor(
       data_sharing::DataSharingServiceFactory::GetForProfile(profile);
   auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
   auto* sync_service = SyncServiceFactory::GetForProfile(profile);
+  auto* profile_prefs = profile->GetPrefs();
+
+  // Sync service might be null in testing environment or explicitly disabled
+  // in command line. In the case sync service does not exist,
+  // CollaborationService is not usable.
+  if (!sync_service) {
+    return std::make_unique<EmptyCollaborationService>();
+  }
 
   return std::make_unique<CollaborationServiceImpl>(
       tab_group_sync_service, data_sharing_service, identity_manager,
-      sync_service);
+      sync_service, profile_prefs);
 }
 
 }  // namespace collaboration

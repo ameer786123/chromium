@@ -28,6 +28,7 @@ import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab_ui.TabModelDotInfo;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.chrome.browser.toolbar.TabSwitcherDrawable;
@@ -63,6 +64,7 @@ public class ToggleTabStackButtonCoordinator {
     private @Nullable Runnable mArchivedTabsIphShownCallback;
     private @Nullable Runnable mArchivedTabsIphDismissedCallback;
     private @Nullable Callback<Integer> mArchivedTabCountObserver = this::maybeShowDeclutterIph;
+    private boolean mAlreadyRequestedDeclutterIph;
 
     /**
      * @param context The Android context used for various view operations.
@@ -114,18 +116,26 @@ public class ToggleTabStackButtonCoordinator {
      * @param tabCountSupplier Supplier for current tab count to show in view.
      * @param archivedTabCountSupplier Supplies the current archived tab count, used for displaying
      *     the associated IPH.
+     * @param tabModelNotificationDotSupplier Supplies whether to show the notification dot on the
+     *     tab switcher button.
      * @param archivedTabsIphShownCallback Callback for when the archived tabs iph is shown.
+     * @param archivedTabsIphDismissedCallback Callback for when the archived tabs iph is dismissed.
      */
     public void initializeWithNative(
             OnClickListener onClickListener,
             OnLongClickListener onLongClickListener,
             ObservableSupplier<Integer> tabCountSupplier,
             @Nullable ObservableSupplier<Integer> archivedTabCountSupplier,
+            ObservableSupplier<TabModelDotInfo> tabModelNotificationDotSupplier,
             @NonNull Runnable archivedTabsIphShownCallback,
             @NonNull Runnable archivedTabsIphDismissedCallback) {
         mToggleTabStackButton.setOnClickListener(onClickListener);
         mToggleTabStackButton.setOnLongClickListener(onLongClickListener);
-        mToggleTabStackButton.setTabCountSupplier(tabCountSupplier, mIsIncognitoSupplier);
+        mToggleTabStackButton.setSuppliers(
+                tabCountSupplier,
+                tabModelNotificationDotSupplier,
+                mIsIncognitoSupplier,
+                mUserEducationHelper);
 
         mArchivedTabCountSupplier = archivedTabCountSupplier;
         if (mArchivedTabCountSupplier != null) {
@@ -263,7 +273,10 @@ public class ToggleTabStackButtonCoordinator {
                                 R.string.iph_tab_switcher_switch_into_incognito_text,
                                 R.string.iph_tab_switcher_switch_into_incognito_accessibility_text);
             }
-        } else if (!mIsIncognitoSupplier.get()
+        }
+
+        if (builder == null
+                && !mIsIncognitoSupplier.get()
                 && mPromoShownOneshotSupplier.hasValue()
                 && !mPromoShownOneshotSupplier.get()) {
             builder =
@@ -309,8 +322,9 @@ public class ToggleTabStackButtonCoordinator {
     private void maybeShowDeclutterIph(int tabCount) {
         if (!ChromeFeatureList.sAndroidTabDeclutter.isEnabled()) return;
         if (mIsIncognitoSupplier.get()) return;
+        if (mAlreadyRequestedDeclutterIph) return;
         if (tabCount == 0) return;
-
+        mAlreadyRequestedDeclutterIph = true;
         HighlightParams params = new HighlightParams(HighlightShape.CIRCLE);
         params.setBoundsRespectPadding(true);
         mUserEducationHelper.requestShowIph(

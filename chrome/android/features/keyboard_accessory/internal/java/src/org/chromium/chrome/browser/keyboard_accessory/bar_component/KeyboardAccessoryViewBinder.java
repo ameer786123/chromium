@@ -126,9 +126,14 @@ class KeyboardAccessoryViewBinder {
             TraceEvent.begin("BarItemChipViewHolder#bind");
             int iconId = item.getSuggestion().getIconId();
             boolean isIphShown = false;
+            // TODO (crbug.com/408984579): Reduce or move the nested IPH logic from here.
             if (item.getFeatureForIph() != null) {
                 if (item.getFeatureForIph()
-                        .equals(FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_OFFER_FEATURE)) {
+                                .equals(FeatureConstants.KEYBOARD_ACCESSORY_PAYMENT_OFFER_FEATURE)
+                        || item.getFeatureForIph()
+                                .equals(
+                                        FeatureConstants
+                                                .KEYBOARD_ACCESSORY_HOME_WORK_PROFILE_SUGGESTION_FEATURE)) {
                     if (iconId != 0) {
                         isIphShown =
                                 showHelpBubble(
@@ -137,7 +142,7 @@ class KeyboardAccessoryViewBinder {
                                         chipView.getStartIconViewRect(),
                                         chipView.getContext(),
                                         mRootViewForIPH,
-                                        item.getSuggestion().getItemTag());
+                                        null);
                     } else {
                         isIphShown =
                                 showHelpBubble(
@@ -145,12 +150,12 @@ class KeyboardAccessoryViewBinder {
                                         item.getFeatureForIph(),
                                         chipView,
                                         mRootViewForIPH,
-                                        item.getSuggestion().getItemTag());
+                                        null);
                     }
                 } else if (item.getFeatureForIph()
                         .equals(
                                 FeatureConstants
-                                        .KEYBOARD_ACCESSORY_PLUS_ADDRESS_CREATE_SUGGESTION)) {
+                                        .KEYBOARD_ACCESSORY_PAYMENT_CARD_INFO_RETRIEVAL_FEATURE)) {
                     isIphShown =
                             showHelpBubble(
                                     mKeyboardAccessory.getFeatureEngagementTracker(),
@@ -178,11 +183,7 @@ class KeyboardAccessoryViewBinder {
             // the following chip. This might give a more consistent user experience and allow wider
             // windows to show more information in a chip before truncating.
             if (containsIbanInfo(item.getSuggestion())
-                    || (ChromeFeatureList.isEnabled(
-                                    ChromeFeatureList.AUTOFILL_ENABLE_VIRTUAL_CARD_METADATA)
-                            && ChromeFeatureList.isEnabled(
-                                    ChromeFeatureList.AUTOFILL_ENABLE_CARD_PRODUCT_NAME)
-                            && containsCreditCardInfo(item.getSuggestion()))) {
+                    || containsCreditCardInfo(item.getSuggestion())) {
                 int windowWidth =
                         chipView.getContext().getResources().getDisplayMetrics().widthPixels;
                 chipView.setMaxWidth((int) (windowWidth * 0.85));
@@ -197,17 +198,7 @@ class KeyboardAccessoryViewBinder {
             chipView.getPrimaryTextView().setEllipsize(null);
 
             chipView.getPrimaryTextView().setText(item.getSuggestion().getLabel());
-            if (item.getSuggestion().getItemTag() != null
-                    && !item.getSuggestion().getItemTag().isEmpty()) {
-                chipView.getPrimaryTextView()
-                        .setContentDescription(
-                                item.getSuggestion().getLabel()
-                                        + " "
-                                        + item.getSuggestion().getItemTag());
-            } else {
-                chipView.getPrimaryTextView()
-                        .setContentDescription(item.getSuggestion().getLabel());
-            }
+            chipView.getPrimaryTextView().setContentDescription(item.getSuggestion().getLabel());
             chipView.getSecondaryTextView().setText(item.getSuggestion().getSublabel());
             chipView.getSecondaryTextView()
                     .setVisibility(

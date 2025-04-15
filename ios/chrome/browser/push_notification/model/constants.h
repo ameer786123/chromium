@@ -6,7 +6,116 @@
 #define IOS_CHROME_BROWSER_PUSH_NOTIFICATION_MODEL_CONSTANTS_H_
 
 #import <Foundation/Foundation.h>
+
 #import <string>
+
+enum class PushNotificationClientId;
+
+// Enum specifying the various types of push notifications. Entries should not
+// be renumbered and numeric values should never be reused.
+// LINT.IfChange(NotificationType)
+enum class NotificationType {
+  kTipsDefaultBrowser = 0,
+  kTipsWhatsNew = 1,
+  kTipsSignin = 2,
+  kTipsSetUpListContinuation = 3,
+  kTipsDocking = 4,
+  kTipsOmniboxPosition = 5,
+  kTipsLens = 6,
+  kTipsEnhancedSafeBrowsing = 7,
+  kSafetyCheckUpdateChrome = 8,
+  kSafetyCheckPasswords = 9,
+  kSafetyCheckSafeBrowsing = 10,
+  kMaxValue = kSafetyCheckSafeBrowsing,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
+
+// Enum for the metric logging the source of the native Notification enable
+// alert. Entries should not be renumbered and numeric values should never be
+// reused.
+// LINT.IfChange(NotificationOptInAccessPoint)
+enum class NotificationOptInAccessPoint {
+  kTips = 1,
+  kSetUpList = 2,
+  kSendTabMagicStackPromo = 3,
+  kSafetyCheck = 4,
+  kFeed = 5,
+  kSettings = 6,
+  kMaxValue = kSettings,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(PushNotificationClientManagerFailurePoint)
+enum class PushNotificationClientManagerFailurePoint {
+  // Failed to get Profile-based `PushNotificationClientManager` when handling
+  // foreground presentation.
+  kWillPresentNotification = 0,
+  // Failed to get Profile-based `PushNotificationClientManager` during APNS
+  // registration.
+  kDidRegisterWithAPNS = 1,
+  // Failed to get Profile-based `PushNotificationClientManager` when the app
+  // entered foreground.
+  kAppDidEnterForeground = 2,
+  // Failed to get Profile-based `PushNotificationClientManager` when handling a
+  // user interaction response.
+  kHandleNotificationResponse = 3,
+  // Failed to get Profile-based `PushNotificationClientManager` when processing
+  // an incoming remote notification
+  // in the background.
+  kWillProcessIncomingRemoteNotification = 4,
+  // Failed inside GetClientManagerForProfile because the input ProfileIOS* was
+  // nullptr.
+  kGetClientManagerNullProfileInput = 5,
+  // Failed inside GetClientManagerForProfile because the
+  // PushNotificationProfileService couldn't be retrieved.
+  kGetClientManagerMissingProfileService = 6,
+  // Failed inside GetClientManagerForUserInfo because the Profile name key was
+  // missing from user info dictionary.
+  kGetClientManagerMissingProfileNameInUserInfo = 7,
+  // Failed inside GetClientManagerForUserInfo because the Profile couldn't be
+  // found using the name from user info.
+  kGetClientManagerProfileNotFoundByName = 8,
+  kMaxValue = kGetClientManagerProfileNotFoundByName,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml:PushNotificationClientManagerFailurePoint)
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// Used in the histogram
+// IOS.PushNotification.ProfileRequestCreationFailureReason.{ClientId}.
+//
+// LINT.IfChange(ProfileNotificationRequestCreationFailureReason)
+enum class ProfileNotificationRequestCreationFailureReason {
+  // Failed inside CreateRequestForProfile() because the input Profile name was
+  // empty. Considered an invalid input state.
+  kInvalidProfileName = 0,
+  // Failed inside CreateRequestForProfile() because the request.time_interval
+  // (base::TimeDelta) in the input ScheduledNotificationRequest was not
+  // positive (i.e., it was zero or negative). This is an invalid state for
+  // UNTimeIntervalNotificationTrigger.
+  kInvalidTimeInterval = 1,
+  // Failed inside CreateRequestForProfile() because the request.identifier (an
+  // NSString*) in the input ScheduledNotificationRequest was
+  // nil or an empty string. Both are considered invalid states.
+  kInvalidIdentifier = 2,
+  // Failed inside CreateRequestForProfile() because the request.content (a
+  // UNNotificationContent*) in the input ScheduledNotificationRequest was nil.
+  // Considered an invalid input state.
+  kInvalidSourceContent = 3,
+  // Failed inside CreateRequestForProfile() because calling [mutableCopy] on
+  // the (non-nil) request.content returned nil. This typically indicates a
+  // failure during memory allocation.
+  kContentCopyFailed = 4,
+  // Failed inside CreateRequestForProfile() because creating the
+  // UNTimeIntervalNotificationTrigger by calling
+  // `triggerWithTimeInterval` returned nil.
+  kTriggerCreationFailed = 5,
+  kMaxValue = kTriggerCreationFailed,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml:ProfileNotificationRequestCreationFailureReason)
 
 // Enum for the NAU implementation for Content notifications. Change
 // NotificationActionType enum when this one changes.
@@ -68,6 +177,10 @@ extern const char kSendTabNotificationKey[];
 // `kFeaturePushNotificationPermissions`.
 extern const char kSafetyCheckNotificationKey[];
 
+// Key of Reminder notification used in pref
+// `kFeaturePushNotificationPermissions`.
+extern const char kReminderNotificationKey[];
+
 // Action identifier for the Content Notifications Feedback action.
 extern NSString* const kContentNotificationFeedbackActionIdentifier;
 
@@ -95,5 +208,18 @@ extern const int kDeliveredNAUMaxSendsPerSession;
 // Key for the Push Notification Client Id type in notification payload. Used
 // for Send Tab notifications.
 extern NSString* const kPushNotificationClientIdKey;
+
+// Key used in UNNotificationContent.userInfo to store the Profile name that
+// originated the local notification. Used for mapping local notifications to
+// the correct Profile on the device.
+extern NSString* const kOriginatingProfileNameKey;
+
+// Returns the string representation of the given `client_id`. This string is
+// used to store the client's push notification permission settings in the pref
+// service, as a preference key on the push notification server, and for
+// suffixing client-specific UMA histogram names (e.g.,
+// `IOS.PushNotification.ProfileRequestCreationFailureReason.{ClientId}`).
+std::string PushNotificationClientIdToString(
+    PushNotificationClientId client_id);
 
 #endif  // IOS_CHROME_BROWSER_PUSH_NOTIFICATION_MODEL_CONSTANTS_H_

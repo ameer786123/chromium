@@ -10,15 +10,27 @@
 #import "base/memory/raw_ptr.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
+#import "components/feature_engagement/public/tracker.h"
 #import "components/feed/core/v2/public/common_enums.h"
-#import "components/search_engines/search_engines_switches.h"
+#import "components/regional_capabilities/regional_capabilities_switches.h"
 #import "components/search_engines/template_url.h"
 #import "components/search_engines/template_url_data.h"
 #import "components/search_engines/template_url_service.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/sync/test/test_sync_service.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_most_visited_item.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_mediator.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/user_account_image_update_delegate.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
+#import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
+#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
+#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
+#import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
+#import "ios/chrome/browser/ntp/ui_bundled/logo_vendor.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_consumer.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_consumer.h"
+#import "ios/chrome/browser/regional_capabilities/model/regional_capabilities_service_factory.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -29,16 +41,7 @@
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
-#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_most_visited_item.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_mediator.h"
-#import "ios/chrome/browser/ui/content_suggestions/user_account_image_update_delegate.h"
-#import "ios/chrome/browser/ntp/ui_bundled/feed_control_delegate.h"
-#import "ios/chrome/browser/ntp/ui_bundled/logo_vendor.h"
-#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_constants.h"
-#import "ios/chrome/browser/ntp/shared/metrics/feed_metrics_recorder.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_consumer.h"
-#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_header_consumer.h"
-#import "ios/chrome/browser/ui/toolbar/test/toolbar_test_navigation_manager.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/test/toolbar_test_navigation_manager.h"
 #import "ios/chrome/browser/url_loading/model/fake_url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
@@ -62,16 +65,15 @@ using feed::FeedUserActionType;
 class NewTabPageMediatorTest : public PlatformTest {
  public:
   NewTabPageMediatorTest() {
-    TestProfileIOS::Builder test_cbs_builder;
-    test_cbs_builder.AddTestingFactory(
+    TestProfileIOS::Builder test_profile_builder;
+    test_profile_builder.AddTestingFactory(
         ios::TemplateURLServiceFactory::GetInstance(),
         ios::TemplateURLServiceFactory::GetDefaultFactory());
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
-        AuthenticationServiceFactory::GetDefaultFactory());
-    profile_ = std::move(test_cbs_builder).Build();
-    AuthenticationServiceFactory::CreateAndInitializeForProfile(
-        profile_.get(), std::make_unique<FakeAuthenticationServiceDelegate>());
+        AuthenticationServiceFactory::GetFactoryWithDelegate(
+            std::make_unique<FakeAuthenticationServiceDelegate>()));
+    profile_ = std::move(test_profile_builder).Build();
     browser_ = std::make_unique<TestBrowser>(profile_.get());
 
     std::unique_ptr<ToolbarTestNavigationManager> navigation_manager =
@@ -85,9 +87,7 @@ class NewTabPageMediatorTest : public PlatformTest {
     url_loader_ = FakeUrlLoadingBrowserAgent::FromUrlLoadingBrowserAgent(
         UrlLoadingBrowserAgent::FromBrowser(browser_.get()));
 
-    auth_service_ = static_cast<AuthenticationService*>(
-        AuthenticationServiceFactory::GetInstance()->GetForProfile(
-            profile_.get()));
+    auth_service_ = AuthenticationServiceFactory::GetForProfile(profile_.get());
     identity_manager_ = IdentityManagerFactory::GetForProfile(profile_.get());
     ChromeAccountManagerService* account_manager_service =
         ChromeAccountManagerServiceFactory::GetForProfile(profile_.get());
@@ -97,22 +97,27 @@ class NewTabPageMediatorTest : public PlatformTest {
         DiscoverFeedServiceFactory::GetForProfile(profile_.get());
     PrefService* prefs = profile_->GetPrefs();
     mediator_ = [[NewTabPageMediator alloc]
-        initWithTemplateURLService:ios::TemplateURLServiceFactory::
-                                       GetForProfile(profile_.get())
-                         URLLoader:url_loader_
-                       authService:auth_service_
-                   identityManager:identity_manager_
-             accountManagerService:account_manager_service
-          identityDiscImageUpdater:image_updater_
-                       isIncognito:is_incognito
-               discoverFeedService:discover_feed_service
-                       prefService:prefs
-                       syncService:&test_sync_service_
-                        isSafeMode:NO];
+         initWithTemplateURLService:ios::TemplateURLServiceFactory::
+                                        GetForProfile(profile_.get())
+                          URLLoader:url_loader_
+                        authService:auth_service_
+                    identityManager:identity_manager_
+              accountManagerService:account_manager_service
+           identityDiscImageUpdater:image_updater_
+                        isIncognito:is_incognito
+                discoverFeedService:discover_feed_service
+                        prefService:prefs
+                        syncService:&test_sync_service_
+        regionalCapabilitiesService:ios::RegionalCapabilitiesServiceFactory::
+                                        GetForProfile(profile_.get())
+                         isSafeMode:NO];
     header_consumer_ = OCMProtocolMock(@protocol(NewTabPageHeaderConsumer));
     mediator_.headerConsumer = header_consumer_;
+    feature_engagement::Tracker* tracker =
+        feature_engagement::TrackerFactory::GetForProfile(profile_.get());
     feed_metrics_recorder_ =
-        [[FeedMetricsRecorder alloc] initWithPrefService:prefs];
+        [[FeedMetricsRecorder alloc] initWithPrefService:prefs
+                                featureEngagementTracker:tracker];
     mediator_.feedMetricsRecorder = feed_metrics_recorder_;
     histogram_tester_ = std::make_unique<base::HistogramTester>();
   }
@@ -190,47 +195,6 @@ TEST_F(NewTabPageMediatorTest, TestConsumerSetup) {
 
   // Tests.
   EXPECT_OCMOCK_VERIFY(header_consumer_);
-}
-
-// Tests that the FeedManagementNavigationDelegate methods load URLs and
-// record metrics.
-TEST_F(NewTabPageMediatorTest, TestFeedManagementNavigationDelegate) {
-  [mediator_ handleNavigateToActivity];
-  EXPECT_URL_LOAD("https://myactivity.google.com/myactivity");
-  histogram_tester_->ExpectUniqueSample(
-      kDiscoverFeedUserActionHistogram,
-      FeedUserActionType::kTappedManageActivity, 1);
-
-  histogram_tester_.reset(new base::HistogramTester());
-  [mediator_ handleNavigateToFollowing];
-  EXPECT_URL_LOAD("https://google.com/preferences/interests");
-  histogram_tester_->ExpectUniqueSample(
-      kDiscoverFeedUserActionHistogram,
-      FeedUserActionType::kTappedManageFollowing, 1);
-
-  histogram_tester_.reset(new base::HistogramTester());
-  [mediator_ handleNavigateToHidden];
-  EXPECT_URL_LOAD("https://google.com/preferences/interests/hidden");
-  histogram_tester_->ExpectUniqueSample(kDiscoverFeedUserActionHistogram,
-                                        FeedUserActionType::kTappedManageHidden,
-                                        1);
-
-  histogram_tester_.reset(new base::HistogramTester());
-  GURL followed_url("https://example.org");
-  [mediator_ handleNavigateToFollowedURL:followed_url];
-  EXPECT_URL_LOAD(followed_url.spec().c_str());
-  // TODO(crbug.com/40227407): Add metrics.
-}
-
-// Tests that the handleFeedLearnMoreTapped loads the correct URL and records
-// metrics.
-TEST_F(NewTabPageMediatorTest, TestHandleFeedLearnMoreTapped) {
-  [mediator_ handleFeedLearnMoreTapped];
-  EXPECT_URL_LOAD("https://support.google.com/chrome/"
-                  "?p=new_tab&co=GENIE.Platform%3DiOS&oco=1");
-  histogram_tester_->ExpectUniqueSample(kDiscoverFeedUserActionHistogram,
-                                        FeedUserActionType::kTappedLearnMore,
-                                        1);
 }
 
 // Tests that the feed will be hidden when a non-Google search engine is chosen,

@@ -19,12 +19,12 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ChromeApplicationImpl;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.browser.site_settings.SiteSettingsTestUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.components.browser_ui.settings.ChromeImageViewPreference;
 import org.chromium.components.browser_ui.settings.ExpandablePreferenceGroup;
 import org.chromium.components.browser_ui.site_settings.SingleCategorySettings;
@@ -43,17 +43,16 @@ import org.chromium.components.embedder_support.util.Origin;
 })
 public class TrustedWebActivityPreferencesUiTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private String mPackage;
-    private InstalledWebappPermissionManager mPermissionMananger;
 
     @Before
     public void setUp() throws Exception {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
 
         mPackage = ApplicationProvider.getApplicationContext().getPackageName();
-        mPermissionMananger = ChromeApplicationImpl.getComponent().resolvePermissionManager();
     }
 
     /**
@@ -70,7 +69,7 @@ public class TrustedWebActivityPreferencesUiTest {
 
         runOnUiThreadBlocking(
                 () ->
-                        mPermissionMananger.updatePermission(
+                        InstalledWebappPermissionManager.updatePermission(
                                 origin,
                                 mPackage,
                                 ContentSettingsType.NOTIFICATIONS,
@@ -114,7 +113,7 @@ public class TrustedWebActivityPreferencesUiTest {
                     Assert.assertEquals("example.com", title.toString());
                 });
 
-        runOnUiThreadBlocking(() -> mPermissionMananger.unregister(origin));
+        runOnUiThreadBlocking(() -> InstalledWebappPermissionManager.unregister(origin));
 
         settingsActivity.finish();
     }
@@ -132,7 +131,7 @@ public class TrustedWebActivityPreferencesUiTest {
 
         runOnUiThreadBlocking(
                 () ->
-                        mPermissionMananger.updatePermission(
+                        InstalledWebappPermissionManager.updatePermission(
                                 origin,
                                 mPackage,
                                 ContentSettingsType.NOTIFICATIONS,
@@ -154,7 +153,7 @@ public class TrustedWebActivityPreferencesUiTest {
                     Assert.assertTrue(summary.toString().startsWith("Managed by "));
                 });
 
-        runOnUiThreadBlocking(() -> mPermissionMananger.unregister(origin));
+        runOnUiThreadBlocking(() -> InstalledWebappPermissionManager.unregister(origin));
 
         settingsActivity.finish();
     }

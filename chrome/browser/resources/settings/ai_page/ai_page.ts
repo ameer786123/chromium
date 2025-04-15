@@ -2,21 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
-import '../controls/settings_toggle_button.js';
 import '../settings_page/settings_animated_pages.js';
 import '../settings_page/settings_subpage.js';
-import './ai_tab_organization_subpage.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import {BaseMixin} from '../base_mixin.js';
+import type {FocusConfig} from '../focus_config.js';
 import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {AiPageInteractions, MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 import {routes} from '../route.js';
-import {RouteObserverMixin, Router} from '../router.js';
+import {Router} from '../router.js';
 
 import {getTemplate} from './ai_page.html.js';
 import {FeatureOptInState, SettingsAiPageFeaturePrefName} from './constants.js';
@@ -27,9 +26,9 @@ export interface SettingsAiPageElement {
   };
 }
 
-const SettingsAiPageElementBase =
-    RouteObserverMixin(PrefsMixin(PolymerElement));
-
+// BaseMixin is needed to populate the associatedControl field for search in
+// subpages, see crbug.com/378927854.
+const SettingsAiPageElementBase = PrefsMixin(BaseMixin(PolymerElement));
 export class SettingsAiPageElement extends SettingsAiPageElementBase {
   static get is() {
     return 'settings-ai-page';
@@ -44,6 +43,11 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
       enableAiSettingsPageRefresh_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
+      },
+
+      showAutofillAiControl_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('showAutofillAiControl'),
       },
 
       showComposeControl_: {
@@ -66,20 +70,9 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         value: () => loadTimeData.getBoolean('showTabOrganizationControl'),
       },
 
-      showWallpaperSearchControl_: {
+      showPasswordChangeControl_: {
         type: Boolean,
-        value: () => loadTimeData.getBoolean('showWallpaperSearchControl'),
-      },
-
-      featureOptInStateEnum_: {
-        type: Object,
-        value: FeatureOptInState,
-      },
-
-      numericUncheckedValues_: {
-        type: Array,
-        value: () =>
-            [FeatureOptInState.DISABLED, FeatureOptInState.NOT_INITIALIZED],
+        value: () => loadTimeData.getBoolean('showPasswordChangeControl'),
       },
 
       focusConfig_: {
@@ -103,6 +96,10 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
             map.set(routes.AI_TAB_ORGANIZATION.path, '#tabOrganizationRowV2');
           }
 
+          if (routes.AUTOFILL_AI) {
+            map.set(routes.AUTOFILL_AI.path, '#autofillAiRowV2');
+          }
+
           return map;
         },
       },
@@ -119,25 +116,35 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
     };
   }
 
-  private enableAiSettingsPageRefresh_: boolean;
-  private showComposeControl_: boolean;
-  private showCompareControl_: boolean;
-  private showHistorySearchControl_: boolean;
-  private showTabOrganizationControl_: boolean;
-  private showWallpaperSearchControl_: boolean;
-  private numericUncheckedValues_: FeatureOptInState[];
+  declare private enableAiSettingsPageRefresh_: boolean;
+  declare private showAutofillAiControl_: boolean;
+  declare private showComposeControl_: boolean;
+  declare private showCompareControl_: boolean;
+  declare private showHistorySearchControl_: boolean;
+  declare private showTabOrganizationControl_: boolean;
+  declare private showPasswordChangeControl_: boolean;
+  declare private focusConfig_: FocusConfig;
+  declare private historySearchRowSublabel_: string;
   private shouldRecordMetrics_: boolean = true;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
 
-  override currentRouteChanged() {
+  override connectedCallback() {
+    super.connectedCallback();
+    this.maybeLogVisibilityMetrics_();
+  }
+
+  private maybeLogVisibilityMetrics_() {
     // Only record metrics when the user first navigates to the main AI page.
     if (!this.shouldRecordMetrics_ || !this.enableAiSettingsPageRefresh_ ||
         Router.getInstance().getCurrentRoute() !== routes.AI) {
       return;
     }
-
     this.shouldRecordMetrics_ = false;
+
+    this.metricsBrowserProxy_.recordBooleanHistogram(
+        'Settings.AiPage.ElementVisibility.AutofillAI',
+        this.showAutofillAiControl_);
     this.metricsBrowserProxy_.recordBooleanHistogram(
         'Settings.AiPage.ElementVisibility.HistorySearch',
         this.showHistorySearchControl_);
@@ -149,27 +156,8 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         'Settings.AiPage.ElementVisibility.TabOrganization',
         this.showTabOrganizationControl_);
     this.metricsBrowserProxy_.recordBooleanHistogram(
-        'Settings.AiPage.ElementVisibility.Themes',
-        this.showWallpaperSearchControl_);
-  }
-
-  private isExpanded_(): boolean {
-    return this.getPref(SettingsAiPageFeaturePrefName.MAIN).value ===
-        FeatureOptInState.ENABLED;
-  }
-
-  private shouldShowMainToggle_(): boolean {
-    return this.showComposeControl_ || this.showTabOrganizationControl_ ||
-        this.showWallpaperSearchControl_;
-  }
-
-  private getTabOrganizationHrCssClass_(): string {
-    return this.showComposeControl_ ? 'hr' : '';
-  }
-
-  private getWallpaperSearchHrCssClass_(): string {
-    return this.showComposeControl_ || this.showTabOrganizationControl_ ? 'hr' :
-                                                                          '';
+        'Settings.AiPage.ElementVisibility.PasswordChange',
+        this.showPasswordChangeControl_);
   }
 
   private onHistorySearchRowClick_() {
@@ -181,6 +169,15 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
 
     const router = Router.getInstance();
     router.navigateTo(router.getRoutes().HISTORY_SEARCH);
+  }
+
+  private onAutofillAiRowClick_() {
+    this.recordInteractionMetrics_(
+        AiPageInteractions.AUTOFILL_AI_CLICK,
+        'Settings.AiPage.AutofillAIEntryPointClick');
+
+    const router = Router.getInstance();
+    router.navigateTo(router.getRoutes().AUTOFILL_AI);
   }
 
   private onCompareRowClick_() {
@@ -210,13 +207,13 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
     router.navigateTo(router.getRoutes().AI_TAB_ORGANIZATION);
   }
 
-  private onWallpaperSearchRowClick_() {
+  private onPasswordChangeRowClick_() {
     this.recordInteractionMetrics_(
-        AiPageInteractions.WALLPAPER_SEARCH_CLICK,
-        'Settings.AiPage.ThemesEntryPointClick');
+        AiPageInteractions.PASSWORD_CHANGE_CLICK,
+        'Settings.AiPage.PasswordChangeEntryPointClick');
 
     OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('wallpaperSearchLearnMoreUrl'));
+        loadTimeData.getString('passwordChangeSettingsUrl'));
   }
 
   private recordInteractionMetrics_(

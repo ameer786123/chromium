@@ -22,6 +22,7 @@ namespace autofill {
 
 class CreditCardCvcAuthenticator;
 class WebViewAutofillClientIOS;
+class PaymentsDataManager;
 
 namespace payments {
 
@@ -45,7 +46,7 @@ class IOSWebViewPaymentsAutofillClient : public PaymentsAutofillClient {
       base::OnceCallback<void(const std::string&)> callback) override;
 
   // PaymentsAutofillClient:
-  void ConfirmSaveCreditCardToCloud(
+  void ShowSaveCreditCardToCloud(
       const CreditCard& card,
       const LegalMessageLines& legal_message_lines,
       SaveCreditCardOptions options,
@@ -63,8 +64,7 @@ class IOSWebViewPaymentsAutofillClient : public PaymentsAutofillClient {
       payments::PaymentsAutofillClient::PaymentsRpcResult result) override;
   CreditCardCvcAuthenticator& GetCvcAuthenticator() override;
   void OpenPromoCodeOfferDetailsURL(const GURL& url) override;
-
-  void set_bridge(id<CWVAutofillClientIOSBridge> bridge);
+  PaymentsDataManager& GetPaymentsDataManager() final;
 
  private:
   const raw_ref<autofill::WebViewAutofillClientIOS> client_;

@@ -50,13 +50,12 @@ std::string UpdateVirtualCardEnrollmentRequest::GetRequestContent() {
       BuildUnenrollRequestDictionary(&request_dict);
       break;
     case VirtualCardEnrollmentRequestType::kNone:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   std::string request_content;
   base::JSONWriter::Write(request_dict, &request_content);
-  VLOG(3) << "UpdateVirtualCardEnrollmentRequest Body: " << request_content;
+  DVLOG(3) << "UpdateVirtualCardEnrollmentRequest Body: " << request_content;
   return request_content;
 }
 
@@ -89,8 +88,7 @@ bool UpdateVirtualCardEnrollmentRequest::IsResponseComplete() {
       // error. Thus, we always return true.
       return true;
     case VirtualCardEnrollmentRequestType::kNone:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
   }
 }
 
@@ -152,8 +150,7 @@ void UpdateVirtualCardEnrollmentRequest::BuildEnrollRequestDictionary(
       request_dict->Set("channel_type", "CHROME_DOWNSTREAM");
       break;
     case VirtualCardEnrollmentSource::kNone:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
   if (request_details_.billing_customer_number != 0) {
     context.Set("customer_context",

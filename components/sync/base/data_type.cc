@@ -15,11 +15,11 @@ namespace syncer {
 
 namespace {
 
-static_assert(53 == syncer::GetNumDataTypes(),
+static_assert(55 == syncer::GetNumDataTypes(),
               "When adding a new type, update enum SyncDataTypes in enums.xml "
               "and suffix SyncDataType in histograms.xml.");
 
-static_assert(53 == syncer::GetNumDataTypes(),
+static_assert(55 == syncer::GetNumDataTypes(),
               "When adding a new type, follow the integration checklist in "
               "https://www.chromium.org/developers/design-documents/sync/"
               "integration-checklist/");
@@ -106,6 +106,10 @@ constexpr kSpecificsFieldNumberToDataTypeMap specifics_field_number2data_type =
         {sync_pb::EntitySpecifics::kCookieFieldNumber, COOKIES},
         {sync_pb::EntitySpecifics::kPlusAddressSettingFieldNumber,
          PLUS_ADDRESS_SETTING},
+        {sync_pb::EntitySpecifics::kAutofillValuableFieldNumber,
+         AUTOFILL_VALUABLE},
+        {sync_pb::EntitySpecifics::kSharedTabGroupAccountDataFieldNumber,
+         SHARED_TAB_GROUP_ACCOUNT_DATA},
         // ---- Control Types ----
         {sync_pb::EntitySpecifics::kNigoriFieldNumber, NIGORI},
     });
@@ -115,9 +119,8 @@ constexpr kSpecificsFieldNumberToDataTypeMap specifics_field_number2data_type =
 void AddDefaultFieldValue(DataType type, sync_pb::EntitySpecifics* specifics) {
   switch (type) {
     case UNSPECIFIED:
-      NOTREACHED_IN_MIGRATION()
-          << "No default field value for " << DataTypeToDebugString(type);
-      break;
+      NOTREACHED() << "No default field value for "
+                   << DataTypeToDebugString(type);
     case BOOKMARKS:
       specifics->mutable_bookmark();
       break;
@@ -274,6 +277,12 @@ void AddDefaultFieldValue(DataType type, sync_pb::EntitySpecifics* specifics) {
     case PLUS_ADDRESS_SETTING:
       specifics->mutable_plus_address_setting();
       break;
+    case AUTOFILL_VALUABLE:
+      specifics->mutable_autofill_valuable();
+      break;
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      specifics->mutable_shared_tab_group_account_data();
+      break;
   }
 }
 
@@ -394,6 +403,10 @@ int GetSpecificsFieldNumberFromDataType(DataType data_type) {
       return sync_pb::EntitySpecifics::kCookieFieldNumber;
     case PLUS_ADDRESS_SETTING:
       return sync_pb::EntitySpecifics::kPlusAddressSettingFieldNumber;
+    case AUTOFILL_VALUABLE:
+      return sync_pb::EntitySpecifics::kAutofillValuableFieldNumber;
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      return sync_pb::EntitySpecifics::kSharedTabGroupAccountDataFieldNumber;
     case NIGORI:
       return sync_pb::EntitySpecifics::kNigoriFieldNumber;
   }
@@ -412,7 +425,7 @@ void internal::GetDataTypeSetFromSpecificsFieldNumberListHelper(
 }
 
 DataType GetDataTypeFromSpecifics(const sync_pb::EntitySpecifics& specifics) {
-  static_assert(53 == syncer::GetNumDataTypes(),
+  static_assert(55 == syncer::GetNumDataTypes(),
                 "When adding new protocol types, the following type lookup "
                 "logic must be updated.");
   if (specifics.has_bookmark()) {
@@ -571,14 +584,20 @@ DataType GetDataTypeFromSpecifics(const sync_pb::EntitySpecifics& specifics) {
   if (specifics.has_plus_address_setting()) {
     return PLUS_ADDRESS_SETTING;
   }
+  if (specifics.has_autofill_valuable()) {
+    return AUTOFILL_VALUABLE;
+  }
+  if (specifics.has_shared_tab_group_account_data()) {
+    return SHARED_TAB_GROUP_ACCOUNT_DATA;
+  }
 
-  // This client version doesn't understand |specifics|.
+  // This client version doesn't understand `specifics`.
   DVLOG(1) << "Unknown datatype in sync proto.";
   return UNSPECIFIED;
 }
 
 DataTypeSet EncryptableUserTypes() {
-  static_assert(53 == syncer::GetNumDataTypes(),
+  static_assert(55 == syncer::GetNumDataTypes(),
                 "If adding an unencryptable type, remove from "
                 "encryptable_user_types below.");
   DataTypeSet encryptable_user_types = UserTypes();
@@ -722,6 +741,10 @@ const char* DataTypeToDebugString(DataType data_type) {
       return "Cookies";
     case PLUS_ADDRESS_SETTING:
       return "Plus Address Setting";
+    case AUTOFILL_VALUABLE:
+      return "Autofill Valuable";
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      return "Shared Tab Group Account Data";
     case NIGORI:
       return "Encryption Keys";
   }
@@ -835,6 +858,10 @@ const char* DataTypeToHistogramSuffix(DataType data_type) {
       return "COOKIE";
     case PLUS_ADDRESS_SETTING:
       return "PLUS_ADDRESS_SETTING";
+    case AUTOFILL_VALUABLE:
+      return "AUTOFILL_VALUABLE";
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      return "SHARED_TAB_GROUP_ACCOUNT_DATA";
     case NIGORI:
       return "NIGORI";
   }
@@ -948,6 +975,10 @@ DataTypeForHistograms DataTypeHistogramValue(DataType data_type) {
       return DataTypeForHistograms::kCookies;
     case PLUS_ADDRESS_SETTING:
       return DataTypeForHistograms::kPlusAddressSettings;
+    case AUTOFILL_VALUABLE:
+      return DataTypeForHistograms::kAutofillValuable;
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      return DataTypeForHistograms::kSharedTabGroupAccountData;
     case NIGORI:
       return DataTypeForHistograms::kNigori;
   }
@@ -1078,6 +1109,10 @@ const char* DataTypeToStableLowerCaseString(DataType data_type) {
       return "cookies";
     case PLUS_ADDRESS_SETTING:
       return "plus_address_setting";
+    case AUTOFILL_VALUABLE:
+      return "autofill_valuable";
+    case SHARED_TAB_GROUP_ACCOUNT_DATA:
+      return "shared_tab_group_account_data";
     case NIGORI:
       return "nigori";
   }

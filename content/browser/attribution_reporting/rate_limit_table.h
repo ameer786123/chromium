@@ -11,7 +11,6 @@
 #include <set>
 #include <vector>
 
-#include "base/containers/flat_set.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ref.h"
 #include "base/sequence_checker.h"
@@ -145,6 +144,20 @@ class CONTENT_EXPORT RateLimitTable {
       const AttributionTrigger&,
       base::Time trigger_time);
 
+  // Returns a negative value on failure.
+  int64_t CountUniqueDailyReportingOriginsPerReportingSiteForSource(
+      sql::Database* db,
+      const net::SchemefulSite& reporting_site,
+      base::Time source_time);
+
+  // Returns a negative value on failure.
+  int64_t
+  CountUniqueDailyReportingOriginsPerDestinationAndReportingSiteForSource(
+      sql::Database* db,
+      const net::SchemefulSite& destination_site,
+      const net::SchemefulSite& reporting_site,
+      base::Time source_time);
+
   [[nodiscard]] bool DeleteAttributionRateLimit(sql::Database* db,
                                                 Scope scope,
                                                 AttributionReport::Id);
@@ -185,7 +198,7 @@ class CONTENT_EXPORT RateLimitTable {
       bool is_source,
       const CommonSourceInfo& common_info,
       base::Time time,
-      const base::flat_set<net::SchemefulSite>& destination_sites)
+      base::span<const net::SchemefulSite> destination_sites)
       VALID_CONTEXT_REQUIRED(sequence_checker_);
 
   // Returns false on failure.
@@ -199,6 +212,8 @@ class CONTENT_EXPORT RateLimitTable {
   // Returns false on failure.
   [[nodiscard]] bool DeleteExpiredRateLimits(sql::Database* db)
       VALID_CONTEXT_REQUIRED(sequence_checker_);
+
+  const bool rate_limit_check_source_time_enabled_;
 
   raw_ref<const AttributionResolverDelegate> delegate_
       GUARDED_BY_CONTEXT(sequence_checker_);

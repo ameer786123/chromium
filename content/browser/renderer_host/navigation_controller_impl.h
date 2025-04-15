@@ -107,6 +107,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
   NavigationEntryImpl* GetVisibleEntry() override;
   int GetCurrentEntryIndex() override;
   NavigationEntryImpl* GetLastCommittedEntry() override;
+  const NavigationEntryImpl* GetLastCommittedEntry() const override;
   int GetLastCommittedEntryIndex() override;
   bool CanViewSource() override;
   int GetEntryCount() override;
@@ -234,6 +235,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       const std::optional<blink::Impression>& impression,
       blink::mojom::NavigationInitiatorActivationAndAdStatus
           initiator_activation_and_ad_status,
+      base::TimeTicks actual_navigation_start_time,
       base::TimeTicks navigation_start_time,
       bool is_embedder_initiated_fenced_frame_navigation = false,
       bool is_unfenced_top_navigation = false,
@@ -472,6 +474,15 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
     return in_navigate_to_pending_entry_;
   }
 
+  // This flag is set from RenderFrameHostImpl::SendBeforeUnload() to
+  // investigate whether kAvoidUnnecessaryBeforeUnloadCheckSync feature is safe
+  // to enable or not (see: https://crbug.com/40361673,
+  // https://crbug.com/396998476).
+  void set_can_be_in_navigate_to_pending_entry(
+      const bool can_be_in_navigate_to_pending_entry) {
+    can_be_in_navigate_to_pending_entry_ = can_be_in_navigate_to_pending_entry;
+  }
+
   // Whether to maintain a session history with just one entry.
   //
   // This returns true for a prerendering page and for fenced frames.
@@ -688,6 +699,7 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       ReloadType reload_type,
       NavigationEntryImpl* entry,
       FrameNavigationEntry* frame_entry,
+      base::TimeTicks actual_navigation_start_time,
       base::TimeTicks navigation_start_time,
       bool is_embedder_initiated_fenced_frame_navigation = false,
       bool is_unfenced_top_navigation = false,
@@ -869,10 +881,10 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       bool is_new_entry,
       LoadCommittedDetails* commit_details);
 
-  // Broadcasts this controller's session history offset and length to all
-  // renderers involved in rendering the current page. The offset is
+  // Broadcasts this controller's session history index and length to all
+  // renderers involved in rendering the current page. The index is
   // GetLastCommittedEntryIndex() and length is GetEntryCount().
-  void BroadcastHistoryOffsetAndLength();
+  void BroadcastHistoryIndexAndLength();
 
   // Used by PopulateNavigationApiHistoryEntryVectors to initialize a single
   // vector. `last_index_checked` is an out parameter that indicates the last
@@ -894,6 +906,16 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
       FrameNavigationEntry* current_entry,
       FrameNavigationEntry* target_entry,
       const std::string& navigation_api_key);
+
+  // When navigation starts, the `can_be_in_navigate_to_pending_entry` flag has
+  // to be false. This is because kAvoidUnnecessaryBeforeUnloadCheckSync feature
+  // will stop using PostTask for the legacy beforeunload code in the near
+  // future. When kAvoidUnnecessaryBeforeUnloadCheckSync is enabled,
+  // `RenderFrameHostImpl::ProcessBeforeUnloadCompletedFromFrame()` and
+  // `Navigator::BeforeUnloadCompleted()` can run in the scope of
+  // `in_navigate_to_pending_entry_` == true, and it might end up crashing on
+  // CHECK(!in_navigate_to_pending_entry_).
+  void CheckPotentialNavigationReentrancy();
 
   // ---------------------------------------------------------------------------
 
@@ -961,6 +983,17 @@ class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
 
   // Prevent unsafe re-entrant calls to NavigateToPendingEntry.
   bool in_navigate_to_pending_entry_ = false;
+
+  // A flag to investigate whether kAvoidUnnecessaryBeforeUnloadCheckSync
+  // feature is safe to enable or not (see: https://crbug.com/40361673,
+  // https://crbug.com/396998476).
+  //
+  // This flag is true if the above `in_navigate_to_pending_entry_` flag is true
+  // when RenderFrameHostImpl::SendBeforeUnload() runs, and on top of that, when
+  // we intend to continue navigation synchronously without posting a task when
+  // the kAvoidUnnecessaryBeforeUnloadCheckSync feature is enabled in either
+  // kWithSendBeforeUnload or kWithoutSendBeforeUnload mode.
+  bool can_be_in_navigate_to_pending_entry_ = false;
 
   // Used to find the appropriate SessionStorageNamespace for the storage
   // partition of a NavigationEntry.

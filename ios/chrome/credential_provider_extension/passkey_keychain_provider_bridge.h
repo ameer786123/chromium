@@ -12,10 +12,17 @@
 // Delegate for the PasskeyKeychainProviderBridge.
 @protocol PasskeyKeychainProviderBridgeDelegate
 
+// Asks the user to reauthenticate if needed and calls the the completion block.
+- (void)performUserVerificationIfNeeded:(ProceduralBlock)completion;
+
 // Presents the passkey enrollment welcome screen.
 - (void)showEnrollmentWelcomeScreen:(ProceduralBlock)enrollBlock;
 
-// Presents the passkey reauthentication weclome screen.
+// Presents the passkey "fix degraded recoverability state" welcome screen.
+- (void)showFixDegradedRecoverabilityWelcomeScreen:
+    (ProceduralBlock)fixDegradedRecoverabilityBlock;
+
+// Presents the passkey reauthentication welcome screen.
 - (void)showReauthenticationWelcomeScreen:(ProceduralBlock)reauthenticateBlock;
 
 @end
@@ -29,6 +36,7 @@
 - (instancetype)initWithEnableLogging:(BOOL)enableLogging
                  navigationController:
                      (UINavigationController*)navigationController
+              navigationItemTitleView:(UIView*)navigationItemTitleView
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -37,17 +45,14 @@
 
 // Initiates the process to fetch the security domain secret and calls the
 // completion block with the security domain secret the input argument.
+// "credential" will be used to validate the security domain secret.
 - (void)fetchSecurityDomainSecretForGaia:(NSString*)gaia
+                              credential:(id<Credential>)credential
                                  purpose:(PasskeyKeychainProvider::
                                               ReauthenticatePurpose)purpose
                               completion:
                                   (FetchSecurityDomainSecretCompletionBlock)
                                       fetchSecurityDomainSecretCompletion;
-
-// Marks the security domain secret vault keys as stale and calls the completion
-// block.
-- (void)markKeysAsStaleForGaia:(NSString*)gaia
-                    completion:(ProceduralBlock)completion;
 
 @end
 

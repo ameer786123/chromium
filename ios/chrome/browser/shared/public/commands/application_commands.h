@@ -8,6 +8,7 @@
 #import <UIKit/UIKit.h>
 
 #include "base/ios/block_types.h"
+#include "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #include "ios/public/provider/chrome/browser/user_feedback/user_feedback_sender.h"
 
 class GURL;
@@ -47,8 +48,9 @@ enum class TabGridOpeningMode {
 // modals are dismissed (animations done).
 - (void)dismissModalDialogsWithCompletion:(ProceduralBlock)completion;
 
-// Shows the Password Checkup page for `referrer`.
-- (void)showPasswordCheckupPageForReferrer:
+// Dismisses all modal dialogs (if any) before showing the Password Checkup page
+// for `referrer`.
+- (void)dismissModalsAndShowPasswordCheckupPageForReferrer:
     (password_manager::PasswordCheckReferrer)referrer;
 
 // Opens the Password Issues list displaying compromised, weak or reused
@@ -57,6 +59,9 @@ enum class TabGridOpeningMode {
     showPasswordIssuesWithWarningType:(password_manager::WarningType)warningType
                              referrer:(password_manager::PasswordCheckReferrer)
                                           referrer;
+
+// Shows the Settings UI if nothing else is displayed.
+- (void)maybeShowSettingsFromViewController;
 
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the Settings UI, presenting from `baseViewController`.
@@ -162,9 +167,13 @@ enum class TabGridOpeningMode {
 - (void)showSignin:(ShowSigninCommand*)command
     baseViewController:(UIViewController*)baseViewController;
 
-// Shows the account menu. On scene with regular width, the account menu appears
-// as a popover near the anchor view.
+// Shows the account menu. On scenes with regular width, the account menu
+// appears as a popover near the `anchorView`, if provided. If
+// `skipIfUINotAvailable` is true, then this command is ignored if there is
+// already a UI being presented.
 - (void)showAccountMenuWithAnchorView:(UIView*)anchorView
+                 skipIfUINotAvailable:(BOOL)skipIfUINotAvailable
+                              fromWeb:(BOOL)fromWeb
                            completion:(void (^)())completion;
 
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
@@ -191,6 +200,11 @@ enum class TabGridOpeningMode {
 
 // Opens a debug menu for AI prototyping.
 - (void)openAIMenu;
+
+// Shows the sign-in upgrade promo with a completion block that is called when
+// the promo is dismissed.
+- (void)showSigninUpgradePromoWithCompletion:
+    (SigninCoordinatorCompletionCallback)dismissalCompletion;
 
 @end
 

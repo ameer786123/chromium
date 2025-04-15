@@ -5,10 +5,16 @@
 #ifndef NET_DEVICE_BOUND_SESSIONS_SESSION_STORE_H_
 #define NET_DEVICE_BOUND_SESSIONS_SESSION_STORE_H_
 
+#include <map>
 #include <memory>
 #include <string>
 
+#include "base/functional/callback.h"
 #include "net/device_bound_sessions/session.h"
+
+namespace base {
+class FilePath;
+}  // namespace base
 
 namespace net {
 class SchemefulSite;
@@ -20,7 +26,9 @@ namespace net::device_bound_sessions {
 // persistent store for device bound session state.
 class NET_EXPORT SessionStore {
  public:
-  SessionStore() = default;
+  static std::unique_ptr<SessionStore> Create(
+      const base::FilePath& db_storage_path);
+
   virtual ~SessionStore() = default;
 
   SessionStore(const SessionStore&) = delete;
@@ -47,6 +55,9 @@ class NET_EXPORT SessionStore {
       const SchemefulSite& site,
       const Session::Id& session_id,
       RestoreSessionBindingKeyCallback callback) = 0;
+
+ protected:
+  SessionStore() = default;
 };
 
 }  // namespace net::device_bound_sessions

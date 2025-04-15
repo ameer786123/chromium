@@ -14,7 +14,7 @@
 
 namespace blink {
 
-using XRJointVector = HeapVector<Member<XRJointSpace>>;
+using XRJointVector = GCedHeapVector<Member<XRJointSpace>>;
 
 class XRHandIterationSource final
     : public PairSyncIterable<XRHand>::IterationSource {
@@ -49,17 +49,18 @@ class XRHandIterationSource final
 };
 
 XRHand::XRHand(const device::mojom::blink::XRHandTrackingData* state,
-               XRInputSource* input_source) {
-  joints_ = MakeGarbageCollected<XRJointVector>(kNumJoints);
+               XRInputSource* input_source)
+    : joints_(MakeGarbageCollected<XRJointVector>()) {
+  joints_->ReserveInitialCapacity(kNumJoints);
   DCHECK_EQ(kNumJoints, V8XRHandJoint::kEnumSize);
   for (unsigned i = 0; i < kNumJoints; ++i) {
     device::mojom::blink::XRHandJoint joint =
         static_cast<device::mojom::blink::XRHandJoint>(i);
     DCHECK_EQ(MojomHandJointToV8Enum(joint),
               static_cast<V8XRHandJoint::Enum>(i));
-    joints_->at(i) = MakeGarbageCollected<XRJointSpace>(
+    joints_->push_back(MakeGarbageCollected<XRJointSpace>(
         this, input_source->session(), nullptr, joint, 0.0f,
-        input_source->xr_handedness());
+        input_source->xr_handedness()));
   }
 
   updateFromHandTrackingData(state, input_source);
@@ -98,7 +99,9 @@ void XRHand::updateFromHandTrackingData(
   } else if (has_missing_poses_ && new_poses) {
     // Need to check if there are any missing poses
     has_missing_poses_ =
-        !base::ranges::all_of(*joints_, &XRJointSpace::MojoFromNative);
+        std::ranges::any_of(*joints_, [](const Member<XRJointSpace>& joint) {
+          return !joint->MojoFromNative().has_value();
+        });
   }
 }
 

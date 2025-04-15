@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/feature_list.h"
+#include "base/metrics/histogram_macros.h"
 #include "components/paint_preview/common/paint_preview_tracker.h"
 #include "printing/buildflags/buildflags.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
@@ -38,7 +39,7 @@ namespace blink {
 
 BASE_FEATURE(kSkipUnnecessaryRemoteFrameGeometryPropagation,
              "SkipUnnecessaryRemoteFrameGeometryPropagation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 RemoteFrameView::RemoteFrameView(RemoteFrame* remote_frame)
     : FrameView(gfx::Rect()), remote_frame_(remote_frame) {
@@ -149,6 +150,8 @@ void RemoteFrameView::SetViewportIntersection(
     needs_update = !last_intersection_state_.Equals(new_state);
   }
 
+  UMA_HISTOGRAM_BOOLEAN(
+      "Blink.UpdateViewportIntersection.RemoteFrameNeedsUpdate", needs_update);
   if (needs_update) {
     last_intersection_state_ = new_state;
     remote_frame_->SetViewportIntersection(new_state);
@@ -428,23 +431,12 @@ bool RemoteFrameView::CanThrottleRendering() const {
   return IsHiddenForThrottling() || IsSubtreeThrottled() || IsDisplayLocked();
 }
 
-void RemoteFrameView::SetIntrinsicSizeInfo(
-    const IntrinsicSizingInfo& size_info) {
-  intrinsic_sizing_info_ = size_info;
-  has_intrinsic_sizing_info_ = true;
+std::optional<NaturalSizingInfo> RemoteFrameView::GetNaturalDimensions() const {
+  return natural_sizing_info_;
 }
 
-bool RemoteFrameView::GetIntrinsicSizingInfo(
-    IntrinsicSizingInfo& sizing_info) const {
-  if (!has_intrinsic_sizing_info_)
-    return false;
-
-  sizing_info = intrinsic_sizing_info_;
-  return true;
-}
-
-bool RemoteFrameView::HasIntrinsicSizingInfo() const {
-  return has_intrinsic_sizing_info_;
+void RemoteFrameView::SetNaturalDimensions(const NaturalSizingInfo& size_info) {
+  natural_sizing_info_ = size_info;
 }
 
 uint32_t RemoteFrameView::Print(const gfx::Rect& rect,

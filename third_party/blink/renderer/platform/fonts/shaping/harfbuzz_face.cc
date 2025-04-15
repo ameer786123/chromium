@@ -43,6 +43,7 @@
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_global_context.h"
 #include "third_party/blink/renderer/platform/fonts/font_platform_data.h"
+#include "third_party/blink/renderer/platform/fonts/opentype/color_table_lookup.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_face_from_typeface.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_font_data.h"
@@ -67,63 +68,6 @@
 
 namespace blink {
 
-namespace {
-
-SkFontTableTag kCpalTag = SkSetFourByteTag('C', 'P', 'A', 'L');
-SkFontTableTag kColrTag = SkSetFourByteTag('C', 'O', 'L', 'R');
-SkFontTableTag kSbixTag = SkSetFourByteTag('s', 'b', 'i', 'x');
-SkFontTableTag kCbdtTag = SkSetFourByteTag('C', 'B', 'D', 'T');
-SkFontTableTag kCblcTag = SkSetFourByteTag('C', 'B', 'L', 'C');
-
-bool TypefaceHasAnySupportedColorTable(const SkTypeface* typeface) {
-  if (!typeface) {
-    return false;
-  }
-  const int num_tags = typeface->countTables();
-  if (!num_tags) {
-    return false;
-  }
-  std::unique_ptr<SkFontTableTag[]> tags(new SkFontTableTag[num_tags]);
-  const int returned_tags = typeface->getTableTags(tags.get());
-  if (!returned_tags) {
-    return false;
-  }
-  bool has_cpal = false;
-  bool has_colr = false;
-  bool has_cbdt = false;
-  bool has_cblc = false;
-  for (int i = 0; i < returned_tags; i++) {
-    SkFontTableTag tag = tags[i];
-    if (tag == kSbixTag) {
-      return true;
-    }
-    if (tag == kCpalTag) {
-      if (has_colr) {
-        return true;
-      }
-      has_cpal = true;
-    } else if (tag == kColrTag) {
-      if (has_cpal) {
-        return true;
-      }
-      has_colr = true;
-    } else if (tag == kCbdtTag) {
-      if (has_cblc) {
-        return true;
-      }
-      has_cbdt = true;
-    } else if (tag == kCblcTag) {
-      if (has_cbdt) {
-        return true;
-      }
-      has_cblc = true;
-    }
-  }
-  return false;
-}
-
-}  // namespace
-
 HarfBuzzFace::HarfBuzzFace(const FontPlatformData* platform_data,
                            uint64_t unique_id)
     : platform_data_(platform_data),
@@ -147,12 +91,6 @@ VariationSelectorMode HarfBuzzFace::GetVariationSelectorMode() {
 }
 
 void HarfBuzzFace::SetVariationSelectorMode(VariationSelectorMode value) {
-  // Ignore variation selectors mode should be on only when the
-  // FontVariationSequences runtime flag is enabled.
-  DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled() ||
-         !ShouldIgnoreVariationSelector(value));
-  DCHECK(RuntimeEnabledFeatures::FontVariantEmojiEnabled() ||
-         !UseFontVariantEmojiVariationSelector(value));
   GetIgnoreVariationSelectorModeRef() = value;
 }
 
@@ -199,18 +137,15 @@ static hb_bool_t HarfBuzzGetGlyph(hb_font_t* hb_font,
   // on FontFallbackPriority in `FontCache::PlatformFallbackFontForCharacter`.
   VariationSelectorMode variation_selector_mode =
       HarfBuzzFace::GetVariationSelectorMode();
-  if (RuntimeEnabledFeatures::FontVariationSequencesEnabled()) {
     if (!ShouldIgnoreVariationSelector(variation_selector_mode) &&
         Character::IsUnicodeVariationSelector(variation_selector) &&
         Character::IsVariationSequence(unicode, variation_selector)) {
       is_variation_sequence = true;
       consider_variation_selector = true;
-    } else if (RuntimeEnabledFeatures::FontVariantEmojiEnabled() &&
-               UseFontVariantEmojiVariationSelector(variation_selector_mode) &&
+    } else if (UseFontVariantEmojiVariationSelector(variation_selector_mode) &&
                Character::IsEmoji(unicode)) {
       consider_variation_selector = true;
     }
-  }
 
   bool text_presentation_requested = false;
   bool emoji_presentation_requested = false;
@@ -267,7 +202,8 @@ static hb_bool_t HarfBuzzGetGlyph(hb_font_t* hb_font,
       // TODO(https://bugs.skia.org/374078818): Ideally we also want to check
       // weather the base codepoint is present in the found color table,
       // requested API from Skia.
-      bool has_color_table = TypefaceHasAnySupportedColorTable(typeface);
+      bool has_color_table =
+          ColorTableLookup::TypefaceHasAnySupportedColorTable(typeface);
       if ((has_color_table && text_presentation_requested) ||
           (!has_color_table && emoji_presentation_requested)) {
         *glyph = kUnmatchedVSGlyphId;

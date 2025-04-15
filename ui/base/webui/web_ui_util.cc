@@ -9,12 +9,15 @@
 
 #include "ui/base/webui/web_ui_util.h"
 
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "base/base64.h"
+#include "base/check.h"
 #include "base/i18n/rtl.h"
-#include "base/json/json_string_value_serializer.h"
+#include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
@@ -28,8 +31,8 @@
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/font.h"
-#include "ui/resources/grit/webui_resources.h"
 #include "ui/strings/grit/app_locale_settings.h"
+#include "ui/webui/resources/grit/webui_resources.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -248,12 +251,11 @@ std::string GetLocalizedHtml(std::string_view html_template,
 
   // Inject data to the UI that will be used to populate loadTimeData upon
   // initialization.
-  std::string json;
-  JSONStringValueSerializer serializer(&json);
-  serializer.Serialize(strings);
+  std::optional<std::string> json = base::WriteJson(strings);
+  CHECK(json);
   output.append("<script>");
   output.append("var loadTimeDataRaw = ");
-  output.append(json);
+  output.append(*json);
   output.append(";");
   output.append("</script>");
 

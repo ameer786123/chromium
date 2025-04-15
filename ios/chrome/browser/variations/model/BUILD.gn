@@ -52,6 +52,10 @@ source_set("store") {
     ":store_private",
     "//components/variations",
   ]
+
+  # Required because ":store_private" exists to restrict which targets
+  # have access to "ios_chrome_variations_seed_store+fetcher.h" header.
+  allow_circular_includes_from = [ ":store_private" ]
 }
 
 source_set("store_private") {
@@ -101,6 +105,7 @@ source_set("eg_app_support+eg2") {
     "//components/prefs",
     "//components/variations",
     "//components/variations:test_support",
+    "//components/variations/service",
     "//ios/chrome/browser/shared/model/application_context",
     "//ios/chrome/test/app:test_support",
   ]
@@ -125,6 +130,7 @@ source_set("eg2_tests") {
   sources = [
     "variations_safe_mode_egtest.mm",
     "variations_safe_mode_end_to_end_egtest.mm",
+    "variations_safe_mode_seedfile_egtest.mm",
   ]
   deps = [
     ":eg_test_support+eg2",

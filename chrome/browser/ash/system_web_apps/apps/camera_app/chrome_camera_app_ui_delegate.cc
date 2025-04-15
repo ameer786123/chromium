@@ -13,6 +13,7 @@
 #include "ash/webui/camera_app_ui/pdf_builder.mojom.h"
 #include "ash/webui/camera_app_ui/url_constants.h"
 #include "ash/webui/settings/public/constants/routes.mojom.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
@@ -41,11 +42,11 @@
 #include "chrome/browser/pdf/pdf_service.h"
 #include "chrome/browser/policy/policy_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/screen_ai/public/optical_character_recognizer.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/webui/ash/internet/internet_config_dialog.h"
-#include "chrome/browser/web_applications/web_app_launch_queue.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/services/pdf/public/mojom/pdf_progressive_searchifier.mojom.h"
@@ -106,10 +107,19 @@ constexpr int kPdfDpi = 72;
 // static
 void ChromeCameraAppUIDelegate::CameraAppDialog::ShowIntent(
     const std::string& queries,
+    bool launch_in_dialog,
     gfx::NativeWindow parent) {
   std::string url = ash::kChromeUICameraAppMainURL + queries;
-  CameraAppDialog* dialog = new CameraAppDialog(url);
-  dialog->ShowSystemDialog(parent);
+  if (launch_in_dialog) {
+    CameraAppDialog* dialog = new CameraAppDialog(url);
+    dialog->ShowSystemDialog(parent);
+  } else {
+    ash::SystemAppLaunchParams params;
+    params.url = GURL(url);
+    params.launch_source = apps::LaunchSource::kFromArc;
+    ash::LaunchSystemWebAppAsync(ProfileManager::GetActiveUserProfile(),
+                                 ash::SystemWebAppType::CAMERA, params);
+  }
 }
 
 ChromeCameraAppUIDelegate::CameraAppDialog::CameraAppDialog(
@@ -297,7 +307,7 @@ void ChromeCameraAppUIDelegate::PdfServiceManager::GetThumbnail(
     std::move(callback).Run({});
     return;
   }
-  memcpy(pdf_region.mapping.memory(), pdf.data(), pdf.size());
+  UNSAFE_TODO(memcpy(pdf_region.mapping.memory(), pdf.data(), pdf.size()));
 
   mojo::Remote<pdf::mojom::PdfService> pdf_service = LaunchPdfService();
   mojo::PendingRemote<pdf::mojom::PdfThumbnailer> pdf_thumbnailer;
@@ -352,11 +362,7 @@ ChromeCameraAppUIDelegate::PdfServiceManager::CreateOcrRemote() {
 void ChromeCameraAppUIDelegate::PdfServiceManager::PerformOcr(
     const SkBitmap& image,
     PerformOcrCallback callback) {
-  if (base::FeatureList::IsEnabled(ash::features::kCameraAppPdfOcr)) {
-    optical_character_recognizer_->PerformOCR(image, std::move(callback));
-    return;
-  }
-  std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
+  optical_character_recognizer_->PerformOCR(image, std::move(callback));
 }
 
 // TODO(b/339345727): Inform CCA earlier when the PDF service crashes.
@@ -419,7 +425,7 @@ void ChromeCameraAppUIDelegate::PdfServiceManager::ProgressivePdf::Save(
     SaveCallback callback) {
   SaveInline(base::BindOnce(
       [](SaveCallback callback, const std::vector<uint8_t>& pdf) {
-        std::move(callback).Run(pdf);
+        std::move(callback).Run({pdf});
       },
       std::move(callback)));
 }
@@ -488,39 +494,6 @@ ChromeCameraAppUIDelegate::~ChromeCameraAppUIDelegate() {
   MaybeTriggerSurvey();
 }
 
-void ChromeCameraAppUIDelegate::SetLaunchDirectory() {
-  Profile* profile = Profile::FromWebUI(web_ui_);
-  content::WebContents* web_contents = web_ui_->GetWebContents();
-
-  auto my_files_folder_path =
-      file_manager::util::GetMyFilesFolderForProfile(profile);
-
-  auto* swa_manager = ash::SystemWebAppManager::Get(profile);
-  if (!swa_manager) {
-    return;
-  }
-
-  std::optional<webapps::AppId> app_id =
-      swa_manager->GetAppIdForSystemApp(ash::SystemWebAppType::CAMERA);
-  if (!app_id.has_value()) {
-    return;
-  }
-
-  // The launch directory is passed here rather than
-  // `SystemWebAppDelegate::LaunchAndNavigateSystemWebApp()` to handle the case
-  // of the app being opened to handle an Android intent, i.e. when it's shown
-  // as a dialog via `CameraAppDialog`.
-  web_app::WebAppLaunchParams launch_params;
-  launch_params.started_new_navigation = true;
-  launch_params.app_id = *app_id;
-  launch_params.target_url = GURL(ash::kChromeUICameraAppMainURL);
-  launch_params.dir = my_files_folder_path;
-  auto* helper = web_app::WebAppTabHelper::FromWebContents(web_contents);
-  if (helper) {
-    helper->EnsureLaunchQueue().Enqueue(std::move(launch_params));
-  }
-}
-
 void ChromeCameraAppUIDelegate::PopulateLoadTimeData(
     content::WebUIDataSource* source) {
   // Add strings that can be pulled in.
@@ -528,13 +501,10 @@ void ChromeCameraAppUIDelegate::PopulateLoadTimeData(
   // Please also update the mocked value in _handle_strings_m_js in
   // ash/webui/camera_app_ui/resources/utils/cca/commands/dev.py when adding or
   // removing keys here.
-  source->AddString("board_name", base::SysInfo::GetLsbReleaseBoard());
+  source->AddString("board_name",
+                    base::ToLowerASCII(base::SysInfo::HardwareModelName()));
   source->AddString("device_type",
                     DeviceTypeToString(chromeos::GetDeviceType()));
-  source->AddBoolean("digital_zoom", base::FeatureList::IsEnabled(
-                                         ash::features::kCameraAppDigitalZoom));
-  source->AddBoolean("preview_ocr", base::FeatureList::IsEnabled(
-                                        ash::features::kCameraAppPreviewOcr));
   source->AddBoolean("super_res", base::FeatureList::IsEnabled(
                                       ash::features::kCameraSuperResSupported));
 
@@ -614,9 +584,8 @@ std::string ChromeCameraAppUIDelegate::GetFilePathInArcByName(
     return std::string();
   }
   if (requires_sharing) {
-    LOG(ERROR) << "File path should be in MyFiles and not require any sharing";
-    NOTREACHED_IN_MIGRATION();
-    return std::string();
+    NOTREACHED()
+        << "File path should be in MyFiles and not require any sharing";
   }
   return arc_url_out.spec();
 }
@@ -764,8 +733,8 @@ void ChromeCameraAppUIDelegate::OpenWifiDialog(WifiConfig wifi_config) {
   } else if (wifi_config.security == onc::wifi::kWPA_EAP) {
     config->security = SecurityType::kWpaEap;
   } else {
-    NOTREACHED_IN_MIGRATION()
-        << "Unexpected network security type: " << wifi_config.security;
+    NOTREACHED() << "Unexpected network security type: "
+                 << wifi_config.security;
   }
   config->passphrase = wifi_config.password;
   if (config->security == SecurityType::kWpaEap) {

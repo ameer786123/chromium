@@ -8,10 +8,13 @@
 #import <UIKit/UIKit.h>
 
 #import <string_view>
+#import <vector>
 
 #import "base/memory/raw_ptr.h"
+#import "base/memory/weak_ptr.h"
 #import "base/observer_list.h"
 #import "base/scoped_observation.h"
+#import "base/types/pass_key.h"
 #import "components/keyed_service/core/keyed_service.h"
 #import "components/prefs/pref_change_registrar.h"
 #import "ios/chrome/browser/signin/model/account_profile_mapper.h"
@@ -19,6 +22,8 @@
 #import "ios/chrome/browser/signin/model/pattern_account_restriction.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 
+struct AccountInfo;
+class DeviceAccountsProviderImpl;
 class PrefService;
 @protocol RefreshAccessTokenError;
 @class ResizedAvatarCache;
@@ -38,13 +43,25 @@ class ChromeAccountManagerService : public KeyedService,
     Observer& operator=(const Observer&) = delete;
     ~Observer() override {}
 
-    // Handles identity list changed events.
+    // Handles change events for per-profile identity list.
     // Notifications with no account list update are possible, this has to be
     // handled by the observer.
-    virtual void OnIdentityListChanged() {}
+    virtual void OnIdentitiesInProfileChanged() {}
 
-    // Called when the identity is updated.
-    virtual void OnIdentityUpdated(id<SystemIdentity> identity) {}
+    // Handles change events for on-device identity list.
+    // Notifications with no account list update are possible, this has to be
+    // handled by the observer.
+    virtual void OnIdentitiesOnDeviceChanged() {}
+
+    // Called when an identity in this profile is updated.
+    virtual void OnIdentityInProfileUpdated(id<SystemIdentity> identity) {}
+
+    // Called when an identity on this device is updated.
+    virtual void OnIdentityOnDeviceUpdated(id<SystemIdentity> identity) {}
+
+    // Handles refresh token updated events.
+    // `identity` is the identity for which the refresh token was updated.
+    virtual void OnRefreshTokenUpdated(id<SystemIdentity> identity) {}
 
     // Handles access token refresh failed events.
     // `identity` is the the identity for which the access token refresh failed.
@@ -61,12 +78,15 @@ class ChromeAccountManagerService : public KeyedService,
 
   // Initializes the service, getting identities corresponding to `profile_name`
   // from the AccountProfileMapper.
-  ChromeAccountManagerService(PrefService* pref_service,
+  ChromeAccountManagerService(PrefService* local_state,
                               std::string_view profile_name);
   ChromeAccountManagerService(const ChromeAccountManagerService&) = delete;
   ChromeAccountManagerService& operator=(const ChromeAccountManagerService&) =
       delete;
   ~ChromeAccountManagerService() override;
+
+  // Returns the name of the profile that this service belongs to.
+  const std::string& GetProfileName() const;
 
   // Returns true if there is at least one identity known by the service.
   bool HasIdentities() const;
@@ -79,10 +99,8 @@ class ChromeAccountManagerService : public KeyedService,
   bool IsEmailRestricted(std::string_view email) const;
 
   // Returns the SystemIdentity with gaia ID equals to `gaia_id` or nil if
-  // no matching identity is found. There are two overloads to reduce the
-  // need to convert between NSString* and std::string.
-  id<SystemIdentity> GetIdentityWithGaiaID(NSString* gaia_id) const;
-  id<SystemIdentity> GetIdentityWithGaiaID(std::string_view gaia_id) const;
+  // no matching identity is found.
+  id<SystemIdentity> GetIdentityWithGaiaID(const GaiaId& gaia_id) const;
 
   // Returns all SystemIdentity objects, sorted by the ordering used in the
   // SystemIdentityManager, which is typically based on the keychain ordering of
@@ -94,7 +112,8 @@ class ChromeAccountManagerService : public KeyedService,
 
   // Returns the identity avatar. If the avatar is not available, it is fetched
   // in background (a notification will be received when it will be available),
-  // and the default avatar is returned (see `Observer::OnIdentityUpdated()`).
+  // and the default avatar is returned (see
+  // `Observer::OnIdentityInProfileUpdated()`).
   UIImage* GetIdentityAvatarWithIdentity(id<SystemIdentity> identity,
                                          IdentityAvatarSize size);
 
@@ -108,24 +127,52 @@ class ChromeAccountManagerService : public KeyedService,
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
+  // Returns the SystemIdentity with the given Gaia ID, or nil if no matching
+  // identity exists on the device. Similar to GetIdentityWithGaiaID(), but as
+  // opposed to that (and most other methods in this service), this also handles
+  // accounts that are assigned to other profiles.
+  id<SystemIdentity> GetIdentityOnDeviceWithGaiaID(const GaiaId& gaia_id) const;
+  id<SystemIdentity> GetIdentityOnDeviceWithGaiaID(NSString* gaia_id) const;
+  // Converts a vector of AccountInfos, as returned by
+  // IdentityManager::GetAccountsOnDevice(), to `SystemIdentities (by looking
+  // them up via their Gaia IDs). Note that, as opposed to most other methods in
+  // this service, this also handles accounts that are assigned to other
+  // profiles.
+  NSArray<id<SystemIdentity>>* GetIdentitiesOnDeviceWithGaiaIDs(
+      const std::vector<AccountInfo>& account_infos) const;
+
+  // For use by DeviceAccountsProviderImpl only, may not be called otherwise!
+  // Returns all SystemIdentity objects that are available on the device,
+  // including (as opposed to GetAllIdentities()) those that are assigned to
+  // different profiles. (Identities that are restricted due to enterprise
+  // policy are still filtered out.)
+  NSArray<id<SystemIdentity>>* GetAllIdentitiesOnDevice(
+      base::PassKey<DeviceAccountsProviderImpl>) const;
+
   // SystemIdentityManagerObserver implementation.
-  void OnIdentityListChanged() override;
-  void OnIdentityUpdated(id<SystemIdentity> identity) override;
+  void OnIdentitiesInProfileChanged() override;
+  void OnIdentitiesOnDeviceChanged() override;
+  void OnIdentityInProfileUpdated(id<SystemIdentity> identity) override;
+  void OnIdentityOnDeviceUpdated(id<SystemIdentity> identity) override;
+  void OnIdentityRefreshTokenUpdated(id<SystemIdentity> identity) override;
   void OnIdentityAccessTokenRefreshFailed(
       id<SystemIdentity> identity,
       id<RefreshAccessTokenError> error) override;
 
+  // Gets base::WeakPtr to the object.
+  base::WeakPtr<ChromeAccountManagerService> GetWeakPtr();
+
  private:
-  // Updates PatternAccountRestriction with the current `pref_service_`. If
-  // `pref_service_` is null, no identity will be filtered.
+  // Updates PatternAccountRestriction with the current `local_state_`. If
+  // `local_state_` is null, no identity will be filtered.
   void UpdateRestriction();
 
   // Returns a ResizedAvatarCache based on `avatar_size`.
   ResizedAvatarCache* GetAvatarCacheForIdentityAvatarSize(
       IdentityAvatarSize avatar_size);
 
-  // Used to retrieve restricted patterns.
-  raw_ptr<PrefService> pref_service_ = nullptr;
+  // The local-state pref service, used to retrieve restricted patterns.
+  raw_ptr<PrefService> local_state_ = nullptr;
   // Used to filter ChromeIdentities.
   PatternAccountRestriction restriction_;
   // Used to listen pref change.
@@ -143,6 +190,8 @@ class ChromeAccountManagerService : public KeyedService,
   ResizedAvatarCache* large_avatar_cache_;
 
   const std::string profile_name_;
+
+  base::WeakPtrFactory<ChromeAccountManagerService> weak_ptr_factory_;
 };
 
 #endif  // IOS_CHROME_BROWSER_SIGNIN_MODEL_CHROME_ACCOUNT_MANAGER_SERVICE_H_

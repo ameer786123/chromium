@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/privacy_sandbox/mock_privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
@@ -47,8 +46,8 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxDialogViewInteractiveUiTestM1,
   views::NamedWidgetShownWaiter waiter1(
       views::test::AnyWidgetTestPasskey{},
       PrivacySandboxDialogView::kViewClassName);
-  ShowPrivacySandboxDialog(browser(),
-                           PrivacySandboxService::PromptType::kM1Consent);
+  PrivacySandboxDialog::Show(browser(),
+                             PrivacySandboxService::PromptType::kM1Consent);
   auto* dialog1 = waiter1.WaitIfNeededAndGet();
 
   views::NamedWidgetShownWaiter waiter2(
@@ -60,8 +59,8 @@ IN_PROC_BROWSER_TEST_F(PrivacySandboxDialogViewInteractiveUiTestM1,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   auto* new_browser = chrome::FindBrowserWithTab(
       content::WebContents::FromRenderFrameHost(new_rfh));
-  ShowPrivacySandboxDialog(new_browser,
-                           PrivacySandboxService::PromptType::kM1Consent);
+  PrivacySandboxDialog::Show(new_browser,
+                             PrivacySandboxService::PromptType::kM1Consent);
   auto* dialog2 = waiter2.WaitIfNeededAndGet();
 
   // Check two distinct dialogs were opened.

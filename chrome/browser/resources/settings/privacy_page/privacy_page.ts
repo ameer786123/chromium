@@ -14,7 +14,6 @@ import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
-import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import '../controls/settings_toggle_button.js';
 import '../privacy_icons.html.js';
 import '../safety_hub/safety_hub_module.js';
@@ -82,14 +81,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       isGuest_: {
         type: Boolean,
         value() {
@@ -114,11 +105,23 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         },
       },
 
+      enableManagePhones_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableSecurityKeysManagePhones');
+        },
+      },
+
       blockAutoplayStatus_: {
         type: Object,
         value() {
           return {};
         },
+      },
+
+      enableDeleteBrowsingDataRevamp_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableDeleteBrowsingDataRevamp'),
       },
 
       enablePaymentHandlerContentSetting_: {
@@ -159,6 +162,7 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         },
       },
 
+      // <if expr="is_chromeos">
       enableSmartCardReadersContentSetting_: {
         type: Boolean,
         value() {
@@ -166,6 +170,7 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
               'enableSmartCardReadersContentSetting');
         },
       },
+      // </if>
 
       enableWebBluetoothNewPermissionsBackend_: {
         type: Boolean,
@@ -192,20 +197,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         type: Boolean,
         value: () =>
             loadTimeData.getBoolean('isPrivacySandboxRestrictedNoticeEnabled'),
-      },
-
-      is3pcdRedesignEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean(
-                     'is3pcdCookieSettingsRedesignEnabled') &&
-              loadTimeData.getBoolean('isTrackingProtectionUxEnabled');
-        },
-      },
-
-      privateStateTokensEnabled_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('privateStateTokensEnabled'),
       },
 
       autoPictureInPictureEnabled_: {
@@ -246,6 +237,12 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
             loadTimeData.getBoolean('enableAutomaticFullscreenContentSetting'),
       },
 
+      enablePermissionSiteSettingsRadioButton_: {
+        type: Boolean,
+        value: () =>
+            loadTimeData.getBoolean('enablePermissionSiteSettingsRadioButton'),
+      },
+
       focusConfig_: {
         type: Object,
         value() {
@@ -262,11 +259,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
             map.set(
                 `${routes.COOKIES.path}_${routes.BASIC.path}`,
                 '#thirdPartyCookiesLinkRow');
-          }
-
-          if (routes.TRACKING_PROTECTION) {
-            map.set(
-                routes.TRACKING_PROTECTION.path, '#trackingProtectionLinkRow');
           }
 
           if (routes.SITE_SETTINGS) {
@@ -293,7 +285,11 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         value: SettingsState,
       },
 
-      searchFilter_: String,
+      searchFilter_: {
+        type: String,
+        value: '',
+        observer: 'updateAllSitesPageTitle_',
+      },
 
       /**
        * Expose ContentSettingsTypes enum to HTML bindings.
@@ -319,11 +315,10 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         value: ChooserType,
       },
 
-      enableSafetyHub_: {
+      shouldShowSafetyHub_: {
         type: Boolean,
         value() {
-          return loadTimeData.getBoolean('enableSafetyHub') &&
-              !loadTimeData.getBoolean('isGuest');
+          return !loadTimeData.getBoolean('isGuest');
         },
       },
 
@@ -337,10 +332,9 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       },
       // </if>
 
-      enableKeyboardAndPointerLockPrompt_: {
+      enableKeyboardLockPrompt_: {
         type: Boolean,
-        value: () =>
-            loadTimeData.getBoolean('enableKeyboardAndPointerLockPrompt'),
+        value: () => loadTimeData.getBoolean('enableKeyboardLockPrompt'),
       },
 
       enableWebAppInstallation_: {
@@ -348,44 +342,65 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         value: () => loadTimeData.getBoolean('enableWebAppInstallation'),
       },
 
+      enableRelatedWebsiteSetsV2Ui_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('isRelatedWebsiteSetsV2UiEnabled'),
+      },
+
+      enableLocalNetworkAccessSetting_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableLocalNetworkAccessSetting'),
+      },
+
+      showActSettingsPage_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('showActSettingsPage'),
+      },
+
       isNotificationAllowed_: Boolean,
       isLocationAllowed_: Boolean,
       notificationPermissionsReviewHeader_: String,
-      notificationPermissionsReviewSubeader_: String,
+      notificationPermissionsReviewSubheader_: String,
+      allSitesPageTitle_: String,
     };
   }
 
-  private isGuest_: boolean;
-  private showPersistentPermissions_: boolean;
-  private showClearBrowsingDataDialog_: boolean;
-  private showPrivacyGuideDialog_: boolean;
-  private enableSafeBrowsingSubresourceFilter_: boolean;
-  private enableBlockAutoplayContentSetting_: boolean;
-  private blockAutoplayStatus_: BlockAutoplayStatus;
-  private enableFederatedIdentityApiContentSetting_: boolean;
-  private enablePaymentHandlerContentSetting_: boolean;
-  private enableHandTrackingContentSetting_: boolean;
-  private enableExperimentalWebPlatformFeatures_: boolean;
-  private enableSecurityKeysSubpage_: boolean;
-  private enableSmartCardReadersContentSetting_: boolean;
-  private enableWebBluetoothNewPermissionsBackend_: boolean;
-  private enableWebPrintingContentSetting_: boolean;
-  private showNotificationPermissionsReview_: boolean;
-  private isPrivacySandboxRestricted_: boolean;
-  private isPrivacySandboxRestrictedNoticeEnabled_: boolean;
-  private enableAutomaticFullscreenContentSetting_: boolean;
-  private is3pcdRedesignEnabled_: boolean;
+  declare private isGuest_: boolean;
+  declare private showPersistentPermissions_: boolean;
+  declare private showClearBrowsingDataDialog_: boolean;
+  declare private showPrivacyGuideDialog_: boolean;
+  declare private enableSafeBrowsingSubresourceFilter_: boolean;
+  declare private enableBlockAutoplayContentSetting_: boolean;
+  declare private enableManagePhones_: boolean;
+  declare private blockAutoplayStatus_: BlockAutoplayStatus;
+  declare private enableDeleteBrowsingDataRevamp_: boolean;
+  declare private enableFederatedIdentityApiContentSetting_: boolean;
+  declare private enablePaymentHandlerContentSetting_: boolean;
+  declare private enableHandTrackingContentSetting_: boolean;
+  declare private enableExperimentalWebPlatformFeatures_: boolean;
+  declare private enableSecurityKeysSubpage_: boolean;
+  // <if expr="is_chromeos">
+  declare private enableSmartCardReadersContentSetting_: boolean;
+  // </if>
+  declare private enableWebBluetoothNewPermissionsBackend_: boolean;
+  declare private enableWebPrintingContentSetting_: boolean;
+  declare private showNotificationPermissionsReview_: boolean;
+  declare private isPrivacySandboxRestricted_: boolean;
+  declare private isPrivacySandboxRestrictedNoticeEnabled_: boolean;
+  declare private enableAutomaticFullscreenContentSetting_: boolean;
+  declare private enablePermissionSiteSettingsRadioButton_: boolean;
   private privateStateTokensEnabled_: boolean;
-  private autoPictureInPictureEnabled_: boolean;
-  private capturedSurfaceControlEnabled_: boolean;
-  private enableAiSettingsPageRefresh_: boolean;
-  private enableComposeProactiveNudge_: boolean;
-  private enableSafetyHub_: boolean;
-  private enableWebAppInstallation_: boolean;
-  private focusConfig_: FocusConfig;
-  private searchFilter_: string;
-  private notificationPermissionsReviewHeader_: string;
-  private notificationPermissionsReviewSubheader_: string;
+  declare private autoPictureInPictureEnabled_: boolean;
+  declare private capturedSurfaceControlEnabled_: boolean;
+  declare private enableAiSettingsPageRefresh_: boolean;
+  declare private enableComposeProactiveNudge_: boolean;
+  declare private shouldShowSafetyHub_: boolean;
+  declare private enableWebAppInstallation_: boolean;
+  declare private enableLocalNetworkAccessSetting_: boolean;
+  declare private focusConfig_: FocusConfig;
+  declare private searchFilter_: string;
+  declare private notificationPermissionsReviewHeader_: string;
+  declare private notificationPermissionsReviewSubheader_: string;
   private browserProxy_: PrivacyPageBrowserProxy =
       PrivacyPageBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =
@@ -394,12 +409,15 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       SiteSettingsPrefsBrowserProxyImpl.getInstance();
   private safetyHubBrowserProxy_: SafetyHubBrowserProxy =
       SafetyHubBrowserProxyImpl.getInstance();
-  private isNotificationAllowed_: boolean;
-  private isLocationAllowed_: boolean;
+  declare private isNotificationAllowed_: boolean;
+  declare private isLocationAllowed_: boolean;
   // <if expr="chrome_root_store_cert_management_ui">
-  private enableCertManagementUIV2_: boolean;
+  declare private enableCertManagementUIV2_: boolean;
   // </if>
-  private enableKeyboardAndPointerLockPrompt_: boolean;
+  declare private enableKeyboardLockPrompt_: boolean;
+  declare private enableRelatedWebsiteSetsV2Ui_: boolean;
+  declare private allSitesPageTitle_: string;
+  declare private showActSettingsPage_: boolean;
 
   override ready() {
     super.ready();
@@ -430,6 +448,7 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
     }
 
     this.updateLocationAndNotificationState_();
+    this.updateAllSitesPageTitle_();
   }
 
   override currentRouteChanged() {
@@ -474,13 +493,6 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
     this.interactedWithPage_();
 
     Router.getInstance().navigateTo(routes.COOKIES);
-  }
-
-  private onTrackingProtectionClick_() {
-    this.interactedWithPage_();
-    this.metricsBrowserProxy_.recordAction(
-        'Settings.TrackingProtection.OpenedFromPrivacyPage');
-    Router.getInstance().navigateTo(routes.TRACKING_PROTECTION);
   }
 
   private onCbdDialogClosed_() {
@@ -565,6 +577,30 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
     }
   }
 
+  private onLocationTopLevelRadioChanged2_(
+      event: CustomEvent<{value: boolean}>) {
+    const selected = event.detail.value;
+    if (selected) {
+      this.setPrefValue('generated.geolocation', SettingsState.CPSS);
+      this.isLocationAllowed_ = true;
+    } else {
+      this.setPrefValue('generated.geolocation', SettingsState.BLOCK);
+      this.isLocationAllowed_ = false;
+    }
+  }
+
+  private onNotificationTopLevelRadioChanged2_(
+      event: CustomEvent<{value: boolean}>) {
+    const selected = event.detail.value;
+    if (selected) {
+      this.setPrefValue('generated.notification', SettingsState.CPSS);
+      this.isNotificationAllowed_ = true;
+    } else {
+      this.setPrefValue('generated.notification', SettingsState.BLOCK);
+      this.isNotificationAllowed_ = false;
+    }
+  }
+
   private onPrivacyGuideClick_() {
     this.metricsBrowserProxy_.recordPrivacyGuideEntryExitHistogram(
         PrivacyGuideInteractions.SETTINGS_LINK_ROW_ENTRY);
@@ -625,11 +661,26 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       case CookieControlsMode.OFF:
         return this.i18n('thirdPartyCookiesLinkRowSublabelEnabled');
       case CookieControlsMode.INCOGNITO_ONLY:
-        return this.i18n('thirdPartyCookiesLinkRowSublabelDisabledIncognito');
+        return loadTimeData.getBoolean('isAlwaysBlock3pcsIncognitoEnabled') ?
+            this.i18n('thirdPartyCookiesLinkRowSublabelEnabled') :
+            this.i18n('thirdPartyCookiesLinkRowSublabelDisabledIncognito');
       case CookieControlsMode.BLOCK_THIRD_PARTY:
         return this.i18n('thirdPartyCookiesLinkRowSublabelDisabled');
       default:
         assertNotReached();
+    }
+  }
+
+  private updateAllSitesPageTitle_(): void {
+    const rwsPrefix = 'related:';
+    if (this.enableRelatedWebsiteSetsV2Ui_ &&
+        this.searchFilter_.length > rwsPrefix.length &&
+        this.searchFilter_.startsWith(rwsPrefix)) {
+      this.allSitesPageTitle_ = loadTimeData.getStringF(
+          'allSitesRwsFilterViewTitle',
+          this.searchFilter_.substring(rwsPrefix.length));
+    } else {
+      this.allSitesPageTitle_ = this.i18n('siteSettingsAllSites');
     }
   }
 

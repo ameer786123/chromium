@@ -10,7 +10,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
 #include "base/task/single_thread_task_runner.h"
-#include "build/chromeos_buildflags.h"
 #include "components/viz/host/gpu_host_impl.h"
 #include "components/viz/host/host_gpu_memory_buffer_manager.h"
 #include "gpu/config/gpu_finch_features.h"
@@ -192,7 +191,7 @@ void GpuClient::EstablishGpuChannel(EstablishGpuChannelCallback callback) {
                      weak_factory_.GetWeakPtr()));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void GpuClient::CreateJpegDecodeAccelerator(
     mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
         jda_receiver) {
@@ -201,7 +200,7 @@ void GpuClient::CreateJpegDecodeAccelerator(
         std::move(jda_receiver));
   }
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void GpuClient::CreateVideoEncodeAcceleratorProvider(
     mojo::PendingReceiver<media::mojom::VideoEncodeAcceleratorProvider>
@@ -209,17 +208,6 @@ void GpuClient::CreateVideoEncodeAcceleratorProvider(
   if (auto* gpu_host = delegate_->EnsureGpuHost()) {
     gpu_host->gpu_service()->CreateVideoEncodeAcceleratorProvider(
         std::move(vea_provider_receiver));
-  }
-}
-
-void GpuClient::CreateClientGpuMemoryBufferFactory(
-    mojo::PendingReceiver<gpu::mojom::ClientGmbInterface> receiver) {
-  // Send the PendingReceiver to GpuService via IPC.
-  if (auto* gpu_host = delegate_->EnsureGpuHost()) {
-    gpu_host->gpu_service()->BindClientGmbInterface(std::move(receiver),
-                                                    client_id_);
-  } else {
-    receiver.ResetWithReason(0, "Can not bind the ClientGmbInterface.");
   }
 }
 

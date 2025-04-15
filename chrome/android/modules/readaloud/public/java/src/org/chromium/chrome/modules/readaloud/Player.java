@@ -6,16 +6,17 @@ package org.chromium.chrome.modules.readaloud;
 
 import android.app.Activity;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Promise;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
+import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackMode;
 import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackVoice;
 import org.chromium.chrome.modules.readaloud.contentjs.Highlighter;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -24,6 +25,7 @@ import org.chromium.components.prefs.PrefService;
 import java.util.List;
 
 /** This interface represents Read Aloud player UI. */
+@NullMarked
 public interface Player {
     /** Embedders of the Read Aloud player must provide a Delegate implementation. */
     interface Delegate {
@@ -45,11 +47,17 @@ public interface Player {
         /** Returns the supplier for the current language's selected voice. */
         ObservableSupplier<String> getVoiceIdSupplier();
 
+        /** Whether the mode selection is enabled. */
+        ObservableSupplier<Boolean> getPlaybackModeSelectionEnabled();
+
         /**
          * Called when the user selects a voice in the voice settings menu. Saves the new choice for
          * the given language and continues playback from the same position.
          */
         void setVoiceOverrideAndApplyToPlayback(PlaybackVoice voice);
+
+        /** Called when the user selects a different playback mode. */
+        void setPlaybackModeAndApplyToPlayback(PlaybackMode mode);
 
         /**
          * Play a short example of the specified voice.
@@ -91,8 +99,7 @@ public interface Player {
         ActivityLifecycleDispatcher getActivityLifecycleDispatcher();
 
         /** Return the current {@link Profile}. */
-        @Nullable
-        Profile getProfile();
+        @Nullable Profile getProfile();
 
         /** Return {@link UserEducationHelper} for requesting in-product-help. */
         UserEducationHelper getUserEducationHelper();

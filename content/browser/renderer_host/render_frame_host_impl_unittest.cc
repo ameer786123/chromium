@@ -508,48 +508,48 @@ class FakeLocalFrameWithBeforeUnload : public content::FakeLocalFrame {
     Init(test_host->GetRemoteAssociatedInterfaces());
   }
 
-  bool was_before_unload_called() const { return was_before_unload_called_; }
-
-  void RunBeforeUnloadCallback() {
-    ASSERT_TRUE(before_unload_callback_);
-    std::move(before_unload_callback_)
-        .Run(true, base::TimeTicks::Now(), base::TimeTicks::Now());
+  bool was_before_unload_sent_to_renderer() const {
+    return was_before_unload_sent_to_renderer_;
   }
 
   // FakeLocalFrame:
   void BeforeUnload(bool is_reload, BeforeUnloadCallback callback) override {
-    was_before_unload_called_ = true;
-    before_unload_callback_ = std::move(callback);
+    was_before_unload_sent_to_renderer_ = true;
   }
 
  private:
-  bool was_before_unload_called_ = false;
-  BeforeUnloadCallback before_unload_callback_;
+  bool was_before_unload_sent_to_renderer_ = false;
 };
 
 // Verifies BeforeUnload() is not sent to renderer if there is no before
 // unload handler present.
 TEST_F(RenderFrameHostImplTest, BeforeUnloadNotSentToRenderer) {
-  FakeLocalFrameWithBeforeUnload local_frame(contents()->GetPrimaryMainFrame());
+  TestRenderFrameHost* rfh = contents()->GetPrimaryMainFrame();
+  base::RunLoop run_loop;
+  bool before_unload_completed = false;
+  rfh->set_on_process_before_unload_completed_for_testing(
+      base::BindLambdaForTesting([&]() {
+        before_unload_completed = true;
+        EXPECT_TRUE(rfh->is_waiting_for_beforeunload_completion());
+        run_loop.Quit();
+      }));
+  FakeLocalFrameWithBeforeUnload local_frame(rfh);
   auto simulator = NavigationSimulatorImpl::CreateBrowserInitiated(
       GURL("https://example.com/simple.html"), contents());
   simulator->set_block_invoking_before_unload_completed_callback(true);
   simulator->Start();
-  EXPECT_TRUE(contents()
-                  ->GetPrimaryMainFrame()
-                  ->is_waiting_for_beforeunload_completion());
-  EXPECT_FALSE(local_frame.was_before_unload_called());
+  run_loop.Run();
+  EXPECT_TRUE(before_unload_completed);
+  EXPECT_FALSE(local_frame.was_before_unload_sent_to_renderer());
   // This is necessary to trigger FakeLocalFrameWithBeforeUnload to be bound.
-  contents()->GetPrimaryMainFrame()->FlushLocalFrameMessages();
+  rfh->FlushLocalFrameMessages();
   // This runs a MessageLoop, which also results in the PostTask() scheduled
   // completing.
   local_frame.FlushMessages();
-  EXPECT_FALSE(local_frame.was_before_unload_called());
+  EXPECT_FALSE(local_frame.was_before_unload_sent_to_renderer());
   // Because of the nested message loops run by the previous calls, the task
   // that RenderFrameHostImpl will have also completed.
-  EXPECT_FALSE(contents()
-                   ->GetPrimaryMainFrame()
-                   ->is_waiting_for_beforeunload_completion());
+  EXPECT_FALSE(rfh->is_waiting_for_beforeunload_completion());
 }
 
 class LoadingStateChangedDelegate : public WebContentsDelegate {
@@ -876,7 +876,7 @@ TEST_F(RenderFrameHostImplTest,
           NavigationRequest::From(navigation->GetNavigationHandle());
       // Disable Storage Partitioning by enabling the deprecation trial.
       request->GetMutableRuntimeFeatureStateContext()
-          .SetDisableThirdPartyStoragePartitioning2Enabled(true);
+          .SetDisableThirdPartyStoragePartitioning3Enabled(true);
     }
 
     navigation->Commit();
@@ -1032,7 +1032,7 @@ TEST_F(RenderFrameHostImplTest,
       NavigationRequest* request =
           NavigationRequest::From(navigation->GetNavigationHandle());
       request->GetMutableRuntimeFeatureStateContext()
-          .SetDisableThirdPartyStoragePartitioning2Enabled(true);
+          .SetDisableThirdPartyStoragePartitioning3Enabled(true);
     }
 
     navigation->Commit();
@@ -1111,13 +1111,13 @@ TEST_F(RenderFrameHostImplTest, CalculateStorageKeyOfUnnavigatedFrame) {
 
   // Disable Storage Partitioning by enabling the deprecation trial.
   request->GetMutableRuntimeFeatureStateContext()
-      .SetDisableThirdPartyStoragePartitioning2Enabled(true);
+      .SetDisableThirdPartyStoragePartitioning3Enabled(true);
 
   navigation->Commit();
 
   EXPECT_TRUE(RuntimeFeatureStateDocumentData::GetForCurrentDocument(main_rfh())
                   ->runtime_feature_state_read_context()
-                  .IsDisableThirdPartyStoragePartitioning2Enabled());
+                  .IsDisableThirdPartyStoragePartitioning3Enabled());
 
   // Create a child frame and navigate to `child_url`.
   auto* child_frame = main_test_rfh()->AppendChild("child");
@@ -1197,6 +1197,109 @@ TEST_F(RenderFrameHostImplTest,
           .IsTestFeatureEnabled());
 }
 
+class TestUnpartitionedStorageAcessContentBrowserClient
+    : public ContentBrowserClient {
+ public:
+  TestUnpartitionedStorageAcessContentBrowserClient() = default;
+  ~TestUnpartitionedStorageAcessContentBrowserClient() override = default;
+
+  bool IsUnpartitionedStorageAccessAllowedByUserPreference(
+      BrowserContext* browser_context,
+      const GURL& url,
+      const net::SiteForCookies& site_for_cookies,
+      const url::Origin& top_frame_origin) override {
+    return is_unpartitioned_storage_access_allowed_by_user_preference_;
+  }
+
+  void SetIsUnpartitionedStorageAccessAllowedByUserPreference(bool value) {
+    is_unpartitioned_storage_access_allowed_by_user_preference_ = value;
+  }
+
+ private:
+  bool is_unpartitioned_storage_access_allowed_by_user_preference_ = false;
+};
+
+// Test that CalculateStorageKey will create a first-party or third-party key,
+// in the presence of a deprecation trial, depending on the state of
+// IsUnpartitionedStorageAccessAllowedByUserPreference()
+TEST_F(
+    RenderFrameHostImplTest,
+    CalculateStorageKeyWithIsUnpartitionedStorageAccessAllowedByUserPreference) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  // Because Storage partitioning's usage of RuntimeFeatureState is only meant
+  // to disable (i.e.: 1p only) partitioning, we need the make sure the feature
+  // is on first.
+  scoped_feature_list.InitAndEnableFeature(
+      net::features::kThirdPartyStoragePartitioning);
+
+  TestUnpartitionedStorageAcessContentBrowserClient client;
+  ContentBrowserClient* regular_client = SetBrowserClientForTesting(&client);
+
+  client.SetIsUnpartitionedStorageAccessAllowedByUserPreference(true);
+
+  // This test will create a main frame that has a storage partitioning
+  // deprecation trial active and a child frame that is navigated to a
+  // third-party site. Since IsUnpartitionedStorageAccessAllowedByUserPreference
+  // returns true the child frame's StorageKey should be first-party.
+
+  GURL url = GURL("https://a.com");
+  GURL child_url = GURL("https://b.com");
+
+  // Start by giving the main frame a SP disabled
+  // RuntimeFeatureStateReadContext.
+  auto navigation =
+      NavigationSimulator::CreateRendererInitiated(url, main_rfh());
+  navigation->Start();
+
+  NavigationRequest* request =
+      NavigationRequest::From(navigation->GetNavigationHandle());
+
+  // Disable Storage Partitioning by enabling the deprecation trial.
+  request->GetMutableRuntimeFeatureStateContext()
+      .SetDisableThirdPartyStoragePartitioning3Enabled(true);
+
+  navigation->Commit();
+
+  EXPECT_TRUE(RuntimeFeatureStateDocumentData::GetForCurrentDocument(main_rfh())
+                  ->runtime_feature_state_read_context()
+                  .IsDisableThirdPartyStoragePartitioning3Enabled());
+
+  // Create a child frame and navigate to `child_url`.
+  auto* child_frame = main_test_rfh()->AppendChild("child");
+  auto child_navigation =
+      NavigationSimulator::CreateRendererInitiated(child_url, child_frame);
+  child_navigation->Commit();
+  child_frame = static_cast<TestRenderFrameHost*>(
+      child_navigation->GetFinalRenderFrameHost());
+
+  // Since IsUnpartitionedStorageAccessAllowedByUserPreference is true the
+  // StorageKey should be first-party.
+  blink::StorageKey child_frame_key_1p =
+      blink::StorageKey::CreateFirstParty(url::Origin::Create(child_url));
+  EXPECT_EQ(child_frame_key_1p, child_frame->GetStorageKey());
+
+  // Now perform the same test, except
+  // IsUnpartitionedStorageAccessAllowedByUserPreference is false.
+  client.SetIsUnpartitionedStorageAccessAllowedByUserPreference(false);
+  GURL child_url2 = GURL("https://c.com");
+
+  child_navigation =
+      NavigationSimulator::CreateRendererInitiated(child_url2, child_frame);
+  child_navigation->Commit();
+  child_frame = static_cast<TestRenderFrameHost*>(
+      child_navigation->GetFinalRenderFrameHost());
+
+  // Since IsUnpartitionedStorageAccessAllowedByUserPreference is false the
+  // StorageKey should be third-party.
+  blink::StorageKey child_frame_key_3p =
+      blink::StorageKey::Create(url::Origin::Create(child_url2),
+                                net::SchemefulSite(url::Origin::Create(url)),
+                                blink::mojom::AncestorChainBit::kCrossSite);
+  EXPECT_EQ(child_frame_key_3p, child_frame->GetStorageKey());
+
+  SetBrowserClientForTesting(regular_client);
+}
+
 #if BUILDFLAG(IS_ANDROID)
 class TestWebAuthnContentBrowserClientImpl : public ContentBrowserClient {
  public:
@@ -1238,6 +1341,7 @@ TEST_F(RenderFrameHostImplWebAuthnTest,
   main_test_rfh()->PerformGetAssertionWebAuthSecurityChecks(
       "doofenshmirtz.evil", url::Origin::Create(url),
       /*is_payment_credential_get_assertion=*/false,
+      /*remote_desktop_client_override_origin=*/std::nullopt,
       base::BindLambdaForTesting(
           [&status](blink::mojom::AuthenticatorStatus s, bool is_cross_origin) {
             status = s;
@@ -1257,6 +1361,7 @@ TEST_F(RenderFrameHostImplWebAuthnTest,
   main_test_rfh()->PerformMakeCredentialWebAuthSecurityChecks(
       "doofenshmirtz.evil", url::Origin::Create(url),
       /*is_payment_credential_creation=*/false,
+      /*remote_desktop_client_override_origin=*/std::nullopt,
       base::BindLambdaForTesting(
           [&status](blink::mojom::AuthenticatorStatus s, bool is_cross_origin) {
             status = s;
@@ -1276,6 +1381,7 @@ TEST_F(RenderFrameHostImplWebAuthnTest,
   main_test_rfh()->PerformGetAssertionWebAuthSecurityChecks(
       "owca.org", url::Origin::Create(url),
       /*is_payment_credential_get_assertion=*/false,
+      /*remote_desktop_client_override_origin=*/std::nullopt,
       base::BindLambdaForTesting(
           [&status](blink::mojom::AuthenticatorStatus s, bool is_cross_origin) {
             status = s;
@@ -1294,6 +1400,7 @@ TEST_F(RenderFrameHostImplWebAuthnTest,
   main_test_rfh()->PerformMakeCredentialWebAuthSecurityChecks(
       "owca.org", url::Origin::Create(url),
       /*is_payment_credential_creation=*/false,
+      /*remote_desktop_client_override_origin=*/std::nullopt,
       base::BindLambdaForTesting(
           [&status](blink::mojom::AuthenticatorStatus s, bool is_cross_origin) {
             status = s;

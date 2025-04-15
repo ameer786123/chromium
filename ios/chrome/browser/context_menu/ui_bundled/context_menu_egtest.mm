@@ -10,13 +10,13 @@
 #import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#import "components/data_sharing/public/features.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/url_formatter/url_formatter.h"
 #import "ios/chrome/browser/context_menu/ui_bundled/constants.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/test/fullscreen_app_interface.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/tabs/model/inactive_tabs/features.h"
-#import "ios/chrome/browser/ui/fullscreen/test/fullscreen_app_interface.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -280,10 +280,9 @@ void TapOnContextMenuButton(id<GREYMatcher> context_menu_item_button) {
       performAction:grey_tap()];
 }
 
-void RelaunchAppWithInactiveTabs2WeeksEnabled() {
+void RelaunchApp() {
   AppLaunchConfiguration config;
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.features_enabled.push_back(kInactiveTabsIPadFeature);
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 }
 
@@ -302,8 +301,9 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
   config.features_enabled.push_back(kTabGroupsIPad);
-  config.features_enabled.push_back(kModernTabStrip);
   config.features_enabled.push_back(kShareInWebContextMenuIOS);
+  config.features_enabled.push_back(
+      data_sharing::features::kDataSharingFeature);
   config.features_disabled.push_back(web::features::kSmoothScrollingDefault);
   return config;
 }
@@ -318,15 +318,15 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
 }
 
 - (void)setUpHistogramTester {
-  GREYAssertNil([MetricsAppInterface setupHistogramTester],
-                @"Failed to set up histogram tester.");
+  chrome_test_util::GREYAssertErrorNil(
+      [MetricsAppInterface setupHistogramTester]);
   _setUpHistogramTesterCalled = true;
 }
 
 - (void)tearDownHelper {
   if (_setUpHistogramTesterCalled) {
-    GREYAssertNil([MetricsAppInterface releaseHistogramTester],
-                  @"Failed to release histogram tester.");
+    chrome_test_util::GREYAssertErrorNil(
+        [MetricsAppInterface releaseHistogramTester]);
   }
   [super tearDownHelper];
 }
@@ -571,10 +571,13 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
       selectElementWithMatcher:ContextMenuItemWithAccessibilityLabelId(
                                    IDS_IOS_CONTENT_CONTEXT_OPENLINKNEWTAB)]
       assertWithMatcher:grey_sufficientlyVisible()];
-  [[EarlGrey selectElementWithMatcher:
-                 ContextMenuItemWithAccessibilityLabelId(
-                     IDS_IOS_CONTENT_CONTEXT_OPENLINKINNEWTABGROUP)]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  if (@available(iOS 17, *)) {
+    // Tab group is only available on iOS 17+ on iPad.
+    [[EarlGrey selectElementWithMatcher:
+                   ContextMenuItemWithAccessibilityLabelId(
+                       IDS_IOS_CONTENT_CONTEXT_OPENLINKINNEWTABGROUP)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+  }
   [[EarlGrey
       selectElementWithMatcher:ContextMenuItemWithAccessibilityLabelId(
                                    IDS_IOS_OPEN_IN_INCOGNITO_ACTION_TITLE)]
@@ -600,8 +603,9 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
 // Checks that "open in new window" shows up on a long press of a url link
 // and that it actually opens in a new window.
 - (void)testOpenLinkInNewWindow {
-  if (![ChromeEarlGrey areMultipleWindowsSupported])
+  if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
 
   // Loads url in first window.
   const GURL initialURL = self.testServer->GetURL(kInitialPageUrl);
@@ -629,8 +633,9 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
 // and that it actually opens in a new window, and that when the link is in an
 // incognito webstate, the newly opened webstate is also incognito.
 - (void)testOpenIncognitoLinkInNewWindow {
-  if (![ChromeEarlGrey areMultipleWindowsSupported])
+  if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
 
   [ChromeEarlGrey openNewIncognitoTab];
 
@@ -716,7 +721,7 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
   GREYAssertTrue([ChromeEarlGrey inactiveTabCount] == 0,
                  @"Inactive tab count should be 0");
 
-  RelaunchAppWithInactiveTabs2WeeksEnabled();
+  RelaunchApp();
 
   // Open the Tab Grid.
   [ChromeEarlGreyUI openTabGrid];
@@ -735,6 +740,10 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
 // exists in the tab grid, the option `Open in group` will become a submenu,
 // tapping it will result in listing all the existing tab groups.
 - (void)testContextMenuOpenInGroup {
+  if (@available(iOS 17, *)) {
+  } else if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
+  }
   const GURL initialURL = self.testServer->GetURL(kInitialPageUrl);
   [ChromeEarlGrey loadURL:initialURL];
   [ChromeEarlGrey
@@ -832,7 +841,9 @@ void RelaunchAppWithInactiveTabs2WeeksEnabled() {
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(grey_ancestor(grey_accessibilityID(
                                               @"AlertAccessibilityIdentifier")),
-                                          grey_text(stringURL), nil)]
+                                          chrome_test_util::ContainsPartialText(
+                                              stringURL),
+                                          nil)]
       assertWithMatcher:grey_notNil()];
 }
 

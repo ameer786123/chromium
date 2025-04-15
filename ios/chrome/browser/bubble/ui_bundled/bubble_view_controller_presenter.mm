@@ -26,8 +26,7 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
 
 }  // namespace
 
-// Implements BubbleViewDelegate to handle BubbleView's close and snooze buttons
-// tap.
+// Implements BubbleViewDelegate to handle BubbleView's close button tap.
 @interface BubbleViewControllerPresenter () <UIGestureRecognizerDelegate,
                                              BubbleViewDelegate>
 
@@ -85,7 +84,10 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
 
 @end
 
-@implementation BubbleViewControllerPresenter
+@implementation BubbleViewControllerPresenter {
+  // Whether the IPH gesture recognizers for dismissal are added.
+  BOOL _gestureRecognizersActive;
+}
 
 @synthesize bubbleViewController = _bubbleViewController;
 @synthesize insideBubbleTapRecognizer = _insideBubbleTapRecognizer;
@@ -102,7 +104,6 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
 
 - (instancetype)initWithText:(NSString*)text
                        title:(NSString*)titleString
-                       image:(UIImage*)image
               arrowDirection:(BubbleArrowDirection)arrowDirection
                    alignment:(BubbleAlignment)alignment
                   bubbleType:(BubbleViewType)type
@@ -113,7 +114,6 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
     _bubbleViewController =
         [[BubbleViewController alloc] initWithText:text
                                              title:titleString
-                                             image:image
                                     arrowDirection:arrowDirection
                                          alignment:alignment
                                     bubbleViewType:type
@@ -140,7 +140,6 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
                                               dismissalCallback {
   return [self initWithText:text
                       title:nil
-                      image:nil
              arrowDirection:arrowDirection
                   alignment:alignment
                  bubbleType:BubbleViewTypeDefault
@@ -238,9 +237,7 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
   [self.bubbleViewController setArrowHidden:hidden animated:animated];
 }
 
-- (void)dismissAnimated:(BOOL)animated
-                 reason:(IPHDismissalReasonType)reason
-           snoozeAction:(feature_engagement::Tracker::SnoozeAction)action {
+- (void)dismissAnimated:(BOOL)animated reason:(IPHDismissalReasonType)reason {
   // Because this object must stay in memory to handle the `userEngaged`
   // property correctly, it is possible for `dismissAnimated` to be called
   // multiple times. However, only the first call should have any effect.
@@ -259,18 +256,12 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
   self.presenting = NO;
 
   if (self.dismissalCallback) {
-    self.dismissalCallback(reason, action);
+    self.dismissalCallback(reason);
   }
 }
 
 - (void)dismissAnimated:(BOOL)animated {
   [self dismissAnimated:animated reason:IPHDismissalReasonType::kUnknown];
-}
-
-- (void)dismissAnimated:(BOOL)animated reason:(IPHDismissalReasonType)reason {
-  [self dismissAnimated:animated
-                 reason:reason
-           snoozeAction:feature_engagement::Tracker::SnoozeAction::DISMISSED];
 }
 
 - (void)dealloc {
@@ -350,12 +341,6 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
   [self dismissAnimated:YES reason:IPHDismissalReasonType::kTappedClose];
 }
 
-- (void)didTapSnoozeButton {
-  [self dismissAnimated:YES
-                 reason:IPHDismissalReasonType::kTappedSnooze
-           snoozeAction:feature_engagement::Tracker::SnoozeAction::SNOOZED];
-}
-
 #pragma mark - Private
 
 - (NSTimeInterval)bubbleVisibilityDuration {
@@ -371,48 +356,90 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
   [self.insideBubbleTapRecognizer.view
       removeGestureRecognizer:self.insideBubbleTapRecognizer];
   [self.swipeRecognizer.view removeGestureRecognizer:self.swipeRecognizer];
+
+  if (IsIPHGestureRecognitionImprovementEnabled()) {
+    self.outsideBubbleTapRecognizer = nil;
+    self.outsideBubblePanRecognizer = nil;
+    self.insideBubbleTapRecognizer = nil;
+    self.swipeRecognizer = nil;
+  }
+
+  _gestureRecognizersActive = NO;
 }
 
 // Adds gesture recognizers to parent view.
 - (void)addGestureRecognizersToParentView:(UIView*)parentView {
-  self.outsideBubbleTapRecognizer = [[UITapGestureRecognizer alloc]
-      initWithTarget:self
-              action:@selector(tapOutsideBubbleRecognized:)];
-  self.outsideBubbleTapRecognizer.delegate = self;
-  self.outsideBubbleTapRecognizer.cancelsTouchesInView = NO;
+  if (!IsIPHGestureRecognitionOutsideTapAblationEnabled()) {
+    self.outsideBubbleTapRecognizer = [[UITapGestureRecognizer alloc]
+        initWithTarget:self
+                action:@selector(tapOutsideBubbleRecognized:)];
+    self.outsideBubbleTapRecognizer.delegate = self;
+    self.outsideBubbleTapRecognizer.cancelsTouchesInView =
+        ShouldCancelTouchesInViewForIPH();
 
-  self.outsideBubblePanRecognizer = [[UIPanGestureRecognizer alloc]
-      initWithTarget:self
-              action:@selector(tapOutsideBubbleRecognized:)];
-  self.outsideBubblePanRecognizer.delegate = self;
-  self.outsideBubblePanRecognizer.cancelsTouchesInView = NO;
+    [parentView addGestureRecognizer:self.outsideBubbleTapRecognizer];
+  }
 
-  self.insideBubbleTapRecognizer = [[UITapGestureRecognizer alloc]
-      initWithTarget:self
-              action:@selector(tapInsideBubbleRecognized:)];
-  self.insideBubbleTapRecognizer.delegate = self;
-  self.insideBubbleTapRecognizer.cancelsTouchesInView = NO;
+  BOOL shouldEnablePanGestureRecognizer =
+      !IsIPHGestureRecognitionPanAblationEnabled() &&
+      !self.forceDisablePanGestureRecognizer;
+  if (shouldEnablePanGestureRecognizer) {
+    self.outsideBubblePanRecognizer = [[UIPanGestureRecognizer alloc]
+        initWithTarget:self
+                action:@selector(tapOutsideBubbleRecognized:)];
+    self.outsideBubblePanRecognizer.delegate = self;
+    self.outsideBubblePanRecognizer.cancelsTouchesInView =
+        ShouldCancelTouchesInViewForIPH();
 
-  self.swipeRecognizer = [[UISwipeGestureRecognizer alloc]
-      initWithTarget:self
-              action:@selector(tapOutsideBubbleRecognized:)];
-  self.swipeRecognizer.direction = UISwipeGestureRecognizerDirectionUp;
-  self.swipeRecognizer.delegate = self;
+    [parentView addGestureRecognizer:self.outsideBubblePanRecognizer];
+  }
 
-  [self.bubbleViewController.view
-      addGestureRecognizer:self.insideBubbleTapRecognizer];
-  [parentView addGestureRecognizer:self.outsideBubbleTapRecognizer];
-  [parentView addGestureRecognizer:self.outsideBubblePanRecognizer];
-  [parentView addGestureRecognizer:self.swipeRecognizer];
+  if (!IsIPHGestureRecognitionInsideTapAblationEnabled()) {
+    self.insideBubbleTapRecognizer = [[UITapGestureRecognizer alloc]
+        initWithTarget:self
+                action:@selector(tapInsideBubbleRecognized:)];
+    self.insideBubbleTapRecognizer.delegate = self;
+    self.insideBubbleTapRecognizer.cancelsTouchesInView =
+        ShouldCancelTouchesInViewForIPH();
+
+    [self.bubbleViewController.view
+        addGestureRecognizer:self.insideBubbleTapRecognizer];
+  }
+
+  if (!IsIPHGestureRecognitionSwipeAblationEnabled()) {
+    self.swipeRecognizer = [[UISwipeGestureRecognizer alloc]
+        initWithTarget:self
+                action:@selector(tapOutsideBubbleRecognized:)];
+    self.swipeRecognizer.direction = UISwipeGestureRecognizerDirectionUp;
+    self.swipeRecognizer.delegate = self;
+
+    [parentView addGestureRecognizer:self.swipeRecognizer];
+  }
+
+  _gestureRecognizersActive = YES;
 }
 
 // Invoked by tapping inside the bubble. Dismisses the bubble.
 - (void)tapInsideBubbleRecognized:(id)sender {
+  if (IsIPHGestureRecognitionImprovementEnabled()) {
+    // If the gesture recognizers are no longer active, we should stop handling
+    // taps. This is to prevent handling queued gestures which are now invalid.
+    if (!_gestureRecognizersActive) {
+      return;
+    }
+  }
   [self dismissAnimated:YES reason:IPHDismissalReasonType::kTappedIPH];
 }
 
 // Invoked by tapping outside the bubble. Dismisses the bubble.
 - (void)tapOutsideBubbleRecognized:(UIGestureRecognizer*)sender {
+  if (IsIPHGestureRecognitionImprovementEnabled()) {
+    // If the gesture recognizers are no longer active, we should stop handling
+    // taps. This is to prevent handling queued gestures which are now invalid.
+    if (!_gestureRecognizersActive) {
+      return;
+    }
+  }
   if (sender.numberOfTouches <= 0) {
     return;
   }
@@ -470,9 +497,6 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
   CGSize bubbleSize =
       [self.bubbleViewController.view sizeThatFits:maxBubbleSize];
 
-  if ([self bubbleIsFullWidth]) {
-    bubbleSize.width = maxBubbleSize.width;
-  }
   // If `bubbleSize` does not fit in `maxBubbleSize`, the bubble will be
   // partially off screen and not look good. This is most likely a result of
   // an incorrect value for `alignment` (such as a trailing aligned bubble
@@ -494,17 +518,7 @@ const CGFloat kVoiceOverAnnouncementDelay = 1;
 
 // Whether the bubble's arrow is floating.
 - (BOOL)arrowIsFloating {
-  return self.bubbleType == BubbleViewTypeWithClose ||
-         ((self.bubbleType == BubbleViewTypeRichWithSnooze ||
-           self.bubbleType == BubbleViewTypeRich) &&
-          !IsRichBubbleWithoutImageEnabled());
-}
-
-// Whether the bubble should be full width.
-- (BOOL)bubbleIsFullWidth {
-  return (self.bubbleType == BubbleViewTypeRichWithSnooze ||
-          self.bubbleType == BubbleViewTypeRich) &&
-         !IsRichBubbleWithoutImageEnabled();
+  return self.bubbleType == BubbleViewTypeWithClose;
 }
 
 // Whether the bubble should stick or auto-dismiss when the user uses a screen

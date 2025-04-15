@@ -27,7 +27,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/numerics/byte_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -77,7 +76,7 @@ constexpr uint8_t kLottieExpected[] = {'t', 'e', 's', 't'};
 // Mock of |lottie::ParseLottieAsStillImage|. Checks that |kLottieData| is
 // properly stripped of the "LOTTIE" prefix.
 gfx::ImageSkia ParseLottieAsStillImageForTesting(std::vector<uint8_t> data) {
-  CHECK(base::ranges::equal(data, kLottieExpected));
+  CHECK(std::ranges::equal(data, kLottieExpected));
 
   constexpr int kDimension = 16;
   return gfx::ImageSkia(
@@ -99,7 +98,7 @@ void AddCustomChunk(std::string_view custom_chunk,
   // Expect an IHDR chunk next. It starts with a length.
   auto ihdr_chunk = base::as_byte_span(*bitmap_data).subspan(chunk_offset);
   uint32_t ihdr_chunk_length =
-      base::numerics::U32FromBigEndian(ihdr_chunk.first<sizeof(uint32_t)>());
+      base::U32FromBigEndian(ihdr_chunk.first<sizeof(uint32_t)>());
   auto ihdr_type =
       ihdr_chunk.subspan<sizeof(uint32_t), std::size(kPngIHDRChunkType)>();
   EXPECT_TRUE(ihdr_type == kPngIHDRChunkType);
@@ -721,7 +720,7 @@ TEST_F(ResourceBundleImageTest, Lottie) {
 
   std::optional<std::vector<uint8_t>> data = resource_bundle->GetLottieData(3);
   ASSERT_TRUE(data.has_value());
-  EXPECT_TRUE(base::ranges::equal(*data, kLottieExpected));
+  EXPECT_TRUE(std::ranges::equal(*data, kLottieExpected));
 
 #if BUILDFLAG(IS_CHROMEOS)
   ui::ResourceBundle::SetLottieParsingFunctions(

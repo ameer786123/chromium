@@ -4,7 +4,9 @@
 
 #include "third_party/blink/renderer/modules/ml/ml.h"
 
+#include "services/webnn/public/cpp/webnn_trace.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom-blink-forward.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_context_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_device_type.h"
@@ -63,7 +65,7 @@ void ML::Trace(Visitor* visitor) const {
 ScriptPromise<MLContext> ML::createContext(ScriptState* script_state,
                                            MLContextOptions* options,
                                            ExceptionState& exception_state) {
-  ScopedMLTrace scoped_trace("ML::createContext");
+  webnn::ScopedTrace scoped_trace("ML::createContext(MLContextOptions)");
   if (!script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Invalid script state");
@@ -86,7 +88,7 @@ ScriptPromise<MLContext> ML::createContext(ScriptState* script_state,
           ConvertBlinkPowerPreferenceToMojo(options->powerPreference())),
       WTF::BindOnce(
           [](ML* ml, ScriptPromiseResolver<MLContext>* resolver,
-             MLContextOptions* options,
+             MLContextOptions* options, webnn::ScopedTrace scoped_trace,
              webnn::mojom::blink::CreateContextResultPtr result) {
             ml->pending_resolvers_.erase(resolver);
 
@@ -109,7 +111,7 @@ ScriptPromise<MLContext> ML::createContext(ScriptState* script_state,
                 std::move(result->get_success())));
           },
           WrapPersistent(this), WrapPersistent(resolver),
-          WrapPersistent(options)));
+          WrapPersistent(options), std::move(scoped_trace)));
 
   return promise;
 }
@@ -122,6 +124,16 @@ void ML::OnWebNNServiceConnectionError() {
                                      "WebNN service connection error.");
   }
   pending_resolvers_.clear();
+}
+
+ScriptPromise<MLContext> ML::createContext(ScriptState* script_state,
+                                           GPUDevice* gpu_device,
+                                           ExceptionState& exception_state) {
+  webnn::ScopedTrace scoped_trace("ML::createContext(GPUDevice)");
+  exception_state.ThrowDOMException(
+      DOMExceptionCode::kNotSupportedError,
+      "ML.createContext(GPUDevice) is not supported.");
+  return EmptyPromise();
 }
 
 void ML::EnsureWebNNServiceConnection() {

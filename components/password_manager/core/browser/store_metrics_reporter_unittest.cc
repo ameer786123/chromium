@@ -11,7 +11,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -27,7 +26,6 @@
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/sync_username_test_base.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
@@ -162,9 +160,6 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
     // should be mocked.
     OSCryptMocker::SetUp();
 
-    feature_list_.InitWithFeatures({features::kPasswordReuseDetectionEnabled},
-                                   {});
-
     prefs_.registry()->RegisterBooleanPref(prefs::kCredentialsEnableService,
                                            false);
     prefs_.registry()->RegisterBooleanPref(
@@ -183,10 +178,10 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
         prefs::kPasswordRemovalReasonForAccount, 0);
     prefs_.registry()->RegisterIntegerPref(
         prefs::kPasswordRemovalReasonForProfile, 0);
-#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
-    prefs_.registry()->RegisterDictionaryPref(
-        prefs::kAccountStoragePerAccountSettings);
-#endif
+    prefs_.registry()->RegisterBooleanPref(
+        prefs::kProfileStoreMigratedToOSCryptAsync, false);
+    prefs_.registry()->RegisterBooleanPref(
+        prefs::kAccountStoreMigratedToOSCryptAsync, false);
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
     prefs_.registry()->RegisterBooleanPref(
         prefs::kBiometricAuthenticationBeforeFilling, false);
@@ -208,7 +203,6 @@ class StoreMetricsReporterTest : public SyncUsernameTestBase {
   }
 
  protected:
-  base::test::ScopedFeatureList feature_list_;
   TestingPrefServiceSimple prefs_;
   testing::NiceMock<MockPasswordManagerSettingsService> settings_service_;
 };
@@ -530,6 +524,15 @@ TEST_F(StoreMetricsReporterTest, ReportAccountsPerSiteHiResMetricsTest) {
       "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
       "Overall."
       "WithoutCustomPassphrase",
+      2, 2);
+
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
+      "Overall",
+      1, 7);
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.ProfileStore.AccountsPerSiteHiRes3."
+      "Overall",
       2, 2);
 
   // In this test both profile and account store contained the same 10 test
@@ -949,6 +952,15 @@ TEST_F(StoreMetricsReporterTest,
       "WithoutCustomPassphrase",
       2, 2);
 
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
+      "Overall",
+      1, 7);
+  histogram_tester.ExpectBucketCount(
+      "PasswordManager.AccountStore.AccountsPerSiteHiRes3."
+      "Overall",
+      2, 2);
+
   // In this test both profile and account store contained the same 11 test
   // credentials.
   EXPECT_EQ(
@@ -1335,9 +1347,6 @@ TEST_F(StoreMetricsReporterTest, DuplicatesMetrics_MismatchedDuplicates) {
 // A test that covers multi-store metrics, which are recorded by the
 // StoreMetricsReporter directly.
 TEST_F(StoreMetricsReporterTest, MultiStoreMetrics) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      syncer::kEnablePasswordsAccountStorageForSyncingUsers);
 #if BUILDFLAG(IS_ANDROID)
   prefs_.SetInteger(
       prefs::kPasswordsUseUPMLocalAndSeparateStores,
@@ -1401,74 +1410,71 @@ TEST_F(StoreMetricsReporterTest, MultiStoreMetrics) {
   profile_store->AddLogin(
       CreateForm(kRealm2, "identicaluser1", "identicalpass1"));
 
-  for (bool syncing : {false, true}) {
-    for (bool opted_in : {false, true}) {
-      test_sync_service()->SetSignedIn(syncing ? signin::ConsentLevel::kSync
-                                               : signin::ConsentLevel::kSignin);
-      ASSERT_EQ(test_sync_service()->IsSyncFeatureEnabled(), syncing);
-      if (opted_in) {
-        test_sync_service()->GetUserSettings()->SetSelectedTypes(
-            /*sync_everything=*/true, syncer::UserSelectableTypeSet::All());
-      } else {
-        test_sync_service()->GetUserSettings()->SetSelectedTypes(
-            /*sync_everything=*/false, syncer::UserSelectableTypeSet());
-      }
-      ASSERT_EQ(features_util::IsOptedInForAccountStorage(pref_service(),
-                                                          sync_service()),
-                opted_in);
+  for (bool account_storage_enabled : {false, true}) {
+    test_sync_service()->SetSignedIn(signin::ConsentLevel::kSignin);
+    ASSERT_FALSE(test_sync_service()->IsSyncFeatureEnabled());
+    if (account_storage_enabled) {
+      test_sync_service()->GetUserSettings()->SetSelectedTypes(
+          /*sync_everything=*/true, syncer::UserSelectableTypeSet::All());
+    } else {
+      test_sync_service()->GetUserSettings()->SetSelectedTypes(
+          /*sync_everything=*/false, syncer::UserSelectableTypeSet());
+    }
+    ASSERT_EQ(
+        features_util::IsAccountStorageEnabled(pref_service(), sync_service()),
+        account_storage_enabled);
 
-      // In every pass in the loop, StoreMetricsReporter uses the same pref
-      // service. Set the kLastTimePasswordStoreMetricsReported to make sure
-      // metrics will be reported in the second pass too.
-      prefs_.SetDouble(
-          password_manager::prefs::kLastTimePasswordStoreMetricsReported, 0.0);
+    // In every pass in the loop, StoreMetricsReporter uses the same pref
+    // service. Set the kLastTimePasswordStoreMetricsReported to make sure
+    // metrics will be reported in the second pass too.
+    prefs_.SetDouble(
+        password_manager::prefs::kLastTimePasswordStoreMetricsReported, 0.0);
 
-      base::HistogramTester histogram_tester;
+    base::HistogramTester histogram_tester;
 
-      StoreMetricsReporter reporter(
-          profile_store.get(), account_store.get(), sync_service(), &prefs_,
-          /*password_reuse_manager=*/nullptr, &settings_service(),
-          /*done_callback*/ base::DoNothing());
+    StoreMetricsReporter reporter(
+        profile_store.get(), account_store.get(), sync_service(), &prefs_,
+        /*password_reuse_manager=*/nullptr, &settings_service(),
+        /*done_callback*/ base::DoNothing());
 
-      // Wait for the metrics to get reported, which involves queries to the
-      // stores, i.e. to background task runners.
-      RunUntilIdle();
+    // Wait for the metrics to get reported, which involves queries to the
+    // stores, i.e. to background task runners.
+    RunUntilIdle();
 
-      if (opted_in) {
-        histogram_tester.ExpectUniqueSample(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Additional",
-            2, 1);
-        histogram_tester.ExpectUniqueSample(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Missing",
-            4, 1);
-        histogram_tester.ExpectUniqueSample(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Identical",
-            2, 1);
-        histogram_tester.ExpectUniqueSample(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Conflicting",
-            1, 1);
-      } else {
-        histogram_tester.ExpectTotalCount(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Additional",
-            0);
-        histogram_tester.ExpectTotalCount(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Missing",
-            0);
-        histogram_tester.ExpectTotalCount(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Identical",
-            0);
-        histogram_tester.ExpectTotalCount(
-            "PasswordManager.AccountStoreVsProfileStore4."
-            "Conflicting",
-            0);
-      }
+    if (account_storage_enabled) {
+      histogram_tester.ExpectUniqueSample(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Additional",
+          2, 1);
+      histogram_tester.ExpectUniqueSample(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Missing",
+          4, 1);
+      histogram_tester.ExpectUniqueSample(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Identical",
+          2, 1);
+      histogram_tester.ExpectUniqueSample(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Conflicting",
+          1, 1);
+    } else {
+      histogram_tester.ExpectTotalCount(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Additional",
+          0);
+      histogram_tester.ExpectTotalCount(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Missing",
+          0);
+      histogram_tester.ExpectTotalCount(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Identical",
+          0);
+      histogram_tester.ExpectTotalCount(
+          "PasswordManager.AccountStoreVsProfileStore4."
+          "Conflicting",
+          0);
     }
   }
 
@@ -1652,5 +1658,21 @@ TEST_F(StoreMetricsReporterTest, ReportPasswordInsecureCredentialMetrics) {
   RunUntilIdle();
 }
 
+TEST_F(StoreMetricsReporterTest, ReportReencryptedWithAsyncOSCrypt) {
+  prefs_.SetBoolean(prefs::kProfileStoreMigratedToOSCryptAsync, true);
+  prefs_.SetBoolean(prefs::kAccountStoreMigratedToOSCryptAsync, true);
+  base::HistogramTester histogram_tester;
+
+  StoreMetricsReporter reporter(
+      /*profile_store=*/nullptr,
+      /*account_store=*/nullptr, sync_service(), &prefs_,
+      /*password_reuse_manager=*/nullptr, &settings_service(),
+      /*done_callback*/ base::DoNothing());
+
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.ProfileStore.ReencryptedWithAsyncOSCrypt", true, 1);
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.AccountStore.ReencryptedWithAsyncOSCrypt", true, 1);
+}
 }  // namespace
 }  // namespace password_manager

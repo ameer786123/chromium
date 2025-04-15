@@ -18,7 +18,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/desktop_browser_frame_aura_linux.h"
 #include "chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h"
-#include "chrome/browser/ui/views/tabs/tab_drag_controller.h"
+#include "chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "third_party/skia/include/core/SkRRect.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
@@ -36,13 +36,13 @@
 
 namespace {
 
-#if defined(USE_DBUS_MENU)
-bool CreateGlobalMenuBar() {
+#if BUILDFLAG(USE_DBUS)
+bool ShouldCreateGlobalMenuBar() {
   return ui::OzonePlatform::GetInstance()
-      ->GetPlatformProperties()
+      ->GetPlatformRuntimeProperties()
       .supports_global_application_menus;
 }
-#endif  // defined(USE_DBUS_MENU)
+#endif
 
 std::unordered_set<std::string>& SentStartupIds() {
   static base::NoDestructor<std::unordered_set<std::string>> sent_startup_ids;
@@ -64,7 +64,7 @@ bool IsShowingFrame(bool use_custom_frame,
   return use_custom_frame &&
          window_state != ui::PlatformWindowState::kMaximized &&
          window_state != ui::PlatformWindowState::kMinimized &&
-         !ui::IsPlatformWindowStateFullscreen(window_state);
+         window_state != ui::PlatformWindowState::kFullScreen;
 }
 
 }  // namespace
@@ -294,12 +294,12 @@ void BrowserDesktopWindowTreeHostLinux::Init(
     const views::Widget::InitParams& params) {
   DesktopWindowTreeHostLinux::Init(std::move(params));
 
-#if defined(USE_DBUS_MENU)
-  // We have now created our backing X11 window.  We now need to (possibly)
+#if BUILDFLAG(USE_DBUS)
+  // We have now created our backing window. We now need to (possibly)
   // alert the desktop environment that there's a menu bar attached to it.
-  if (CreateGlobalMenuBar()) {
-    dbus_appmenu_ =
-        std::make_unique<DbusAppmenu>(browser_view_, GetAcceleratedWidget());
+  if (ShouldCreateGlobalMenuBar()) {
+    dbus_appmenu_ = std::make_unique<DbusAppmenu>(
+        browser_view_, platform_window(), GetAcceleratedWidget());
   }
 #endif
 }
@@ -311,7 +311,7 @@ void BrowserDesktopWindowTreeHostLinux::OnWidgetInitDone() {
 }
 
 void BrowserDesktopWindowTreeHostLinux::CloseNow() {
-#if defined(USE_DBUS_MENU)
+#if BUILDFLAG(USE_DBUS)
   dbus_appmenu_.reset();
 #endif
   DesktopWindowTreeHostLinux::CloseNow();
@@ -330,11 +330,10 @@ void BrowserDesktopWindowTreeHostLinux::Show(
   }
 }
 
-bool BrowserDesktopWindowTreeHostLinux::IsOverrideRedirect() const {
-  auto* x11_extension = GetX11Extension();
+bool BrowserDesktopWindowTreeHostLinux::IsOverrideRedirect(
+    const ui::X11Extension& x11_extension) const {
   return (browser_frame_->tab_drag_kind() == TabDragKind::kAllTabs) &&
-         x11_extension && x11_extension->IsWmTiling() &&
-         x11_extension->CanResetOverrideRedirect();
+         x11_extension.IsWmTiling() && x11_extension.CanResetOverrideRedirect();
 }
 
 gfx::Insets BrowserDesktopWindowTreeHostLinux::CalculateInsetsInDIP(
@@ -354,8 +353,8 @@ void BrowserDesktopWindowTreeHostLinux::OnWindowStateChanged(
     ui::PlatformWindowState new_state) {
   DesktopWindowTreeHostLinux::OnWindowStateChanged(old_state, new_state);
 
-  bool fullscreen_changed = ui::IsPlatformWindowStateFullscreen(new_state) ||
-                            ui::IsPlatformWindowStateFullscreen(old_state);
+  bool fullscreen_changed = new_state == ui::PlatformWindowState::kFullScreen ||
+                            old_state == ui::PlatformWindowState::kFullScreen;
   if (old_state != new_state && fullscreen_changed) {
     // If the browser view initiated this state change,
     // BrowserView::ProcessFullscreen will no-op, so this call is harmless.

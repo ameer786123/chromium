@@ -7,9 +7,12 @@
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/branding_buildflags.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/views/data_sharing/data_sharing_open_group_helper.h"
 #include "chrome/browser/ui/webui/data_sharing/data_sharing_ui.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/data_sharing/public/features.h"
+#include "components/saved_tab_groups/public/features.h"
 #include "content/public/test/test_web_ui.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -28,11 +31,18 @@ class MockPage : public data_sharing::mojom::Page {
   MOCK_METHOD(void, OnAccessTokenFetched, (const std::string& access_token));
   MOCK_METHOD(void,
               ReadGroups,
-              (const std::vector<std::string>& group_ids,
+              (data_sharing::mojom::ReadGroupsParamsPtr read_groups_params,
                ReadGroupsCallback callback));
+  MOCK_METHOD(void,
+              ReadGroupWithToken,
+              (data_sharing::mojom::ReadGroupWithTokenParamPtr param,
+               ReadGroupWithTokenCallback callback));
   MOCK_METHOD(void,
               DeleteGroup,
               (const std::string& group_id, DeleteGroupCallback callback));
+  MOCK_METHOD(void,
+              LeaveGroup,
+              (const std::string& group_id, LeaveGroupCallback callback));
 
   mojo::Receiver<data_sharing::mojom::Page> receiver_{this};
 };
@@ -57,11 +67,9 @@ class DataSharingPageHandlerUnitTest : public BrowserWithTestWindowTest {
             base::test::SingleThreadTaskEnvironment::TimeSource::MOCK_TIME) {}
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/
-        {
-            data_sharing::features::kDataSharingFeature,
-        },
-        /*disabled_features=*/{});
+        {data_sharing::features::kDataSharingFeature,
+         tab_groups::kTabGroupSyncServiceDesktopMigration},
+        {});
     BrowserWithTestWindowTest::SetUp();
     web_contents_ = content::WebContents::Create(
         content::WebContents::CreateParams(profile()));
@@ -108,6 +116,15 @@ TEST_F(DataSharingPageHandlerUnitTest, GetTabGroupPreview) {
           });
   handler()->GetTabGroupPreview("GROUP_ID", "ACCESS_TOKEN",
                                 std::move(callback));
+}
+
+// TODO(crbug.com/381173816): This test should not run without setting sync
+// service.
+TEST_F(DataSharingPageHandlerUnitTest, DISABLED_OpenTabGroup) {
+  handler()->OpenTabGroup("FAKE_GROUP_ID");
+  DataSharingOpenGroupHelper* helper =
+      browser()->browser_window_features()->data_sharing_open_group_helper();
+  EXPECT_TRUE(helper->group_ids_for_testing().contains("FAKE_GROUP_ID"));
 }
 
 TEST_F(DataSharingPageHandlerUnitTest, OnAccessTokenFetched) {

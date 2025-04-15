@@ -30,6 +30,7 @@
 #include <cassert>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "base/feature_list.h"
 #include "base/task/single_thread_task_runner.h"
@@ -45,17 +46,21 @@
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
+#include "third_party/blink/renderer/platform/loader/fetch/fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/integrity_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/memory_cache.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_client_walker.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_finish_observer.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/background_response_processor.h"
+#include "third_party/blink/renderer/platform/loader/unencoded_digest.h"
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -69,7 +74,7 @@ namespace blink {
 namespace {
 
 void NotifyFinishObservers(
-    HeapHashSet<WeakMember<ResourceFinishObserver>>* observers) {
+    GCedHeapHashSet<WeakMember<ResourceFinishObserver>>* observers) {
   for (const auto& observer : *observers)
     observer->NotifyFinished();
 }
@@ -91,7 +96,7 @@ void GetSharedBufferMemoryDump(SharedBuffer* buffer,
 // These response headers are not copied from a revalidated response to the
 // cached response headers. For compatibility, this list is based on Chromium's
 // net/http/http_response_headers.cc.
-const auto kHeadersToIgnoreAfterRevalidation = std::to_array<const char*>({
+constexpr auto kHeadersToIgnoreAfterRevalidation = std::to_array<const char*>({
     "allow",
     "connection",
     "etag",
@@ -144,26 +149,11 @@ Resource::Resource(const ResourceRequestHead& request,
                    ResourceType type,
                    const ResourceLoaderOptions& options)
     : type_(type),
-      status_(ResourceStatus::kNotStarted),
-      encoded_size_(0),
-      decoded_size_(0),
       cache_identifier_(MemoryCache::DefaultCacheIdentifier()),
-      link_preload_(false),
-      is_alive_(false),
-      is_add_remove_client_prohibited_(false),
-      revalidation_status_(RevalidationStatus::kNoRevalidatingOrFailed),
-      integrity_disposition_(ResourceIntegrityDisposition::kNotChecked),
       options_(options),
       response_timestamp_(Now()),
       resource_request_(request),
       overhead_size_(CalculateOverheadSize()) {
-  scoped_refptr<const SecurityOrigin> top_frame_origin =
-      resource_request_.TopFrameOrigin();
-  if (top_frame_origin) {
-    net::SchemefulSite site(top_frame_origin->ToUrlOrigin());
-    existing_top_frame_sites_in_cache_.insert(site);
-  }
-
   InstanceCounters::IncrementCounter(InstanceCounters::kResourceCounter);
 
   if (IsMainThread())
@@ -193,31 +183,74 @@ void Resource::SetLoader(ResourceLoader* loader) {
 void Resource::CheckResourceIntegrity() {
   // Skip the check and reuse the previous check result, especially on
   // successful revalidation.
-  if (IntegrityDisposition() != ResourceIntegrityDisposition::kNotChecked)
+  if (integrity_disposition_ != ResourceIntegrityDisposition::kNotChecked) {
     return;
+  }
 
   // Loading error occurred? Then result is uncheckable.
-  integrity_report_info_.Clear();
+  integrity_report_.Clear();
   if (ErrorOccurred()) {
     CHECK(!Data());
-    integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
+    integrity_disposition_ = ResourceIntegrityDisposition::kNetworkError;
     return;
   }
 
-  // No integrity attributes to check? Then we're passing.
+  // Check `Unencoded-Digest` headers. If the digest doesn't match, fail.
+  // Otherwise, fall through to validating SRI.
+  const FeatureContext* feature_context =
+      loader_ ? loader_->GetFeatureContext() : nullptr;
+  auto unencoded_digest = GetResponse().UnencodedDigest(feature_context);
+  if (unencoded_digest.has_value() && !unencoded_digest->DoesMatch(Data())) {
+    DCHECK(RuntimeEnabledFeatures::UnencodedDigestEnabled(feature_context));
+    integrity_disposition_ =
+        ResourceIntegrityDisposition::kFailedUnencodedDigest;
+    integrity_report_.AddConsoleErrorMessage(
+        "The resource '" + Url().ElidedString() +
+        "' has an `unencoded-digest` header which asserts a digest which does "
+        "not match the resource's body.");
+    return;
+  }
+
+  HashMap<HashAlgorithm, String> integrity_hashes;
+  bool is_cors_same_origin = response_.IsCorsSameOrigin();
+  HashSet<HashAlgorithm> csp_hash_reports_needed;
+  if ((type_ == ResourceType::kScript) && loader_) {
+    csp_hash_reports_needed = loader_->Fetcher()->Context().CSPHashesToReport();
+  }
   if (IntegrityMetadata().empty()) {
-    integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
-    return;
-  }
-
-  if (SubresourceIntegrity::CheckSubresourceIntegrity(
-          IntegrityMetadata(), Data(), Url(), *this, integrity_report_info_)) {
+    // No integrity attributes to check? Then we're passing.
     integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
   } else {
-    integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
+    if (SubresourceIntegrity::CheckSubresourceIntegrity(
+            IntegrityMetadata(), Data(), Url(), *this, feature_context,
+            integrity_report_, &integrity_hashes)) {
+      integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
+    } else {
+      integrity_disposition_ =
+          ResourceIntegrityDisposition::kFailedIntegrityMetadata;
+      // The resource was blocked so there's nothing to report.
+      csp_hash_reports_needed = HashSet<HashAlgorithm>();
+    }
   }
 
-  DCHECK_NE(IntegrityDisposition(), ResourceIntegrityDisposition::kNotChecked);
+  if (csp_hash_reports_needed.size()) {
+    if (is_cors_same_origin) {
+      for (HashAlgorithm algorithm : csp_hash_reports_needed) {
+        if (integrity_hashes.Contains(algorithm)) {
+          continue;
+        }
+        if (auto calculated_integrity_hash =
+                SubresourceIntegrity::GetSubresourceIntegrityHash(Data(),
+                                                                  algorithm)) {
+          integrity_hashes.insert(algorithm, calculated_integrity_hash);
+        }
+      }
+    }
+    loader_->Fetcher()->Context().AddCSPHashReport(Url().GetString(),
+                                                   integrity_hashes);
+  }
+
+  CHECK_NE(integrity_disposition_, ResourceIntegrityDisposition::kNotChecked);
 }
 
 void Resource::NotifyFinished() {
@@ -238,14 +271,14 @@ void Resource::MarkClientFinished(ResourceClient* client) {
 }
 
 void Resource::AppendData(
-    absl::variant<SegmentedBuffer, base::span<const char>> data) {
+    std::variant<SegmentedBuffer, base::span<const char>> data) {
   DCHECK(!IsCacheValidator());
   DCHECK(!ErrorOccurred());
-  if (absl::holds_alternative<SegmentedBuffer>(data)) {
-    AppendDataImpl(std::move(absl::get<SegmentedBuffer>(data)));
+  if (std::holds_alternative<SegmentedBuffer>(data)) {
+    AppendDataImpl(std::move(std::get<SegmentedBuffer>(data)));
   } else {
-    CHECK(absl::holds_alternative<base::span<const char>>(data));
-    AppendDataImpl(absl::get<base::span<const char>>(data));
+    CHECK(std::holds_alternative<base::span<const char>>(data));
+    AppendDataImpl(std::get<base::span<const char>>(data));
   }
 }
 
@@ -299,7 +332,7 @@ void Resource::TriggerNotificationForFinishObservers(
     return;
 
   auto* new_collections =
-      MakeGarbageCollected<HeapHashSet<WeakMember<ResourceFinishObserver>>>(
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<ResourceFinishObserver>>>(
           std::move(finish_observers_));
   finish_observers_.clear();
 
@@ -357,8 +390,8 @@ void Resource::FinishAsError(const ResourceError& error,
   }
   DCHECK(ErrorOccurred());
   ClearData();
-  loader_ = nullptr;
   CheckResourceIntegrity();
+  loader_ = nullptr;
   TriggerNotificationForFinishObservers(task_runner);
 
   // Most resource types don't expect to succeed or fail inside
@@ -382,8 +415,8 @@ void Resource::Finish(base::TimeTicks load_response_end,
   load_response_end_ = load_response_end;
   if (!ErrorOccurred())
     status_ = ResourceStatus::kCached;
-  loader_ = nullptr;
   CheckResourceIntegrity();
+  loader_ = nullptr;
   TriggerNotificationForFinishObservers(task_runner);
   NotifyFinished();
 }
@@ -392,13 +425,19 @@ AtomicString Resource::HttpContentType() const {
   return GetResponse().HttpContentType();
 }
 
+bool Resource::ForceIntegrityChecks() const {
+  const FeatureContext* feature_context =
+      loader_ ? loader_->GetFeatureContext() : nullptr;
+  return IsLinkPreload() ||
+         GetResponse().UnencodedDigest(feature_context).has_value();
+}
+
 bool Resource::MustRefetchDueToIntegrityMetadata(
     const FetchParameters& params) const {
   if (params.IntegrityMetadata().empty())
     return false;
 
-  return !IntegrityMetadata::SetsEqual(IntegrityMetadata(),
-                                       params.IntegrityMetadata());
+  return IntegrityMetadata() != params.IntegrityMetadata();
 }
 
 const scoped_refptr<const SecurityOrigin>& Resource::GetOrigin() const {
@@ -728,8 +767,8 @@ void Resource::FinishPendingClients() {
   //
   // Handle case (1) by saving a list of clients to notify. A separate list also
   // ensure a client is either in cliens_ or clients_awaiting_callback_.
-  HeapVector<Member<ResourceClient>> clients_to_notify;
-  CopyToVector(clients_awaiting_callback_, clients_to_notify);
+  HeapVector<Member<ResourceClient>> clients_to_notify(
+      clients_awaiting_callback_.Values());
 
   for (const auto& client : clients_to_notify) {
     // Handle case (2) to skip removed clients.
@@ -975,7 +1014,7 @@ void Resource::RevalidationFailed() {
   SECURITY_CHECK(redirect_chain_.empty());
   ClearData();
   integrity_disposition_ = ResourceIntegrityDisposition::kNotChecked;
-  integrity_report_info_.Clear();
+  integrity_report_.Clear();
   DestroyDecodedDataForFailedRevalidation();
   revalidation_status_ = RevalidationStatus::kNoRevalidatingOrFailed;
 }
@@ -1219,8 +1258,7 @@ const char* Resource::ResourceTypeToString(
     case ResourceType::kDictionary:
       return "Dictionary";
   }
-  NOTREACHED_IN_MIGRATION();
-  return InitiatorTypeNameToString(fetch_initiator_name);
+  NOTREACHED();
 }
 
 bool Resource::IsLoadEventBlockingResourceType() const {
@@ -1245,19 +1283,12 @@ bool Resource::IsLoadEventBlockingResourceType() const {
     case ResourceType::kDictionary:
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 // static
 void Resource::SetClockForTesting(const base::Clock* clock) {
   g_clock_for_testing = clock;
-}
-
-bool Resource::AppendTopFrameSiteForMetrics(const SecurityOrigin& origin) {
-  net::SchemefulSite site(origin.ToUrlOrigin());
-  auto result = existing_top_frame_sites_in_cache_.insert(site);
-  return !result.second;
 }
 
 void Resource::SetIsAdResource() {

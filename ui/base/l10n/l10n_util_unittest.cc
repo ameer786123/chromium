@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <cstring>
 #include <memory>
 
@@ -114,10 +115,23 @@ TEST_F(L10nUtilTest, GetAppLocale) {
   base::FilePath new_locale_dir;
   ASSERT_TRUE(base::PathService::Get(ui::DIR_LOCALES, &new_locale_dir));
   // Make fake locale files.
-  std::string filenames[] = {
-      "am", "ca", "ca@valencia", "en-GB", "en-US", "es",    "es-419", "fil",
-      "fr", "he", "nb",          "pt-BR", "pt-PT", "zh-CN", "zh-TW",
-  };
+  auto filenames = std::to_array<std::string>({
+      "am",
+      "ca",
+      "ca@valencia",
+      "en-GB",
+      "en-US",
+      "es",
+      "es-419",
+      "fil",
+      "fr",
+      "he",
+      "nb",
+      "pt-BR",
+      "pt-PT",
+      "zh-CN",
+      "zh-TW",
+  });
 
   for (size_t i = 0; i < std::size(filenames); ++i) {
     base::FilePath filename = new_locale_dir.AppendASCII(
@@ -709,19 +723,19 @@ TEST_F(L10nUtilTest, IsAcceptLanguageDisplayable) {
 
 TEST_F(L10nUtilTest, KeepAcceptedLanguages) {
   // All valid languages.
-  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({{"en", "es", "fr"}}),
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"en", "es", "fr"}),
             std::vector<std::string>({"en", "es", "fr"}));
   // Some invalid languages.
-  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({{"en", "es", "iw"}}),
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"en", "es", "iw"}),
             std::vector<std::string>({"en", "es"}));
   // All invalid languages.
-  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({{"iw", "ch_ZN"}}),
+  EXPECT_EQ(l10n_util::KeepAcceptedLanguages({"iw", "ch_ZN"}),
             std::vector<std::string>{});
   // Empty input.
   EXPECT_EQ(l10n_util::KeepAcceptedLanguages({}), std::vector<std::string>{});
   // Maintain languages order.
   EXPECT_EQ(
-      l10n_util::KeepAcceptedLanguages({{"en", "aa", "es", "iw", "fr", "xx"}}),
+      l10n_util::KeepAcceptedLanguages({"en", "aa", "es", "iw", "fr", "xx"}),
       std::vector<std::string>({"en", "es", "fr"}));
 }
 

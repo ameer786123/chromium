@@ -393,8 +393,9 @@ PhysicalOffset LayoutMultiColumnFlowThread::VisualPointToFlowThreadPoint(
   for (const LayoutMultiColumnSet* candidate = FirstMultiColumnSet(); candidate;
        candidate = candidate->NextSiblingMultiColumnSet()) {
     column_set = candidate;
-    if (candidate->LogicalBottom() > block_offset)
+    if (candidate->LogicalRectInContainer().BlockEndOffset() > block_offset) {
       break;
+    }
   }
   if (!column_set) {
     return visual_point;
@@ -676,8 +677,7 @@ bool LayoutMultiColumnFlowThread::DescendantIsValidColumnSpanner(
     if (!CanContainSpannerInParentFragmentationContext(*ancestor))
       return false;
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void LayoutMultiColumnFlowThread::AddColumnSetToThread(
@@ -897,8 +897,8 @@ static inline bool NeedsToReinsertIntoFlowThread(
   // re-evaluate the need for column sets. There may be out-of-flow descendants
   // further down that become part of the flow thread, or cease to be part of
   // the flow thread, because of this change.
-  if (object.ComputeIsFixedContainer(&old_style) !=
-      object.ComputeIsFixedContainer(&new_style)) {
+  if (object.ComputeIsFixedContainer(old_style) !=
+      object.ComputeIsFixedContainer(new_style)) {
     return true;
   }
   return old_style.GetPosition() != new_style.GetPosition();
@@ -1076,7 +1076,7 @@ void LayoutMultiColumnFlowThread::ToggleSpannersInSubtree(
   }
 }
 
-LayoutPoint LayoutMultiColumnFlowThread::LocationInternal() const {
+DeprecatedLayoutPoint LayoutMultiColumnFlowThread::LocationInternal() const {
   NOT_DESTROYED();
   if (!HasValidCachedGeometry() && EverHadLayout()) {
     // const_cast in order to update the cached value.
@@ -1097,7 +1097,7 @@ PhysicalSize LayoutMultiColumnFlowThread::Size() const {
 void LayoutMultiColumnFlowThread::UpdateGeometry() {
   NOT_DESTROYED();
   SetHasValidCachedGeometry(true);
-  frame_location_ = LayoutPoint();
+  frame_location_ = DeprecatedLayoutPoint();
   LogicalSize thread_size;
   const LayoutBlockFlow* container = MultiColumnBlockFlow();
   if (container->PhysicalFragmentCount() == 0u) {
@@ -1119,8 +1119,8 @@ void LayoutMultiColumnFlowThread::UpdateGeometry() {
       if (!has_processed_first_column_in_flow_thread) {
         // The offset of the flow thread is the same as that of the first
         // column.
-        frame_location_ = LayoutBoxUtils::ComputeLocation(
-            child_fragment, link.Offset(), container_fragment, break_token);
+        frame_location_ = ComputeBoxLocation(child_fragment, link.Offset(),
+                                             container_fragment, break_token);
 
         thread_size.inline_size = logical_size.inline_size;
         has_processed_first_column_in_flow_thread = true;

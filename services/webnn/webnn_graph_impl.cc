@@ -6,49 +6,21 @@
 
 #include <math.h>
 
-#include <cstdint>
-#include <optional>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
-#include "base/containers/fixed_flat_map.h"
 #include "base/dcheck_is_on.h"
-#include "base/ranges/algorithm.h"
-#include "base/types/expected.h"
+#include "base/types/optional_ref.h"
 #include "base/types/pass_key.h"
 #include "services/webnn/error.h"
-#include "services/webnn/public/cpp/graph_validation_utils.h"
 #include "services/webnn/public/cpp/operand_descriptor.h"
-#include "services/webnn/public/mojom/webnn_context_provider.mojom.h"
-#include "services/webnn/public/mojom/webnn_error.mojom.h"
 #include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_tensor_impl.h"
-#include "services/webnn/webnn_utils.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "services/webnn/dml/graph_impl_dml.h"
-#endif
 
 namespace webnn {
 
 namespace {
-
-// Return false if the named inputs for computation don't match the built
-// graph's expectation.
-bool ValidateInputsForComputation(
-    const base::flat_map<std::string, mojo_base::BigBuffer>& named_inputs,
-    const base::flat_map<std::string, OperandDescriptor>&
-        names_to_descriptors) {
-  return base::ranges::equal(
-      named_inputs, names_to_descriptors,
-      [](const auto& input, const auto& input_spec) {
-        const auto& [input_name, input_buffer] = input;
-        const auto& [input_spec_name, input_spec_descriptor] = input_spec;
-        return input_name == input_spec_name &&
-               input_buffer.size() == input_spec_descriptor.PackedByteLength();
-      });
-}
 
 // Return false if the named tensors for dispatch don't match the built
 // graph's expectation.
@@ -56,7 +28,7 @@ bool ValidateWebNNTensors(
     const base::flat_map<std::string_view, WebNNTensorImpl*>& named_tensors,
     const base::flat_map<std::string, OperandDescriptor>&
         names_to_descriptors) {
-  return base::ranges::equal(
+  return std::ranges::equal(
       named_tensors, names_to_descriptors,
       [](const auto& named_tensor, const auto& tensor_spec) {
         const auto& [tensor_name, tensor_impl] = named_tensor;
@@ -111,45 +83,33 @@ WebNNGraphImpl::ComputeResourceInfo::operator=(ComputeResourceInfo&&) = default;
 
 WebNNGraphImpl::ComputeResourceInfo::~ComputeResourceInfo() = default;
 
-WebNNGraphImpl::WebNNGraphImpl(WebNNContextImpl* context,
-                               ComputeResourceInfo compute_resource_info)
+WebNNGraphImpl::WebNNGraphImpl(
+    mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
+    WebNNContextImpl* context,
+    ComputeResourceInfo compute_resource_info)
     : compute_resource_info_(std::move(compute_resource_info)),
-      context_(context) {
+      context_(context),
+      receiver_(this, std::move(receiver)) {
   CHECK(context_);
 #if DCHECK_IS_ON()
   context_->AssertCalledOnValidSequence();
 #endif
+  // Safe to use base::Unretained because `this` owns `receiver_`.
+  receiver_.set_disconnect_handler(base::BindOnce(
+      &WebNNGraphImpl::OnConnectionError, base::Unretained(this)));
 }
 
 WebNNGraphImpl::~WebNNGraphImpl() = default;
 
-void WebNNGraphImpl::Compute(
-    base::flat_map<std::string, mojo_base::BigBuffer> named_inputs,
-    mojom::WebNNGraph::ComputeCallback callback) {
-  if (!ValidateInputsForComputation(
-          named_inputs, compute_resource_info_.input_names_to_descriptors)) {
-    mojo::ReportBadMessage(
-        "The inputs for computation don't match the built graph's "
-        "expectation.");
-
-    // `mojo::ReportBadMessage()` will kill the renderer process, but Mojo
-    // complains if the callback is not run. Just run it with nonsense
-    // arguments.
-    std::move(callback).Run(mojom::ComputeResult::NewError(
-        mojom::Error::New(mojom::Error::Code::kUnknownError,
-                          "Unexpected inputs received from the caller.")));
-    return;
-  }
-
-  // Call ComputeImpl() implemented by an `mojom::WebNNGraph` backend.
-  ComputeImpl(std::move(named_inputs), std::move(callback));
+void WebNNGraphImpl::OnConnectionError() {
+  context_->DisconnectAndDestroyWebNNGraphImpl(handle());
 }
 
 void WebNNGraphImpl::Dispatch(
     const base::flat_map<std::string, blink::WebNNTensorToken>& named_inputs,
     const base::flat_map<std::string, blink::WebNNTensorToken>& named_outputs) {
   if (!ValidateWebNNTensorsUsage(named_inputs, named_outputs)) {
-    mojo::ReportBadMessage(kBadMessageInvalidTensor);
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
     return;
   }
 
@@ -171,7 +131,7 @@ void WebNNGraphImpl::Dispatch(
   if (!ValidateWebNNTensors(
           name_to_input_tensor_map,
           compute_resource_info_.input_names_to_descriptors)) {
-    mojo::ReportBadMessage(kBadMessageInvalidTensor);
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
     return;
   }
 
@@ -194,7 +154,7 @@ void WebNNGraphImpl::Dispatch(
   if (!ValidateWebNNTensors(
           name_to_output_tensor_map,
           compute_resource_info_.output_names_to_descriptors)) {
-    mojo::ReportBadMessage(kBadMessageInvalidTensor);
+    receiver_.ReportBadMessage(kBadMessageInvalidTensor);
     return;
   }
 

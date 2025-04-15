@@ -4,12 +4,18 @@
 
 #include "services/network/public/cpp/cookie_manager_mojom_traits.h"
 
+#include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
+#include "mojo/public/cpp/bindings/string_data_view.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
 #include "services/network/public/mojom/cookie_manager.mojom-shared.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/schemeful_site.mojom-shared.h"
+#include "url/mojom/origin.mojom-shared.h"
 
 namespace mojo {
 
@@ -224,6 +230,39 @@ bool EnumTraits<network::mojom::CookieAccessSemantics,
       return true;
     case network::mojom::CookieAccessSemantics::LEGACY:
       *output = net::CookieAccessSemantics::LEGACY;
+      return true;
+    default:
+      break;
+  }
+  return false;
+}
+
+network::mojom::CookieScopeSemantics EnumTraits<
+    network::mojom::CookieScopeSemantics,
+    net::CookieScopeSemantics>::ToMojom(net::CookieScopeSemantics input) {
+  switch (input) {
+    case net::CookieScopeSemantics::UNKNOWN:
+      return network::mojom::CookieScopeSemantics::UNKNOWN;
+    case net::CookieScopeSemantics::NONLEGACY:
+      return network::mojom::CookieScopeSemantics::NONLEGACY;
+    case net::CookieScopeSemantics::LEGACY:
+      return network::mojom::CookieScopeSemantics::LEGACY;
+  }
+}
+
+bool EnumTraits<network::mojom::CookieScopeSemantics,
+                net::CookieScopeSemantics>::
+    FromMojom(network::mojom::CookieScopeSemantics input,
+              net::CookieScopeSemantics* output) {
+  switch (input) {
+    case network::mojom::CookieScopeSemantics::UNKNOWN:
+      *output = net::CookieScopeSemantics::UNKNOWN;
+      return true;
+    case network::mojom::CookieScopeSemantics::NONLEGACY:
+      *output = net::CookieScopeSemantics::NONLEGACY;
+      return true;
+    case network::mojom::CookieScopeSemantics::LEGACY:
+      *output = net::CookieScopeSemantics::LEGACY;
       return true;
     default:
       break;
@@ -555,9 +594,6 @@ bool StructTraits<network::mojom::CookieSameSiteContextMetadataDataView,
   if (!data.ReadRedirectTypeBug1221316(&out->redirect_type_bug_1221316))
     return false;
 
-  if (!data.ReadHttpMethodBug1221316(&out->http_method_bug_1221316))
-    return false;
-
   return true;
 }
 
@@ -649,12 +685,14 @@ bool StructTraits<network::mojom::CookiePartitionKeyDataView,
     return true;
   }
   net::SchemefulSite site;
-  if (!partition_key.ReadSite(&site))
+  if (!partition_key.ReadSite(&site)) {
     return false;
+  }
 
   std::optional<base::UnguessableToken> nonce;
-  if (!partition_key.ReadNonce(&nonce))
+  if (!partition_key.ReadNonce(&nonce)) {
     return false;
+  }
 
   *out = net::CookiePartitionKey::FromWire(
       site,
@@ -786,6 +824,7 @@ bool StructTraits<
   net::CookieEffectiveSameSite effective_same_site;
   net::CookieInclusionStatus status;
   net::CookieAccessSemantics access_semantics;
+  net::CookieScopeSemantics scope_semantics;
 
   if (!c.ReadEffectiveSameSite(&effective_same_site))
     return false;
@@ -793,8 +832,11 @@ bool StructTraits<
     return false;
   if (!c.ReadAccessSemantics(&access_semantics))
     return false;
+  if (!c.ReadScopeSemantics(&scope_semantics)) {
+    return false;
+  }
 
-  *out = {effective_same_site, status, access_semantics,
+  *out = {effective_same_site, status, access_semantics, scope_semantics,
           c.is_allowed_to_access_secure_cookies()};
 
   return true;

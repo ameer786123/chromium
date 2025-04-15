@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 """Generates C++ source files from a mojom.Module."""
+import hashlib
 import os
 import mojom.generate.generator as generator
 import mojom.generate.module as mojom
@@ -178,6 +179,11 @@ def ShouldInlineUnion(union):
   return not any(mojom.IsReferenceKind(field.kind) for field in union.fields)
 
 
+def _IpcHash(message_name):
+  sha256_hash = hashlib.sha256(message_name.encode('utf-8'))
+  return f'0x{sha256_hash.hexdigest()[:8]}'
+
+
 def HasPackedMethodOrdinals(interface):
   """Returns whether all method ordinals are packed such that indexing into a
   table would be efficient."""
@@ -274,6 +280,9 @@ class Generator(generator.Generator):
       all_enums.extend(interface.enums)
       if interface.uuid:
         headers.add('base/token.h')
+      for method in interface.methods:
+        if not method.result_response is None:
+          headers.add('base/types/expected.h')
 
     types = set(self._GetFullMojomNameForKind(typename)
                 for typename in
@@ -374,6 +383,7 @@ class Generator(generator.Generator):
         "append_space_if_nonempty": self._AppendSpaceIfNonEmpty,
         "all_enum_values": AllEnumValues,
         "constant_value": self._ConstantValue,
+        "constant_length": self._ConstantLength,
         "contains_handles_or_interfaces": mojom.ContainsHandlesOrInterfaces,
         "contains_move_only_members": self._ContainsMoveOnlyMembers,
         "cpp_data_view_type": self._GetCppDataViewType,
@@ -408,6 +418,7 @@ class Generator(generator.Generator):
         "requires_context_for_data_view": RequiresContextForDataView,
         "should_inline": ShouldInlineStruct,
         "should_inline_union": ShouldInlineUnion,
+        "ipc_hash": _IpcHash,
         "is_array_kind": mojom.IsArrayKind,
         "is_bool_kind": mojom.IsBoolKind,
         "is_default_constructible": self._IsDefaultConstructible,
@@ -548,6 +559,11 @@ class Generator(generator.Generator):
   def _ConstantValue(self, constant):
     return self._ExpressionToText(constant.value, kind=constant.kind)
 
+  def _ConstantLength(self, constant):
+    # The length of the string value, removing the quotes, but preserving the
+    # null-terminator.
+    return f"{len(constant.value) - 1}"
+
   def _UnderToCamel(self, value, digits_split=False):
     # There are some mojom files that don't use snake_cased names, so we try to
     # fix that to get more consistent output.
@@ -661,13 +677,13 @@ class Generator(generator.Generator):
   def _FormatConstantDeclaration(self, constant, nested=False):
     if mojom.IsStringKind(constant.kind):
       if nested:
-        return "const char %s[]" % constant.name
-      return "%sextern const char %s[]" % \
+        return "const char %s[%s]" % (constant.name,
+                                      self._ConstantLength(constant))
+      return "%sextern const char %s[%s]" % \
           ((self.export_attribute + " ") if self.export_attribute else "",
-           constant.name)
-    return "constexpr %s %s = %s" % (
-        GetCppPodType(constant.kind), constant.name,
-        self._ConstantValue(constant))
+           constant.name, self._ConstantLength(constant))
+    return "constexpr %s %s = %s" % (GetCppPodType(
+        constant.kind), constant.name, self._ConstantValue(constant))
 
   # Constants that go in module.h.
   def _FormatEnumConstantDeclaration(self, constant):

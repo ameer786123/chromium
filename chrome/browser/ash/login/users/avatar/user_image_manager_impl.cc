@@ -79,8 +79,7 @@ bool SaveAndDeleteImage(scoped_refptr<base::RefCountedBytes> image_bytes,
                         const base::FilePath& image_path,
                         const base::FilePath& old_image_path) {
   if (image_bytes->size() == 0 ||
-      !base::WriteFile(image_path, base::make_span(image_bytes->front(),
-                                                   image_bytes->size()))) {
+      !base::WriteFile(image_path, base::span(*image_bytes))) {
     LOG(ERROR) << "Failed to save image to file: " << image_path.AsUTF8Unsafe();
     return false;
   }
@@ -115,8 +114,7 @@ const char* ChooseExtensionFromImageFormat(
     case user_manager::UserImage::FORMAT_WEBP:
       return ".webp";
     default:
-      NOTREACHED_IN_MIGRATION() << "Invalid format: " << image_format;
-      return ".jpg";
+      NOTREACHED() << "Invalid format: " << image_format;
   }
 }
 
@@ -259,7 +257,7 @@ class UserImageManagerImpl::Job {
 UserImageManagerImpl::Job::Job(UserImageManagerImpl* parent)
     : parent_(parent), run_(false) {}
 
-UserImageManagerImpl::Job::~Job() {}
+UserImageManagerImpl::Job::~Job() = default;
 
 void UserImageManagerImpl::Job::LoadImage(base::FilePath image_path,
                                           const int image_index,
@@ -315,8 +313,7 @@ void UserImageManagerImpl::Job::LoadImage(base::FilePath image_path,
         base::BindOnce(&Job::OnLoadImageDone, weak_factory_.GetWeakPtr(),
                        false));
   } else {
-    NOTREACHED_IN_MIGRATION();
-    NotifyJobDone();
+    NOTREACHED();
   }
 }
 
@@ -562,7 +559,7 @@ UserImageManagerImpl::UserImageManagerImpl(
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN});
 }
 
-UserImageManagerImpl::~UserImageManagerImpl() {}
+UserImageManagerImpl::~UserImageManagerImpl() = default;
 
 void UserImageManagerImpl::LoadUserImage() {
   // If the user image for `user_id` is managed by policy and the policy-set
@@ -581,8 +578,7 @@ void UserImageManagerImpl::LoadUserImage() {
   int image_index = image_properties->FindInt(kImageIndexNodeName)
                         .value_or(user_manager::UserImage::Type::kInvalid);
   if (image_index == user_manager::UserImage::Type::kInvalid) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   const std::string* image_url_string =
@@ -995,7 +991,7 @@ void UserImageManagerImpl::OnJobDone() {
     base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(
         FROM_HERE, job_.release());
   } else {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 }
 

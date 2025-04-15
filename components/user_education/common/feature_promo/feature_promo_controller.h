@@ -26,13 +26,13 @@
 #include "components/user_education/common/feature_promo/feature_promo_lifecycle.h"
 #include "components/user_education/common/feature_promo/feature_promo_registry.h"
 #include "components/user_education/common/feature_promo/feature_promo_result.h"
+#include "components/user_education/common/feature_promo/feature_promo_session_policy.h"
 #include "components/user_education/common/feature_promo/feature_promo_specification.h"
 #include "components/user_education/common/help_bubble/help_bubble.h"
 #include "components/user_education/common/help_bubble/help_bubble_params.h"
-#include "components/user_education/common/product_messaging_controller.h"
-#include "components/user_education/common/session/user_education_session_policy.h"
 #include "components/user_education/common/tutorial/tutorial_identifier.h"
 #include "components/user_education/common/user_education_data.h"
+#include "ui/base/interaction/element_identifier.h"
 
 namespace ui {
 class AcceleratorProvider;
@@ -40,7 +40,8 @@ class TrackedElement;
 }  // namespace ui
 
 // Declaring these in the global namespace for testing purposes.
-class BrowserFeaturePromoControllerTest;
+class BrowserFeaturePromoController2xTestBase;
+class BrowserFeaturePromoControllerTestHelper;
 class FeaturePromoLifecycleUiTest;
 
 namespace user_education {
@@ -51,10 +52,10 @@ class TutorialService;
 
 // Describes the status of a feature promo.
 enum class FeaturePromoStatus {
-  kNotRunning,        // The promo is not running or queued.
-  kQueuedForStartup,  // The promo is waiting for the FE backend to initialize.
-  kBubbleShowing,     // The promo bubble is showing.
-  kContinued          // The bubble was closed but the promo is still active.
+  kNotRunning,     // The promo is not running or queued.
+  kQueued,         // The promo is queued but not yet shown.
+  kBubbleShowing,  // The promo bubble is showing.
+  kContinued       // The bubble was closed but the promo is still active.
 };
 
 // Enum for client code to specify why a promo should be programmatically ended.
@@ -108,24 +109,23 @@ class FeaturePromoController {
   // Tries to start the promo at a time when the Feature Engagement backend may
   // not yet be initialized. Once it is initialized (which could be
   // immediately), attempts to show the promo and calls
-  // `params.startup_callback` with the result. If EndPromo() is called before
-  // the promo is shown, the promo is canceled immediately.
+  // `params.show_promo_result_callback` with the result. If EndPromo() is
+  // called before the promo is shown, the promo is canceled immediately.
   //
-  // Returns whether the promo was queued, not whether it was actually shown.
   // A promo may be queued and then not show due to its Feature Engagement
   // conditions not being satisfied. For example, if multiple promos with a
   // session limit of 1 are queued, both may queue successfully, but only one
   // will actually show. If you care about whether the promo is actually shown,
-  // set an appropriate `startup_callback`.
+  // set an appropriate `show_promo_result_callback`.
   //
-  // Note: Since `startup_callback` is asynchronous and can theoretically still
-  // be pending after the caller's scope disappears, care must be taken to avoid
-  // a UAF on callback; the caller should prefer to either not bind transient
-  // objects (e.g. only use the callback for things like UMA logging) or use a
-  // weak pointer to avoid this situation.
+  // Note: Since `show_promo_result_callback` is asynchronous and can
+  // theoretically still be pending after the caller's scope disappears, care
+  // must be taken to avoid a UAF on callback; the caller should prefer to
+  // either not bind transient objects (e.g. only use the callback for things
+  // like UMA logging) or use a weak pointer to avoid this situation.
   //
   // Otherwise, this is identical to MaybeShowPromo().
-  virtual bool MaybeShowStartupPromo(FeaturePromoParams params) = 0;
+  virtual void MaybeShowStartupPromo(FeaturePromoParams params) = 0;
 
   // Gets the current status of the promo associated with `iph_feature`.
   virtual FeaturePromoStatus GetPromoStatus(
@@ -169,8 +169,7 @@ class FeaturePromoController {
 
   // Starts a promo with the settings for skipping any logging or filtering
   // provided by the implementation for MaybeShowPromo.
-  virtual FeaturePromoResult MaybeShowPromoForDemoPage(
-      FeaturePromoParams params) = 0;
+  virtual void MaybeShowPromoForDemoPage(FeaturePromoParams params) = 0;
 
   // Ends or cancels the current promo if it is queued. Returns true if a promo
   // was successfully canceled or a bubble closed.
@@ -220,9 +219,8 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
       FeaturePromoRegistry* registry,
       HelpBubbleFactoryRegistry* help_bubble_registry,
       UserEducationStorageService* storage_service,
-      UserEducationSessionPolicy* session_policy,
-      TutorialService* tutorial_service,
-      ProductMessagingController* messaging_controller);
+      FeaturePromoSessionPolicy* session_policy,
+      TutorialService* tutorial_service);
   ~FeaturePromoControllerCommon() override;
 
   // For systems where there are rendering issues of e.g. displaying the
@@ -237,16 +235,7 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
   void NotifyFeatureUsedIfValid(const base::Feature& feature);
 #endif
 
-  // Returns the associated feature engagement tracker.
-  feature_engagement::Tracker* feature_engagement_tracker() {
-    return feature_engagement_tracker_;
-  }
-
   // FeaturePromoController:
-  FeaturePromoResult CanShowPromo(
-      const FeaturePromoParams& params) const override;
-  void MaybeShowPromo(FeaturePromoParams params) override;
-  bool MaybeShowStartupPromo(FeaturePromoParams params) override;
   FeaturePromoStatus GetPromoStatus(
       const base::Feature& iph_feature) const override;
   const FeaturePromoSpecification* GetCurrentPromoSpecificationForAnchor(
@@ -254,14 +243,13 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
   bool HasPromoBeenDismissed(
       const FeaturePromoParams& params,
       FeaturePromoClosedReason* close_reason = nullptr) const override;
-  FeaturePromoResult MaybeShowPromoForDemoPage(
-      FeaturePromoParams params) override;
   bool EndPromo(const base::Feature& iph_feature,
                 EndFeaturePromoReason end_promo_reason) override;
   FeaturePromoHandle CloseBubbleAndContinuePromo(
       const base::Feature& iph_feature) final;
-  base::WeakPtr<FeaturePromoController> GetAsWeakPtr() override;
-
+  const HelpBubbleFactoryRegistry* bubble_factory_registry() const {
+    return bubble_factory_registry_;
+  }
   HelpBubbleFactoryRegistry* bubble_factory_registry() {
     return bubble_factory_registry_;
   }
@@ -283,23 +271,72 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
   }
 
  protected:
-  friend BrowserFeaturePromoControllerTest;
+  friend BrowserFeaturePromoController2xTestBase;
   friend FeaturePromoLifecycleUiTest;
 
   enum class ShowSource { kNormal, kQueue, kDemo };
 
-  // Internal entry point for showing a promo.
-  FeaturePromoResult MaybeShowPromoImpl(FeaturePromoParams params,
-                                        ShowSource source);
+  // Records when and why an IPH was not shown.
+  void RecordPromoNotShown(const char* feature_name,
+                           FeaturePromoResult::Failure failure) const final;
 
-  // Common logic for showing feature promos.
-  FeaturePromoResult MaybeShowPromoCommon(FeaturePromoParams params,
-                                          ShowSource source);
+  const base::Feature* GetCurrentPromoFeature() const final;
 
-  const UserEducationStorageService* storage_service() const {
+  // Method that creates the bubble for a feature promo. May return null if the
+  // bubble cannot be shown.
+  std::unique_ptr<HelpBubble> ShowPromoBubbleImpl(
+      FeaturePromoSpecification::BuildHelpBubbleParams build_params);
+
+  // Does the work of ending a promo with the specified `close_reason`.
+  bool EndPromo(const base::Feature& iph_feature,
+                FeaturePromoClosedReason close_reason);
+
+  // Closes any existing help bubble in `context`; usually called after
+  // canceling any existing promo to clear up tutorial bubbles, etc.
+  void CloseHelpBubbleIfPresent(ui::ElementContext context);
+
+  // Returns whether we can play a screen reader prompt for the "focus help
+  // bubble" promo.
+  // TODO(crbug.com/40200981): This must be called *before* we ask if the bubble
+  // will show because a limitation in the current FE backend causes
+  // ShouldTriggerHelpUI() to always return false if another promo is being
+  // displayed. Once we have machinery to allow concurrency in the FE system
+  // all of this logic can be rewritten.
+  bool CheckExtendedPropertiesPromptAvailable(bool for_demo) const;
+
+  // Creates a lifecycle for the given promo.
+  std::unique_ptr<FeaturePromoLifecycle> CreateLifecycleFor(
+      const FeaturePromoSpecification& spec,
+      const FeaturePromoParams& params) const;
+
+  // Derived classes need non-const access to these members in const methods.
+  // Be careful when calling them.
+  UserEducationStorageService* storage_service() const {
     return storage_service_;
   }
-  UserEducationStorageService* storage_service() { return storage_service_; }
+  feature_engagement::Tracker* feature_engagement_tracker() const {
+    return feature_engagement_tracker_;
+  }
+  FeaturePromoSessionPolicy* session_policy() { return session_policy_; }
+  const FeaturePromoSessionPolicy* session_policy() const {
+    return session_policy_;
+  }
+
+  FeaturePromoLifecycle* current_promo() { return current_promo_.get(); }
+  const FeaturePromoLifecycle* current_promo() const {
+    return current_promo_.get();
+  }
+  void set_current_promo(std::unique_ptr<FeaturePromoLifecycle> current_promo) {
+    current_promo_ = std::move(current_promo);
+  }
+  const FeaturePromoPriorityProvider::PromoPriorityInfo& last_promo_info()
+      const {
+    return last_promo_info_;
+  }
+  void set_last_promo_info(
+      const FeaturePromoPriorityProvider::PromoPriorityInfo& last_promo_info) {
+    last_promo_info_ = last_promo_info;
+  }
   HelpBubble* promo_bubble() {
     return current_promo_ ? current_promo_->help_bubble() : nullptr;
   }
@@ -307,17 +344,26 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
     return current_promo_ ? current_promo_->help_bubble() : nullptr;
   }
 
+  // Saves the close callback for the current bubble.
+  void set_bubble_closed_callback(BubbleCloseCallback callback) {
+    bubble_closed_callback_ = std::move(callback);
+  }
+
+  const FeaturePromoRegistry* registry() const { return registry_; }
+  FeaturePromoRegistry* registry() { return registry_; }
+
+  // Removes a promo from the queue and returns whether the promo was found and
+  // canceled.
+  virtual bool MaybeUnqueuePromo(const base::Feature& iph_feature) = 0;
+
+  // Returns whether `iph_feature` is queued to be shown.
+  virtual bool IsPromoQueued(const base::Feature& iph_feature) const = 0;
+
+  // Possibly fires a queued promo based on certain conditions.
+  virtual void MaybeShowQueuedPromo() = 0;
+
   // Gets the context in which to locate the anchor view.
   virtual ui::ElementContext GetAnchorContext() const = 0;
-
-  // Determine if the current context and anchor element allow showing a promo.
-  // This lets us rule out e.g. inactive and incognito windows/apps for
-  // non-critical promos.
-  //
-  // Note: Implementations should make sure to check
-  // `active_window_check_blocked()`.
-  virtual bool CanShowPromoForElement(
-      ui::TrackedElement* anchor_element) const = 0;
 
   // Get the accelerator provider to use to look up accelerators.
   virtual const ui::AcceleratorProvider* GetAcceleratorProvider() const = 0;
@@ -341,26 +387,18 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
   // GetFocusHelpBubbleScreenReaderHint().
   virtual std::u16string GetTutorialScreenReaderHint() const = 0;
 
+  // Gets a typed weak pointer to this object.
+  virtual base::WeakPtr<FeaturePromoControllerCommon> GetCommonWeakPtr() = 0;
+
   // This method returns an appropriate prompt for promoting using a navigation
   // accelerator to focus the help bubble.
   virtual std::u16string GetFocusHelpBubbleScreenReaderHint(
       FeaturePromoSpecification::PromoType promo_type,
       ui::TrackedElement* anchor_element) const = 0;
 
-  const FeaturePromoRegistry* registry() const { return registry_; }
-  FeaturePromoRegistry* registry() { return registry_; }
-
  private:
-  struct ShowPromoBubbleParams;
-  struct QueuedPromoData;
+  friend BrowserFeaturePromoControllerTestHelper;
 
-  // Note: this data structure is inefficient for lookups, but given that only a
-  // small number of promos should be queued at any given point, it's probably
-  // still faster than some kind of linked map implementation would be.
-  using QueuedPromos = std::list<QueuedPromoData>;
-
-  bool EndPromo(const base::Feature& iph_feature,
-                FeaturePromoClosedReason close_reason);
   void RecordPromoEnded(FeaturePromoClosedReason close_reason,
                         bool continue_after_close);
 
@@ -370,73 +408,6 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
 
   // FeaturePromoController:
   void FinishContinuedPromo(const base::Feature& iph_feature) override;
-
-  // Returns whether we can play a screen reader prompt for the "focus help
-  // bubble" promo.
-  // TODO(crbug.com/40200981): This must be called *before* we ask if the bubble
-  // will show because a limitation in the current FE backend causes
-  // ShouldTriggerHelpUI() to always return false if another promo is being
-  // displayed. Once we have machinery to allow concurrency in the FE system
-  // all of this logic can be rewritten.
-  bool CheckScreenReaderPromptAvailable(bool for_demo) const;
-
-  // Handles firing async promos.
-  void OnFeatureEngagementTrackerInitialized(
-      bool tracker_initialized_successfully);
-
-  // Registers with the ProductMessagingController if not already registered.
-  void MaybeRequestMessagePriority();
-
-  // Handles coordination with the product messaging system.
-  void OnMessagePriority(RequiredNoticePriorityHandle notice_handle);
-
-  // Returns the next-highest-priority queued promo, or `queued_promos_.end()`
-  // if one is not present.
-  QueuedPromos::iterator GetNextQueuedPromo();
-
-  // Const version returns a pointer to the queued data, or null if no promos
-  // are queued.
-  const QueuedPromoData* GetNextQueuedPromo() const;
-
-  // Possibly fires a queued promo based on certain conditions.
-  void MaybeShowQueuedPromo();
-
-  // Returns whether `iph_feature` is queued to be shown.
-  bool IsPromoQueued(const base::Feature& iph_feature) const;
-
-  // Returns an iterator into the queued promo list matching `iph_feature`, or
-  // `queued_promos_.end()` if not found.
-  QueuedPromos::iterator FindQueuedPromo(const base::Feature& iph_feature);
-
-  // Fails and clears all queued promos.
-  void FailQueuedPromos();
-
-  // Performs common logic for determining if a feature promo for `iph_feature`
-  // could be shown right now.
-  //
-  // The optional parameters `display_spec`, `primary_spec`, `lifecycle`, and
-  // `anchor_element` will be populated on success, if specified:
-  //  - `primary_spec` - the specification of the promo that has been requested
-  //    to be shown; for rotating promos, this is different from the
-  //    `display_spec`.
-  //  - `display_spec` - the specification of the actual promo to be shown; for
-  //    non-rotating promos, this is the same as `primary_spec`.
-  //  - `lifecycle` - an object representing the lifecycle of the promo; used to
-  //    determine whether the promo can show and record pref and histogram data
-  //    when it does.
-  //  - `anchor_element` - the UI element the promo should attach to.
-  FeaturePromoResult CanShowPromoCommon(
-      const FeaturePromoParams& params,
-      ShowSource source,
-      const FeaturePromoSpecification** primary_spec = nullptr,
-      const FeaturePromoSpecification** display_spec = nullptr,
-      std::unique_ptr<FeaturePromoLifecycle>* lifecycle = nullptr,
-      ui::TrackedElement** anchor_element = nullptr) const;
-
-  // Method that creates the bubble for a feature promo. May return null if the
-  // bubble cannot be shown.
-  std::unique_ptr<HelpBubble> ShowPromoBubbleImpl(
-      ShowPromoBubbleParams show_params);
 
   // Callback that cleans up a help bubble when it is closed.
   void OnHelpBubbleClosed(HelpBubble* bubble, HelpBubble::CloseReason reason);
@@ -501,15 +472,6 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
       bool custom_action_is_default,
       int custom_action_dismiss_string_id);
 
-  // Records when and why an IPH was not shown.
-  void RecordPromoNotShown(const char* feature_name,
-                           FeaturePromoResult::Failure failure) const final;
-
-  const base::Feature* GetCurrentPromoFeature() const final;
-
-  // Whether the IPH Demo Mode flag has been set at startup.
-  const bool in_iph_demo_mode_;
-
   // The feature promo registry to use.
   const raw_ptr<FeaturePromoRegistry> registry_;
 
@@ -518,29 +480,21 @@ class FeaturePromoControllerCommon : public FeaturePromoController {
 
   // Policy info about the most recent promo that was shown.
   // Updated when a new promo is shown.
-  UserEducationSessionPolicy::PromoInfo last_promo_info_;
+  FeaturePromoPriorityProvider::PromoPriorityInfo last_promo_info_;
 
   // Promo that is being continued during a tutorial launched from the promo
   // bubble.
   FeaturePromoHandle tutorial_promo_handle_;
 
-  base::OnceClosure bubble_closed_callback_;
+  BubbleCloseCallback bubble_closed_callback_;
   base::CallbackListSubscription bubble_closed_subscription_;
+  base::CallbackListSubscription custom_ui_result_subscription_;
 
   const raw_ptr<feature_engagement::Tracker> feature_engagement_tracker_;
   const raw_ptr<HelpBubbleFactoryRegistry> bubble_factory_registry_;
   const raw_ptr<UserEducationStorageService> storage_service_;
-  const raw_ptr<UserEducationSessionPolicy> session_policy_;
+  const raw_ptr<FeaturePromoSessionPolicy> session_policy_;
   const raw_ptr<TutorialService> tutorial_service_;
-  const raw_ptr<ProductMessagingController> messaging_controller_;
-
-  // Tracks pending promos that have been queued (e.g. for startup).
-  QueuedPromos queued_promos_;
-
-  // Tracks whether this controller has messaging priority.
-  RequiredNoticePriorityHandle messaging_priority_handle_;
-
-  base::WeakPtrFactory<FeaturePromoControllerCommon> weak_ptr_factory_{this};
 
   // Whether IPH should be allowed to show in an inactive window or app.
   // Should be checked in implementations of CanShowPromo(). Typically only
@@ -557,6 +511,7 @@ struct FeaturePromoParams {
   FeaturePromoParams(const base::Feature& iph_feature,
                      const std::string& key = std::string());
   FeaturePromoParams(FeaturePromoParams&& other) noexcept;
+  FeaturePromoParams& operator=(FeaturePromoParams&& other) noexcept;
   ~FeaturePromoParams();
 
   // The feature for the IPH to show. Must be an IPH feature defined in

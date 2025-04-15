@@ -17,6 +17,7 @@
 #include "base/containers/enum_set.h"
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/test/views_test_utils.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/root_view.h"
@@ -117,7 +118,7 @@ TEST_F(AuthContainerWithPasswordAndPinTest, PinUITestWithPinPad) {
   EXPECT_THAT(test_api_->GetCurrentInputType(),
               testing::Optional(AuthInputType::kPassword));
 
-  const std::u16string kPin(u"6893112");
+  static constexpr std::u16string_view kPin(u"6893112");
   // The auth container content changes kPin times because of the input changes
   // + 1 times since at the beginning we switching from password to pin.
   EXPECT_CALL(*mock_observer_, OnContentsChanged()).Times(kPin.size() + 1);
@@ -150,7 +151,7 @@ TEST_F(AuthContainerWithPasswordAndPinTest, PinUITestWithKeyPress) {
   EXPECT_TRUE(test_api_->GetCurrentInputType().has_value());
   EXPECT_EQ(test_api_->GetCurrentInputType(), AuthInputType::kPassword);
 
-  const std::u16string kPin(u"6893112");
+  static constexpr std::u16string_view kPin(u"6893112");
   // The auth container content changes kPin times because of the input changes
   // + 1 times since at the beginning we switching from password to pin.
   EXPECT_CALL(*mock_observer_, OnContentsChanged()).Times(kPin.size() + 1);
@@ -230,7 +231,7 @@ TEST_F(AuthContainerWithPasswordAndPinTest, DoubleSwitchTest) {
 }
 
 TEST_F(AuthContainerWithPasswordAndPinTest, PasswordSubmitTest) {
-  const std::u16string kPassword(u"password");
+  static constexpr std::u16string_view kPassword(u"password");
   container_view_->GetFocusManager()->SetFocusedView(
       test_api_password_->GetTextfield());
   for (const char16_t c : kPassword) {
@@ -248,7 +249,7 @@ TEST_F(AuthContainerWithPasswordAndPinTest, PasswordSubmitTest) {
 // Verify password is not functioning with disabled input area.
 TEST_F(AuthContainerWithPasswordAndPinTest, DisabledPasswordSubmitTest) {
   container_view_->SetInputEnabled(false);
-  const std::u16string kPassword(u"password");
+  static constexpr std::u16string_view kPassword(u"password");
   container_view_->GetFocusManager()->SetFocusedView(
       test_api_password_->GetTextfield());
   for (const char16_t c : kPassword) {
@@ -258,7 +259,8 @@ TEST_F(AuthContainerWithPasswordAndPinTest, DisabledPasswordSubmitTest) {
   EXPECT_EQ(test_api_pin_input_->GetTextfield()->GetText(), std::u16string());
   EXPECT_EQ(test_api_password_->GetTextfield()->GetText(), std::u16string());
 
-  EXPECT_CALL(*mock_observer_, OnPasswordSubmit(std::u16string())).Times(0);
+  EXPECT_CALL(*mock_observer_, OnPasswordSubmit(std::u16string_view()))
+      .Times(0);
   // Click on Submit.
   LeftClickOn(test_api_password_->GetSubmitButton());
 }
@@ -315,7 +317,8 @@ TEST_F(AuthContainerWithPasswordAndPinTest, ResetInputfieldsWithSwitchTest) {
 }
 
 TEST_F(AuthContainerWithPasswordAndPinTest, SetPinStatusTest) {
-  const std::u16string status_message = u"Too many PIN attempts";
+  static constexpr std::u16string_view status_message =
+      u"Too many PIN attempts";
 
   cryptohome::PinStatus pin_status(base::TimeDelta::Max());
 
@@ -349,6 +352,12 @@ TEST_F(AuthContainerWithPasswordAndPinTest, FingerprintTest) {
   EXPECT_EQ(test_fp_view.GetState(), FingerprintState::UNAVAILABLE);
 }
 
+TEST_F(AuthContainerWithPasswordAndPinTest, AccessibleProperties) {
+  ui::AXNodeData node_data;
+  container_view_->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+  EXPECT_TRUE(node_data.HasState(ax::mojom::State::kInvisible));
+}
+
 class AuthContainerWithPinTest : public AuthContainerBaseUnitTest {
  public:
   AuthContainerWithPinTest()
@@ -369,7 +378,7 @@ class AuthContainerWithPinTest : public AuthContainerBaseUnitTest {
 };
 
 TEST_F(AuthContainerWithPinTest, PinSubmitTest) {
-  const std::u16string kPin(u"6893112");
+  static constexpr std::u16string_view kPin(u"6893112");
   // The auth container content changes kPin times because of the input changes
   EXPECT_CALL(*mock_observer_, OnContentsChanged()).Times(kPin.size());
 

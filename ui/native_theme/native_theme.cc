@@ -22,6 +22,7 @@
 #include "ui/color/color_provider_key.h"
 #include "ui/color/color_provider_utils.h"
 #include "ui/native_theme/common_theme.h"
+#include "ui/native_theme/features/native_theme_features.h"
 #include "ui/native_theme/native_theme_utils.h"
 
 namespace ui {
@@ -30,9 +31,6 @@ namespace {
 static constexpr base::TimeDelta kDefaultCaretBlinkInterval =
     base::Milliseconds(500);
 }
-
-// static
-bool NativeTheme::prefers_always_show_scrollbar_ = false;
 
 NativeTheme::MenuListExtraParams::MenuListExtraParams() = default;
 NativeTheme::TextFieldExtraParams::TextFieldExtraParams() = default;
@@ -205,8 +203,7 @@ NativeTheme::NativeTheme(bool should_use_dark_colors,
     : should_use_dark_colors_(should_use_dark_colors || IsForcedDarkMode()),
       system_theme_(system_theme),
       forced_colors_(IsForcedHighContrast()),
-      prefers_reduced_transparency_(false),
-      inverted_colors_(false),
+
       preferred_color_scheme_(CalculatePreferredColorScheme()),
       preferred_contrast_(CalculatePreferredContrast()) {}
 
@@ -214,6 +211,11 @@ NativeTheme::~NativeTheme() = default;
 
 bool NativeTheme::ShouldUseDarkColors() const {
   return should_use_dark_colors_;
+}
+
+bool NativeTheme::ShouldUseDarkColorsForSystemIntegratedUI() const {
+  return should_use_dark_colors_for_system_integrated_ui_.value_or(
+      ShouldUseDarkColors());
 }
 
 bool NativeTheme::UserHasContrastPreference() const {
@@ -227,8 +229,9 @@ bool NativeTheme::InForcedColorsMode() const {
 
 NativeTheme::PlatformHighContrastColorScheme
 NativeTheme::GetPlatformHighContrastColorScheme() const {
-  if (GetDefaultSystemColorScheme() != ColorScheme::kPlatformHighContrast)
+  if (GetDefaultSystemColorScheme() != ColorScheme::kPlatformHighContrast) {
     return PlatformHighContrastColorScheme::kNone;
+  }
   return (GetPreferredColorScheme() == PreferredColorScheme::kDark)
              ? PlatformHighContrastColorScheme::kDark
              : PlatformHighContrastColorScheme::kLight;
@@ -242,6 +245,15 @@ NativeTheme::PreferredColorScheme NativeTheme::CalculatePreferredColorScheme()
     const {
   return ShouldUseDarkColors() ? NativeTheme::PreferredColorScheme::kDark
                                : NativeTheme::PreferredColorScheme::kLight;
+}
+
+// static
+bool NativeTheme::CalculateUseOverlayScrollbar() {
+#if BUILDFLAG(IS_CHROMEOS)
+  return true;
+#else
+  return IsOverlayScrollbarEnabledByFeatureFlag();
+#endif
 }
 
 std::optional<base::TimeDelta> NativeTheme::GetPlatformCaretBlinkInterval()
@@ -267,8 +279,9 @@ NativeTheme::PreferredContrast NativeTheme::GetPreferredContrast() const {
 
 void NativeTheme::SetPreferredContrast(
     NativeTheme::PreferredContrast preferred_contrast) {
-  if (preferred_contrast_ == preferred_contrast)
+  if (preferred_contrast_ == preferred_contrast) {
     return;
+  }
   preferred_contrast_ = preferred_contrast;
   NotifyOnPreferredContrastUpdated();
 }
@@ -304,8 +317,9 @@ NativeTheme::GetSystemColors() const {
 std::optional<SkColor> NativeTheme::GetSystemThemeColor(
     SystemThemeColor theme_color) const {
   auto color = system_colors_.find(theme_color);
-  if (color != system_colors_.end())
+  if (color != system_colors_.end()) {
     return color->second;
+  }
 
   return std::nullopt;
 }
@@ -329,11 +343,11 @@ NativeTheme::ColorSchemeNativeThemeObserver::~ColorSchemeNativeThemeObserver() =
 
 void NativeTheme::ColorSchemeNativeThemeObserver::OnNativeThemeUpdated(
     ui::NativeTheme* observed_theme) {
-  bool should_use_dark_colors = observed_theme->ShouldUseDarkColors();
-  PreferredColorScheme preferred_color_scheme =
+  const bool should_use_dark_colors = observed_theme->ShouldUseDarkColors();
+  const PreferredColorScheme preferred_color_scheme =
       observed_theme->GetPreferredColorScheme();
-  bool inverted_colors = observed_theme->GetInvertedColors();
-  base::TimeDelta caret_blink_interval =
+  const bool inverted_colors = observed_theme->GetInvertedColors();
+  const base::TimeDelta caret_blink_interval =
       observed_theme->GetCaretBlinkInterval();
   bool notify_observers = false;
 
@@ -439,7 +453,8 @@ SkColor4f NativeTheme::GetScrollbarThumbColor(
     const ui::ColorProvider& color_provider,
     State state,
     const ScrollbarThumbExtraParams& extra_params) const {
-  // A native theme using solid color scrollbar thumb must override this method.
+  // A native theme using solid color scrollbar thumb must override this
+  // method.
   NOTREACHED();
 }
 

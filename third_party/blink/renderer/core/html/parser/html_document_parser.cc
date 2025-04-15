@@ -74,7 +74,6 @@
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/scheduler/public/cooperative_scheduling_manager.h"
 #include "third_party/blink/renderer/platform/scheduler/public/non_main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
@@ -169,14 +168,11 @@ PreloadProcessingMode GetPreloadProcessingMode() {
           {PreloadProcessingMode::kYield, "yield"},
       };
 
-  static const base::FeatureParam<PreloadProcessingMode>
-      kPreloadProcessingModeParam{
-          &features::kThreadedPreloadScanner, "preload-processing-mode",
-          PreloadProcessingMode::kImmediate, &kPreloadProcessingModeOptions};
-
   // Cache the value to avoid parsing the param string more than once.
   static const PreloadProcessingMode kPreloadProcessingModeValue =
-      kPreloadProcessingModeParam.Get();
+      base::GetFieldTrialParamByFeatureAsEnum(
+          features::kThreadedPreloadScanner, "preload-processing-mode",
+          PreloadProcessingMode::kImmediate, kPreloadProcessingModeOptions);
   return kPreloadProcessingModeValue;
 }
 
@@ -566,10 +562,13 @@ void HTMLDocumentParser::PrepareToStopParsing() {
 
   AttemptToRunDeferredScriptsAndEnd();
 
-  base::UmaHistogramTimes("Blink.PrepareToStopParsingTime", timer.Elapsed());
+  base::TimeDelta elapsed_time = timer.Elapsed();
+  if (metrics_sub_sampler_.ShouldSample(0.01)) {
+    base::UmaHistogramTimes("Blink.PrepareToStopParsingTime", elapsed_time);
+  }
   if (metrics_reporter_) {
     metrics_reporter_->AddPrepareToStopParsingTime(
-        timer.Elapsed().InMicroseconds());
+        elapsed_time.InMicroseconds());
   }
 }
 
@@ -821,11 +820,14 @@ bool HTMLDocumentParser::PumpTokenizer() {
     }
   }
 
-  base::UmaHistogramTimes("Blink.PumpTokenizerTime",
-                          pump_tokenizer_timer.Elapsed());
+  base::TimeDelta pump_tokenizer_elapsed_time = pump_tokenizer_timer.Elapsed();
+  if (metrics_sub_sampler_.ShouldSample(0.01)) {
+    base::UmaHistogramTimes("Blink.PumpTokenizerTime",
+                            pump_tokenizer_elapsed_time);
+  }
   if (metrics_reporter_) {
     metrics_reporter_->AddPumpTokenizerTime(
-        pump_tokenizer_timer.Elapsed().InMicroseconds());
+        pump_tokenizer_elapsed_time.InMicroseconds());
   }
 
   if (is_tracing) {
@@ -1010,7 +1012,7 @@ void HTMLDocumentParser::Append(const String& input_source) {
   if (GetDocument()->IsPrefetchOnly()) {
     if (preload_scanner_) {
       preload_scanner_->AppendToEnd(source);
-      // TODO(Richard.Townsend@arm.com): add test coverage of this branch.
+      // TODO(ritownsend@google.com): add test coverage of this branch.
       // The crash in crbug.com/1166786 indicates that text documents are being
       // speculatively prefetched.
       ScanAndPreload(preload_scanner_.get());
@@ -1255,9 +1257,6 @@ void HTMLDocumentParser::NotifyScriptLoaded() {
                          "parser", (void*)this);
   DCHECK(script_runner_);
   DCHECK(!IsExecutingScript());
-
-  scheduler::CooperativeSchedulingManager::AllowedStackScope
-      allowed_stack_scope(scheduler::CooperativeSchedulingManager::Instance());
 
   if (IsStopped()) {
     return;
@@ -1567,23 +1566,24 @@ void HTMLDocumentParser::ProcessPreloadData(
 }
 
 void HTMLDocumentParser::MaybeFetchQueuedPreloads() {
+  if (!AllowPreloading()) {
+    return;
+  }
+
   TRACE_EVENT_WITH_FLOW0("blink,devtools.timeline",
                          "HTMLDocumentParser::MaybeFetchQueuedPreloads",
                          TRACE_ID_LOCAL(this),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
 
-  if (!AllowPreloading()) {
-    return;
-  }
-
   base::ElapsedTimer timer;
   preloader_->TakeAndPreload(queued_preloads_);
+  base::TimeDelta elapsed_time = timer.Elapsed();
   base::UmaHistogramTimes(base::StrCat({"Blink.FetchQueuedPreloadsTime",
                                         GetPreloadHistogramSuffix()}),
-                          timer.Elapsed());
+                          elapsed_time);
   if (metrics_reporter_) {
     metrics_reporter_->AddFetchQueuedPreloadsTime(
-        timer.Elapsed().InMicroseconds());
+        elapsed_time.InMicroseconds());
   }
 }
 
@@ -1679,7 +1679,7 @@ void HTMLDocumentParser::AddPreloadDataOnBackgroundThread(
 }
 
 bool HTMLDocumentParser::HasPendingPreloads() {
-  return pending_preloads_->IsEmpty();
+  return !pending_preloads_->IsEmpty();
 }
 
 void HTMLDocumentParser::FlushPendingPreloads() {

@@ -85,6 +85,12 @@ enum class UnpackerError {
   kFailedToAddToCache = 19,
   kFailedToCreateCacheDir = 20,
   kCrxCacheNotProvided = 21,
+  kCrxCacheMetadataCorrupted = 22,
+  kCrxCacheFileNotCached = 23,
+  kPatchInvalidOldFile = 24,
+  kPatchInvalidPatchFile = 25,
+  kPatchInvalidNewFile = 26,
+  kXzFailed = 27,
 };
 
 // These errors are returned with the |kInstall| error category and
@@ -129,7 +135,7 @@ enum class ServiceError {
 enum class ProtocolError : int {
   NONE = 0,
   RESPONSE_NOT_TRUSTED = -10000,
-  MISSING_PUBLIC_KEY = -10001,
+  // Obsolete: MISSING_PUBLIC_KEY = -10001,
   MISSING_URLS = -10002,
   PARSE_FAILED = -10003,
   UPDATE_RESPONSE_NOT_FOUND = -10004,
@@ -142,6 +148,10 @@ enum class ProtocolError : int {
   NO_HASH = -10011,
   UNSUPPORTED_PROTOCOL = -10012,
   INTERNAL = -10013,
+  UNSUPPORTED_OPERATION = -10014,
+  INEXPRESSIBLE = -10015,
+  UNKNOWN_ERROR = -10016,
+  INVALID_OPERATION_ATTRIBUTES = -10017,
 };
 
 struct CategorizedError {

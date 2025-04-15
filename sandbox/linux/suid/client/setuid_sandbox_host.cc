@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
@@ -16,6 +18,7 @@
 #include <unistd.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -50,11 +53,13 @@ void SetSandboxAPIEnvironmentVariable(base::Environment* env) {
 // inside another.
 void UnsetExpectedEnvironmentVariables(base::EnvironmentMap* env_map) {
   DCHECK(env_map);
-  const base::NativeEnvironmentString environment_vars[] = {
-      kSandboxDescriptorEnvironmentVarName, kSandboxHelperPidEnvironmentVarName,
-      kSandboxEnvironmentApiProvides,       kSandboxPIDNSEnvironmentVarName,
+  const auto environment_vars = std::to_array<base::NativeEnvironmentString>({
+      kSandboxDescriptorEnvironmentVarName,
+      kSandboxHelperPidEnvironmentVarName,
+      kSandboxEnvironmentApiProvides,
+      kSandboxPIDNSEnvironmentVarName,
       kSandboxNETNSEnvironmentVarName,
-  };
+  });
 
   for (size_t i = 0; i < std::size(environment_vars); ++i) {
     // Setting values in EnvironmentMap to an empty-string will make
@@ -89,11 +94,12 @@ void SaveSUIDUnsafeEnvironmentVariables(base::Environment* env) {
     if (!saved_env_var)
       continue;
 
-    std::string value;
-    if (env->GetVar(env_var, &value))
-      env->SetVar(*saved_env_var, value);
-    else
+    std::optional<std::string> value = env->GetVar(env_var);
+    if (value.has_value()) {
+      env->SetVar(*saved_env_var, *value);
+    } else {
       env->UnSetVar(*saved_env_var);
+    }
   }
 }
 

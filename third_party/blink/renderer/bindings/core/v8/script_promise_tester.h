@@ -32,11 +32,14 @@ class ScriptPromiseTester final {
       : script_state_(script_state),
         value_object_(MakeGarbageCollected<ScriptValueObject>()) {
     CHECK(script_state);
-    script_promise.React(script_state,
-                         MakeGarbageCollected<ThenFunction<IDLType>>(
-                             weak_factory_.GetWeakPtr(), State::kFulfilled),
-                         MakeGarbageCollected<ThenFunction<IDLAny>>(
-                             weak_factory_.GetWeakPtr(), State::kRejected));
+    if (script_promise.IsEmpty()) {
+      return;
+    }
+    script_promise.Then(script_state,
+                        MakeGarbageCollected<ThenFunction<IDLType>>(
+                            weak_factory_.GetWeakPtr(), State::kFulfilled),
+                        MakeGarbageCollected<ThenFunction<IDLAny>>(
+                            weak_factory_.GetWeakPtr(), State::kRejected));
   }
 
   ScriptPromiseTester(const ScriptPromiseTester&) = delete;

@@ -25,20 +25,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
-import org.chromium.base.FeatureList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
-import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
@@ -52,6 +48,8 @@ import org.chromium.ui.base.DeviceFormFactor;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class ToolbarButtonIphTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
@@ -59,7 +57,6 @@ public class ToolbarButtonIphTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         // Pretend the feature engagement feature is already initialized. Otherwise
         // UserEducationHelper#requestShowIph() calls get dropped during test.
         doAnswer(
@@ -71,7 +68,7 @@ public class ToolbarButtonIphTest {
                 .addOnInitializedCallback(any());
         TrackerFactory.setTrackerForTests(mTracker);
 
-        when(mTracker.shouldTriggerHelpUIWithSnooze(any()))
+        when(mTracker.shouldTriggerHelpUiWithSnooze(any()))
                 .thenReturn(new TriggerDetails(false, false));
 
         // Start on a page from the test server. This works around a bug that causes the top toolbar
@@ -79,30 +76,6 @@ public class ToolbarButtonIphTest {
         // the test case will fail. See https://crbug.com/1144328.
         mActivityTestRule.startMainActivityWithURL(
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/about.html"));
-    }
-
-    @Test
-    @MediumTest
-    @Restriction({DeviceFormFactor.PHONE})
-    public void testPriceDropIph() throws InterruptedException {
-        setPriceTrackingFeatures();
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.PRICE_DROP_NTP_FEATURE))
-                .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(FeatureConstants.PRICE_DROP_NTP_FEATURE))
-                .thenReturn(new TriggerDetails(true, false));
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    ChromeActivity activity = mActivityTestRule.getActivity();
-                    ToolbarManager toolbarManager = activity.getToolbarManager();
-                    toolbarManager.showPriceDropIph();
-                });
-
-        ViewInteraction toolbarTabButtonInteraction = onView(withId(R.id.tab_switcher_button));
-        toolbarTabButtonInteraction.check(ViewAssertions.matches(withHighlight(true)));
-
-        toolbarTabButtonInteraction.perform(ViewActions.click());
-        toolbarTabButtonInteraction.check(ViewAssertions.matches(withHighlight(false)));
     }
 
     @Test
@@ -124,9 +97,9 @@ public class ToolbarButtonIphTest {
     @Restriction({DeviceFormFactor.PHONE})
     @DisabledTest(message = "https://crbug.com/1142979")
     public void testTabSwitcherButtonIph() throws InterruptedException {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.TAB_SWITCHER_BUTTON_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.TAB_SWITCHER_BUTTON_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(FeatureConstants.TAB_SWITCHER_BUTTON_FEATURE))
+        when(mTracker.shouldTriggerHelpUiWithSnooze(FeatureConstants.TAB_SWITCHER_BUTTON_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
 
         mActivityTestRule.loadUrl("about:blank");
@@ -134,21 +107,5 @@ public class ToolbarButtonIphTest {
         toolbarTabButtonInteraction.check(ViewAssertions.matches(withHighlight(true)));
 
         toolbarTabButtonInteraction.perform(ViewActions.click());
-    }
-
-    private void setPriceTrackingFeatures() {
-        PriceTrackingFeatures.setIsSignedInAndSyncEnabledForTesting(true);
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-
-        // Enables price tracking.
-        PriceTrackingFeatures.setPriceTrackingEnabledForTesting(true);
-
-        // Enables the price tracking IPH.
-        testValues.addFeatureFlagOverride(ChromeFeatureList.COMMERCE_PRICE_TRACKING, true);
-        testValues.addFieldTrialParamOverride(
-                ChromeFeatureList.COMMERCE_PRICE_TRACKING,
-                PriceTrackingFeatures.PRICE_DROP_IPH_ENABLED_PARAM,
-                String.valueOf(true));
-        FeatureList.setTestValues(testValues);
     }
 }

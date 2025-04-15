@@ -103,13 +103,19 @@ class HeapVector final : public GarbageCollected<HeapVector<T, inlineCapacity>>,
  private:
   struct TypeConstraints {
     constexpr TypeConstraints();
+
+   private:
+    template <typename U>
+    class IsHeapVector : public std::false_type {};
+    template <typename U>
+    class IsHeapVector<HeapVector<U>> : public std::true_type {};
+    template <typename U, wtf_size_t InlineCapacity>
+    class IsHeapVector<HeapVector<U, InlineCapacity>> : public std::true_type {
+    };
   };
   static_assert(std::is_empty_v<TypeConstraints>);
   NO_UNIQUE_ADDRESS TypeConstraints type_constraints_;
 };
-
-template <typename T>
-concept IsHeapVector = requires { typename HeapVector<T>; };
 
 template <typename T, wtf_size_t inlineCapacity>
 constexpr HeapVector<T, inlineCapacity>::TypeConstraints::TypeConstraints() {
@@ -117,9 +123,10 @@ constexpr HeapVector<T, inlineCapacity>::TypeConstraints::TypeConstraints() {
                 "HeapVector must be trivially destructible.");
   static_assert(!WTF::IsWeak<T>::value,
                 "Weak types are not allowed in HeapVector.");
-  static_assert(!WTF::IsGarbageCollectedType<T>::value || IsHeapVector<T>,
-                "GCed types should not be inlined in a HeapVector.");
-  static_assert(!WTF::IsPointerToGced<T>::value,
+  static_assert(
+      !WTF::IsGarbageCollectedType<T>::value || IsHeapVector<T>::value,
+      "GCed types should not be inlined in a HeapVector.");
+  static_assert(!WTF::IsPointerToGarbageCollectedType<T>,
                 "Don't use raw pointers or reference to garbage collected "
                 "types in HeapVector. Use Member<> instead.");
 
@@ -130,6 +137,13 @@ constexpr HeapVector<T, inlineCapacity>::TypeConstraints::TypeConstraints() {
 }
 
 ASSERT_SIZE(Vector<int>, HeapVector<int>);
+
+// TODO(392817527): This alias is temporary. It will be replaced with actually
+// GCed type that is not DISALLOW_NEW, similar to e.g. HeapHashMap and
+// GCedHeapHashMap. The alias only exists to allow incrementally converting
+// areas of the codebase.
+template <typename T, wtf_size_t inlineCapacity = 0>
+using GCedHeapVector = HeapVector<T, inlineCapacity>;
 
 }  // namespace blink
 

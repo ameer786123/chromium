@@ -14,6 +14,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/updateable_sequenced_task_runner.h"
 #include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
@@ -79,7 +80,9 @@ class TransactionTest : public testing::Test {
     bucket_context_ = std::make_unique<BucketContext>(
         GetOrCreateBucket(
             storage::BucketInitParams::ForDefaultBucket(storage_key)),
-        temp_dir_.GetPath(), std::move(delegate), quota_manager_->proxy(),
+        temp_dir_.GetPath(), std::move(delegate),
+        scoped_refptr<base::UpdateableSequencedTaskRunner>(),
+        quota_manager_->proxy(),
         /*blob_storage_context=*/mojo::NullRemote(),
         /*file_system_access_context=*/mojo::NullRemote());
 
@@ -155,9 +158,13 @@ class TransactionTest : public testing::Test {
 
     std::unique_ptr<Transaction> transaction = std::make_unique<Transaction>(
         id, connection, object_store_ids, mode,
+        blink::mojom::IDBTransactionDurability::Relaxed,
         BucketContextHandle(*bucket_context_),
-        new FakeTransaction(commit_phase_two_error_status, mode,
-                            bucket_context_->backing_store()->AsWeakPtr()));
+        std::make_unique<FakeTransaction>(
+            commit_phase_two_error_status, mode,
+            reinterpret_cast<level_db::BackingStore*>(
+                bucket_context_->backing_store())
+                ->AsWeakPtr()));
 
     Transaction* transaction_reference = transaction.get();
     connection->transactions_[id] = std::move(transaction);

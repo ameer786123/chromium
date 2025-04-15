@@ -61,11 +61,12 @@ static ColorParseResult ParseColor(Color& parsed_color,
                                    mojom::blink::ColorScheme color_scheme,
                                    const ui::ColorProvider* color_provider,
                                    bool is_in_web_app_scope) {
-  if (EqualIgnoringASCIICase(color_string, "currentcolor"))
+  if (EqualIgnoringASCIICase(color_string, "currentcolor")) {
     return ColorParseResult::kCurrentColor;
-  const bool kUseStrictParsing = true;
-  if (CSSParser::ParseColor(parsed_color, color_string, kUseStrictParsing))
+  }
+  if (CSSParser::ParseColor(parsed_color, color_string)) {
     return ColorParseResult::kColor;
+  }
   if (CSSParser::ParseSystemColor(parsed_color, color_string, color_scheme,
                                   color_provider, is_in_web_app_scope)) {
     return ColorParseResult::kColor;
@@ -78,7 +79,7 @@ static ColorParseResult ParseColor(Color& parsed_color,
     static const TextLinkColors kDefaultTextLinkColors{};
     // TODO(40946458): Don't use default length resolver here!
     const ResolveColorValueContext context{
-        .length_resolver = CSSToLengthConversionData(),
+        .length_resolver = CSSToLengthConversionData(/*element=*/nullptr),
         .text_link_colors = kDefaultTextLinkColors,
         .used_color_scheme = color_scheme,
         .color_provider = color_provider,
@@ -129,11 +130,11 @@ void CanvasStyle::ApplyToFlags(cc::PaintFlags& flags,
       break;
     case kImagePattern:
       GetCanvasPattern()->GetPattern()->ApplyToFlags(
-          flags, AffineTransformToSkMatrix(GetCanvasPattern()->GetTransform()));
+          flags, GetCanvasPattern()->GetTransform().ToSkMatrix());
       flags.setColor(SkColor4f(0.0f, 0.0f, 0.0f, global_alpha));
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
 }
 

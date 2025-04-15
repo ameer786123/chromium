@@ -220,8 +220,8 @@ TEST_F(DynamicModuleResolverTest, ResolveSuccess) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureExportedStringFunction>("foo");
-  promise.React(scope.GetScriptState(), capture,
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
+  promise.Then(scope.GetScriptState(), capture,
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
@@ -256,7 +256,6 @@ TEST_F(DynamicModuleResolverTest, ResolveJSONModuleSuccess) {
 
   auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
       scope.GetScriptState());
-  auto promise = promise_resolver->Promise();
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   Vector<ImportAttribute> import_attributes{
@@ -285,9 +284,9 @@ TEST_F(DynamicModuleResolverTest, ResolveSpecifierFailure) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.React(scope.GetScriptState(),
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
-                capture);
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("invalid-specifier",
@@ -313,9 +312,9 @@ TEST_F(DynamicModuleResolverTest, ResolveModuleTypeFailure) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.React(scope.GetScriptState(),
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
-                capture);
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   Vector<ImportAttribute> import_attributes{
@@ -342,9 +341,9 @@ TEST_F(DynamicModuleResolverTest, FetchFailure) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.React(scope.GetScriptState(),
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
-                capture);
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
@@ -374,9 +373,9 @@ TEST_F(DynamicModuleResolverTest, ExceptionThrown) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.React(scope.GetScriptState(),
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
-                capture);
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
@@ -415,8 +414,8 @@ TEST_F(DynamicModuleResolverTest, ResolveWithNullReferrerScriptSuccess) {
   auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureExportedStringFunction>("foo");
-  promise.React(scope.GetScriptState(), capture,
-                MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
+  promise.Then(scope.GetScriptState(), capture,
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",

@@ -25,11 +25,16 @@ class TestTabModel : public TabModel {
                  bool select) override;
   void HandlePopupNavigation(TabAndroid* parent,
                              NavigateParams* params) override;
-  content::WebContents* CreateNewTabForDevTools(const GURL& url) override;
+  content::WebContents* CreateNewTabForDevTools(const GURL& url,
+                                                bool new_window) override;
   bool IsSessionRestoreInProgress() const override;
+
   bool IsActiveModel() const override;
+  void SetIsActiveModel(bool is_active);
+
   TabAndroid* GetTabAt(int index) const override;
   void SetActiveIndex(int index) override;
+  void ForceCloseAllTabs() override;
   void CloseTabAt(int index) override;
   void AddObserver(TabModelObserver* observer) override;
   void RemoveObserver(TabModelObserver* observer) override;
@@ -43,10 +48,12 @@ class TestTabModel : public TabModel {
       const base::Time& end_time) const override;
   void CloseTabsNavigatedInTimeWindow(const base::Time& begin_time,
                                       const base::Time& end_time) override;
+  bool IsTabInTabGroup(TabAndroid* tab) override;
 
  private:
   // A fake value for the current number of tabs.
   int tab_count_ = 0;
+  bool is_active_ = false;
 
   raw_ptr<TabModelObserver> observer_ = nullptr;
   std::vector<raw_ptr<content::WebContents>> web_contents_list_;

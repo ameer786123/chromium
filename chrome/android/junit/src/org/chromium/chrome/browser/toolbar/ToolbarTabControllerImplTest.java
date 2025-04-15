@@ -14,21 +14,20 @@ import static org.mockito.Mockito.verify;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.common.ChromeUrlConstants;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.homepage.HomepageManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -57,6 +56,7 @@ public class ToolbarTabControllerImplTest {
         }
     }
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Supplier<Tab> mTabSupplier;
     @Mock private Tab mTab;
     @Mock private Tab mTab2;
@@ -73,7 +73,6 @@ public class ToolbarTabControllerImplTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         doReturn(mTab).when(mTabSupplier).get();
         doReturn(mTab).when(mActivityTabProvider).get();
         doReturn(mProfile).when(mTab).getProfile();
@@ -164,49 +163,7 @@ public class ToolbarTabControllerImplTest {
     }
 
     @Test
-    @DisableFeatures({
-        ChromeFeatureList.BACK_GESTURE_REFACTOR,
-        ChromeFeatureList.BACK_GESTURE_ACTIVITY_TAB_PROVIDER
-    })
-    public void
-            testUsingCorrectTabSupplier_refactorOff_controlWithActivityTabProviderOff_usesRegularTabSupplier() {
-        // Should only use regular tab supplier when back press refactor is disabled and
-        // control with activity tab provider is also disabled.
-        setUpUsingCorrectTabSupplier();
-
-        Assert.assertTrue(mToolbarTabController.back());
-        Assert.assertTrue(mToolbarTabController.canGoBack());
-    }
-
-    @Test
-    @EnableFeatures(ChromeFeatureList.BACK_GESTURE_REFACTOR)
-    @DisableFeatures(ChromeFeatureList.BACK_GESTURE_ACTIVITY_TAB_PROVIDER)
-    public void
-            testUsingCorrectTabSupplier_refactorOn_controlWithActivityTabProviderOff_doesNotUseRegularTabSupplier() {
-        setUpUsingCorrectTabSupplier();
-
-        Assert.assertFalse(mToolbarTabController.back());
-        Assert.assertFalse(mToolbarTabController.canGoBack());
-    }
-
-    @Test
-    @EnableFeatures(ChromeFeatureList.BACK_GESTURE_ACTIVITY_TAB_PROVIDER)
-    @DisableFeatures(ChromeFeatureList.BACK_GESTURE_REFACTOR)
-    public void
-            testUsingCorrectTabSupplier_refactorOff_controlWithActivityTabProviderOn_doesNotUseRegularTabSupplier() {
-        setUpUsingCorrectTabSupplier();
-
-        Assert.assertFalse(mToolbarTabController.back());
-        Assert.assertFalse(mToolbarTabController.canGoBack());
-    }
-
-    @Test
-    @EnableFeatures({
-        ChromeFeatureList.BACK_GESTURE_ACTIVITY_TAB_PROVIDER,
-        ChromeFeatureList.BACK_GESTURE_ACTIVITY_TAB_PROVIDER
-    })
-    public void
-            testUsingCorrectTabSupplier_refactorOn_controlWithActivityTabProviderOn_doesNotUseRegularTabSupplier() {
+    public void testUsingCorrectTabSupplier_doesNotUseRegularTabSupplier() {
         setUpUsingCorrectTabSupplier();
 
         Assert.assertFalse(mToolbarTabController.back());

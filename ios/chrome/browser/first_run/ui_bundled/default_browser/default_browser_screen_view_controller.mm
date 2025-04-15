@@ -8,15 +8,18 @@
 #import "ios/chrome/browser/first_run/model/first_run_metrics.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/shared/ui/elements/instruction_view.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
+#import "ios/chrome/common/ui/instruction_view/instruction_view.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/device_form_factor.h"
 #import "ui/base/l10n/l10n_util.h"
 
 @implementation DefaultBrowserScreenViewController
+
+@synthesize hasPlatformPolicies = _hasPlatformPolicies;
+@synthesize screenIntent = _screenIntent;
 
 #pragma mark - UIViewController
 
@@ -60,6 +63,8 @@
     l10n_util::GetNSString(IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_THIRD_STEP)
   ];
 
+  [self generateDisclaimer];
+
   UIView* instructionView =
       [[InstructionView alloc] initWithList:defaultBrowserSteps];
   instructionView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -67,17 +72,29 @@
   [self.specificContentView addSubview:instructionView];
 
   [NSLayoutConstraint activateConstraints:@[
-    [instructionView.bottomAnchor
-        constraintEqualToAnchor:self.specificContentView.bottomAnchor],
     [instructionView.centerXAnchor
         constraintEqualToAnchor:self.specificContentView.centerXAnchor],
     [instructionView.widthAnchor
         constraintEqualToAnchor:self.specificContentView.widthAnchor],
-    [instructionView.topAnchor
-        constraintGreaterThanOrEqualToAnchor:self.specificContentView
-                                                 .topAnchor],
   ]];
 
+  if ([self.disclaimerText length] > 0) {
+    [NSLayoutConstraint activateConstraints:@[
+      [instructionView.bottomAnchor
+          constraintLessThanOrEqualToAnchor:self.specificContentView
+                                                .bottomAnchor],
+      [instructionView.topAnchor
+          constraintEqualToAnchor:self.specificContentView.topAnchor],
+    ]];
+  } else {
+    [NSLayoutConstraint activateConstraints:@[
+      [instructionView.bottomAnchor
+          constraintEqualToAnchor:self.specificContentView.bottomAnchor],
+      [instructionView.topAnchor
+          constraintGreaterThanOrEqualToAnchor:self.specificContentView
+                                                   .topAnchor],
+    ]];
+  }
   [super viewDidLoad];
 }
 
@@ -89,6 +106,40 @@
 
 - (void)setPromoSubtitle:(NSString*)subtitleText {
   self.subtitleText = subtitleText;
+}
+
+#pragma mark - Private
+
+// Generates the footer string.
+- (void)generateDisclaimer {
+  NSMutableArray<NSString*>* array = [NSMutableArray array];
+  NSMutableArray<NSURL*>* urls = [NSMutableArray array];
+  if (self.hasPlatformPolicies) {
+    [array addObject:l10n_util::GetNSString(
+                         IDS_IOS_FIRST_RUN_WELCOME_SCREEN_BROWSER_MANAGED)];
+  }
+  switch (self.screenIntent) {
+    case kDefault: {
+      break;
+    }
+    case kTOSAndUMA: {
+      [array addObject:l10n_util::GetNSString(
+                           IDS_IOS_FIRST_RUN_WELCOME_SCREEN_TERMS_OF_SERVICE)];
+      [urls addObject:[NSURL URLWithString:first_run::kTermsOfServiceURL]];
+      [array addObject:l10n_util::GetNSString(
+                           IDS_IOS_FIRST_RUN_WELCOME_SCREEN_METRIC_REPORTING)];
+      [urls addObject:[NSURL URLWithString:first_run::kMetricReportingURL]];
+      break;
+    }
+    case kTOSWithoutUMA: {
+      [array addObject:l10n_util::GetNSString(
+                           IDS_IOS_FIRST_RUN_WELCOME_SCREEN_TERMS_OF_SERVICE)];
+      [urls addObject:[NSURL URLWithString:first_run::kTermsOfServiceURL]];
+      break;
+    }
+  }
+  self.disclaimerText = [array componentsJoinedByString:@" "];
+  self.disclaimerURLs = urls;
 }
 
 @end

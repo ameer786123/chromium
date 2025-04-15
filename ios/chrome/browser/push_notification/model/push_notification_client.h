@@ -10,6 +10,7 @@
 #import <UserNotifications/UserNotifications.h>
 
 #import <string>
+#import <string_view>
 
 #import "base/memory/raw_ptr.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
@@ -20,17 +21,25 @@ class CommercePushNotificationClientTest;
 
 class Browser;
 
+// Holds the configuration information for a UNNNotificationRequest.
+struct ScheduledNotificationRequest {
+  NSString* identifier;
+  UNNotificationContent* content;
+  base::TimeDelta time_interval;
+};
+
 // The PushNotificationClient class is an abstract class that provides a
 // framework for implementing push notification support. Feature teams that
 // intend to support push notifications should create a class that inherits from
 // the PushNotificationClient class.
-// TODO(crbug.com/325254943): Update this class and subclasses to accept an
-// injected ProfileIOS* and not internally fetch a profile via
-// GetlastUsedProfile. Update tests as well.
 class PushNotificationClient {
  public:
-  PushNotificationClient(PushNotificationClientId client_id);
+  PushNotificationClient(PushNotificationClientId client_id,
+                         PushNotificationClientScope scope);
   virtual ~PushNotificationClient() = 0;
+
+  // Returns true if this client can handle the given `notification`.
+  virtual bool CanHandleNotification(UNNotification* notification) = 0;
 
   // When the user interacts with a push notification, this function is called
   // to route the user to the appropriate destination. Returns `true` if the
@@ -62,7 +71,10 @@ class PushNotificationClient {
   virtual void OnSceneActiveForegroundBrowserReady();
 
   // Returns the feature's `client_id_`.
-  PushNotificationClientId GetClientId();
+  PushNotificationClientId GetClientId() const;
+
+  // Returns the feature's `client_scope_`.
+  PushNotificationClientScope GetClientScope() const;
 
   // Loads a url in a new tab once an active browser is ready.
   // TODO(crbug.com/41497027): This API should includes an identifier of the
@@ -83,24 +95,50 @@ class PushNotificationClient {
       NSDictionary<NSString*, NSString*>* data,
       PushNotificationClientId clientId);
 
+  // Schedules a notification `request` associated with a specific
+  // `profile_name`. The `profile_name` will be embedded in the notification
+  // metadata, ensuring it's routed to the correct notification client during
+  // interactions. `profile_name` must not be empty. Calls `completion` upon
+  // finish.
+  //
+  // `kIOSPushNotificationMultiProfile` must be enabled.
+  void ScheduleProfileNotification(
+      ScheduledNotificationRequest request,
+      base::OnceCallback<void(NSError*)> completion,
+      std::string_view profile_name);
+
+  // Checks additional constraints before scheduling a notification `request`
+  // with `completion` callback.
+  void CheckRateLimitBeforeSchedulingNotification(
+      ScheduledNotificationRequest request,
+      base::OnceCallback<void(NSError*)> completion);
+
  protected:
   // The unique string that is used to associate incoming push notifications to
   // their destination feature. This identifier must match the identifier
   // used inside the notification's payload when sending the notification to the
   // push notification server.
-  PushNotificationClientId client_id_;
+  const PushNotificationClientId client_id_;
 
-  // Returns an arbitrary profile amongst the currently loaded profile. This
-  // means that this API is not safe when there are multiple profiles. Instead
-  // the push notification system should be re-designed to not depend on this
-  // method (either create specific manager per-profile, or include in the
-  // notification an identifier for the profile, e.g. gaia id).
+  // The operational scope of this client, indicating whether it's app-wide
+  // or per-Profile.
+  const PushNotificationClientScope client_scope_;
+
+  // Returns an arbitrary Browser with an active Scene (i.e. a Scene at the
+  // level SceneActivationLevelForegroundActive) if any. This will return a
+  // valid Browser if there is one, but when multiple profiles are loaded it
+  // will be arbitrary. The push notification system should be re-designed
+  // to not depend on this method (either create specific manager per-profile,
+  // or include in the notification an identifier, e.g. gaia id).
   // TODO(crbug.com/41497027): This API should be redesigned.
-  ProfileIOS* GetAnyProfile();
-
-  // Returns the first active browser found with scene level
-  // SceneActivationLevelForegroundActive.
   Browser* GetSceneLevelForegroundActiveBrowser();
+
+  // Similar to `GetSceneLevelForegroundActiveBrowser()`, but specifically
+  // searches for a browser associated with the provided `profile`. Returns the
+  // first matching browser with scene level
+  // `SceneActivationLevelForegroundActive`, or `nullptr` if none exists for
+  // this profile.
+  Browser* GetSceneLevelForegroundActiveBrowserForProfile(ProfileIOS* profile);
 
  private:
   friend class ::CommercePushNotificationClientTest;
@@ -117,10 +155,35 @@ class PushNotificationClient {
   // Stores the feedback payload to be sent with the notification feedback.
   NSDictionary<NSString*, NSString*>* feedback_data_ = nil;
 
+  base::WeakPtrFactory<PushNotificationClient> weak_ptr_factory_{this};
+
   // Loads a url in a new tab for a given browser.
   void LoadUrlInNewTab(const GURL& url,
                        Browser* browser,
                        base::OnceCallback<void(Browser*)> callback);
+
+  // Receives the result of getting all scheduled notifications as a part of
+  // scheduling notification `notif_request`.
+  void HandlePendingNotificationResult(
+      ScheduledNotificationRequest notification,
+      base::OnceCallback<void(NSError*)> completion,
+      NSArray<UNNotificationRequest*>* requests);
+
+  // Schedules a notification `request` `completion` upon finish.
+  void ScheduleNotification(ScheduledNotificationRequest request,
+                            base::OnceCallback<void(NSError*)> completion);
+
+  // Creates a `UNNotificationRequest` for an app-wide notification using the
+  // provided `request.content` and triggering after `request.time_interval`.
+  UNNotificationRequest* CreateRequest(ScheduledNotificationRequest request);
+
+  // Creates a `UNNotificationRequest` specific to the given `profile_name`.
+  // Uses the provided `request.content` and triggers after
+  // `request.time_interval`. Requires multi-profile handling to be enabled
+  // (`kIOSPushNotificationMultiProfile` must be enabled).
+  UNNotificationRequest* CreateRequestForProfile(
+      ScheduledNotificationRequest request,
+      std::string_view profile_name);
 };
 
 #endif  // IOS_CHROME_BROWSER_PUSH_NOTIFICATION_MODEL_PUSH_NOTIFICATION_CLIENT_H_

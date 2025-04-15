@@ -52,6 +52,7 @@
 #include "content/browser/renderer_host/back_forward_cache_metrics.h"
 #include "content/browser/renderer_host/browsing_context_state.h"
 #include "content/browser/renderer_host/code_cache_host_impl.h"
+#include "content/browser/renderer_host/cookie_access_observers.h"
 #include "content/browser/renderer_host/document_associated_data.h"
 #include "content/browser/renderer_host/frame_navigation_entry.h"
 #include "content/browser/renderer_host/keep_alive_handle_factory.h"
@@ -66,6 +67,7 @@
 #include "content/browser/renderer_host/transient_focus_source_user_activation.h"
 #include "content/browser/security/coop/cross_origin_opener_policy_access_report_manager.h"
 #include "content/browser/security/coop/cross_origin_opener_policy_reporter.h"
+#include "content/browser/security/dip/document_isolation_policy_reporter.h"
 #include "content/browser/site_instance_group.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/storage_partition_impl.h"
@@ -80,6 +82,7 @@
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/cookie_access_details.h"
 #include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/frame_type.h"
 #include "content/public/browser/global_request_id.h"
@@ -93,6 +96,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/extra_mojo_js_features.mojom-forward.h"
 #include "content/public/common/javascript_dialog_type.h"
+#include "media/base/picture_in_picture_events_info.h"
 #include "media/mojo/mojom/interface_factory.mojom-forward.h"
 #include "media/mojo/mojom/key_system_support.mojom-forward.h"
 #include "media/mojo/mojom/media_metrics_provider.mojom-forward.h"
@@ -106,6 +110,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "net/base/isolation_info.h"
@@ -117,19 +122,20 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
 #include "services/network/public/cpp/cross_origin_opener_policy.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
 #include "services/network/public/mojom/mdns_responder.mojom.h"
 #include "services/network/public/mojom/shared_dictionary_access_observer.mojom.h"
 #include "services/network/public/mojom/trust_token_access_observer.mojom.h"
 #include "services/network/public/mojom/url_loader_network_service_observer.mojom-forward.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/frame/delegated_capability_request_token.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/frame/history_user_activation_state.h"
 #include "third_party/blink/public/common/frame/user_activation_state.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/scheduler/web_scheduler_tracked_feature.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -153,6 +159,7 @@
 #include "third_party/blink/public/mojom/input/focus_type.mojom-forward.h"
 #include "third_party/blink/public/mojom/installedapp/installed_app_provider.mojom-forward.h"
 #include "third_party/blink/public/mojom/loader/fetch_later.mojom-forward.h"
+#include "third_party/blink/public/mojom/loader/local_resource_loader_config.mojom-forward.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-forward.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom.h"
@@ -160,13 +167,14 @@
 #include "third_party/blink/public/mojom/notifications/notification_service.mojom-forward.h"
 #include "third_party/blink/public/mojom/origin_trials/origin_trial_state_host.mojom.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom-forward.h"
-#include "third_party/blink/public/mojom/payments/payment_credential.mojom.h"
+#include "third_party/blink/public/mojom/payments/secure_payment_confirmation_service.mojom.h"
 #include "third_party/blink/public/mojom/peerconnection/peer_connection_tracker.mojom-forward.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-forward.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom-forward.h"
 #include "third_party/blink/public/mojom/render_accessibility.mojom.h"
 #include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-forward.h"
 #include "third_party/blink/public/mojom/sensor/web_sensor_provider.mojom-forward.h"
+#include "third_party/blink/public/mojom/serial/serial.mojom-forward.h"
 #include "third_party/blink/public/mojom/sms/webotp_service.mojom-forward.h"
 #include "third_party/blink/public/mojom/speech/speech_synthesis.mojom-forward.h"
 #include "third_party/blink/public/mojom/webaudio/audio_context_manager.mojom-forward.h"
@@ -196,7 +204,6 @@
 #include "services/device/public/mojom/nfc.mojom.h"
 #else
 #include "third_party/blink/public/mojom/hid/hid.mojom-forward.h"
-#include "third_party/blink/public/mojom/serial/serial.mojom-forward.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -246,13 +253,6 @@ class UkmRecorder;
 
 namespace features {
 
-// Feature to prevent name updates to RenderFrameHost (and by extension its
-// relevant BrowsingContextState) when it is not current (i.e. is in the
-// BackForwardCache or is pending delete). This primarily will affect the
-// non-legacy implementation of BrowsingContextState.
-CONTENT_EXPORT BASE_DECLARE_FEATURE(
-    kDisableFrameNameUpdateOnNonCurrentRenderFrameHost);
-
 // Feature to evict when accessibility events occur while in back/forward cache.
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEvictOnAXEvents);
 
@@ -273,6 +273,7 @@ class FileSystemManagerImpl;
 class FrameTree;
 class FrameTreeNode;
 class GeolocationServiceImpl;
+class GuestPageHolderImpl;
 class IdleManagerImpl;
 class NavigationEarlyHintsManager;
 class NavigationRequest;
@@ -325,9 +326,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
       public blink::mojom::LocalMainFrameHost,
       public ui::AXActionHandlerBase,
       public device::mojom::VibrationManagerListener,
-      public network::mojom::CookieAccessObserver,
       public network::mojom::TrustTokenAccessObserver,
       public network::mojom::SharedDictionaryAccessObserver,
+      public network::mojom::DeviceBoundSessionAccessObserver,
       public BucketContext {
  public:
   using JavaScriptDialogCallback =
@@ -431,6 +432,15 @@ class CONTENT_EXPORT RenderFrameHostImpl
       int initiator_process_id,
       StoragePartitionImpl* storage_partition);
 
+  // Get the IsUntrustedNetworkDisabled() result associated with `frame_token`.
+  // See RenderFrameHost::IsUntrustedNetworkDisabled() for more info. Returns
+  // nullopt if unable to find information on the associated frame, the boolean
+  // untrusted network status otherwise.
+  static std::optional<bool> GetIsUntrustedNetworkDisabled(
+      const blink::LocalFrameToken* frame_token,
+      int initiator_process_id,
+      StoragePartitionImpl* storage_partition);
+
   RenderFrameHostImpl(const RenderFrameHostImpl&) = delete;
   RenderFrameHostImpl& operator=(const RenderFrameHostImpl&) = delete;
 
@@ -443,6 +453,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   const base::UnguessableToken& GetReportingSource() override;
 
   ui::AXTreeID GetAXTreeID() override;
+  NavigationController& GetController() override;
   SiteInstanceImpl* GetSiteInstance() const override;
   RenderProcessHost* GetProcess() const override;
   GlobalRenderFrameHostId GetGlobalId() const override;
@@ -534,9 +545,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   bool GetSuddenTerminationDisablerState(
       blink::mojom::SuddenTerminationDisablerType disabler_type) override;
   bool IsFeatureEnabled(
-      blink::mojom::PermissionsPolicyFeature feature) override;
-  const blink::PermissionsPolicy* GetPermissionsPolicy() override;
-  const blink::ParsedPermissionsPolicy& GetPermissionsPolicyHeader() override;
+      network::mojom::PermissionsPolicyFeature feature) override;
+  const network::PermissionsPolicy* GetPermissionsPolicy() override;
+  const network::ParsedPermissionsPolicy& GetPermissionsPolicyHeader() override;
   void ViewSource() override;
   void ExecuteMediaPlayerActionAtLocation(
       const gfx::Point&,
@@ -584,9 +595,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
       content::mojom::ExtraMojoJsFeaturesPtr features) override;
   bool ShouldChangeRenderFrameHostOnSameSiteNavigation() const override;
   bool IsClipboardOwner(ui::ClipboardSequenceNumberToken seqno) const override;
-  void MarkClipboardOwner(ui::ClipboardSequenceNumberToken seqno) override;
   bool IsUntrustedNetworkDisabled() const override;
   bool HasPolicyContainerHost() const override;
+  const network::CrossOriginEmbedderPolicy& GetCrossOriginEmbedderPolicy()
+      const override;
 
   // Additional non-override const version of GetMainFrame.
   const RenderFrameHostImpl* GetMainFrame() const;
@@ -737,6 +749,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   bool AccessibilityIsRootFrame() const override;
   bool ShouldSuppressAXLoadComplete() override;
   WebContentsAccessibility* AccessibilityGetWebContentsAccessibility() override;
+  bool AccessibilityIsWebContentSource() override;
 
   // ui::AXNodeIdDelegate:
   ui::AXPlatformNodeId GetOrCreateAXNodeUniqueId(
@@ -1179,7 +1192,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
 
   // Unload this frame for the proxy. Similar to `Unload()` but without
   // managing the lifecycle of this object.
-  void SwapOuterDelegateFrame(RenderFrameProxyHost* proxy);
+  void SwapOuterDelegateFrame(
+      RenderFrameProxyHost* proxy,
+      const base::UnguessableToken& devtools_frame_token);
 
   // Process the acknowledgment of the unload of this frame from the renderer.
   void OnUnloadACK();
@@ -1557,6 +1572,36 @@ class CONTENT_EXPORT RenderFrameHostImpl
     CookieChangeInfo cookie_change_info_;
   };
 
+  class DeviceBoundSessionObserver
+      : public network::mojom::DeviceBoundSessionAccessObserver {
+   public:
+    DeviceBoundSessionObserver(StoragePartition* storage_partition, GURL& url);
+    ~DeviceBoundSessionObserver() override;
+    DeviceBoundSessionObserver(const DeviceBoundSessionObserver&) = delete;
+    DeviceBoundSessionObserver& operator=(const DeviceBoundSessionObserver&) =
+        delete;
+
+    bool IsTerminated() const { return is_terminated_; }
+    void SetTerminatedCallback(base::OnceClosure callback) {
+      terminated_callback_ = std::move(callback);
+    }
+
+   private:
+    // network::mojom::DeviceBoundSessionAccessObserver
+    void OnDeviceBoundSessionAccessed(
+        const net::device_bound_sessions::SessionAccess& access) override;
+    void Clone(
+        mojo::PendingReceiver<network::mojom::DeviceBoundSessionAccessObserver>
+            observer) override;
+
+    mojo::Receiver<network::mojom::DeviceBoundSessionAccessObserver> receiver_{
+        this};
+
+    bool is_terminated_ = false;
+
+    base::OnceClosure terminated_callback_;
+  };
+
   // Indicates that a navigation is ready to commit and can be
   // handled by this RenderFrame.
   // |subresource_loader_params| is used in network service land to pass
@@ -1666,12 +1711,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Resets the loading state. Following this call, the RenderFrameHost will be
   // in a non-loading state.
   void ResetLoadingState();
-
-  // Returns the permissions policy which should be enforced on this
-  // RenderFrame.
-  const blink::PermissionsPolicy* permissions_policy() const {
-    return permissions_policy_.get();
-  }
 
   void ClearFocusedElement();
 
@@ -1870,6 +1909,11 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Called when a fenced frame needs to be destroyed.
   void DestroyFencedFrame(FencedFrame& fenced_frame);
 
+  void TakeGuestOwnership(std::unique_ptr<GuestPageHolderImpl> guest_page);
+  void DestroyGuestPage(const FrameTreeNode* child_frame_tree_node);
+  GuestPageHolderImpl* FindGuestPageHolder(
+      const FrameTreeNode* child_frame_tree_node);
+
   blink::mojom::FrameVisibility visibility() const { return visibility_; }
 
   // A CommitCallbackInterceptor is used to modify parameters for or cancel a
@@ -1947,16 +1991,13 @@ class CONTENT_EXPORT RenderFrameHostImpl
     BackForwardCacheDisablingFeatureHandle& operator=(
         BackForwardCacheDisablingFeatureHandle&& other) = default;
 
-    inline ~BackForwardCacheDisablingFeatureHandle() { reset(); }
+    ~BackForwardCacheDisablingFeatureHandle();
+
+    bool IsValid() const;
 
     // This will reduce the feature count for |feature_| for the first time, and
     // do nothing for further calls.
-    inline void reset() {
-      if (render_frame_host_) {
-        render_frame_host_->OnBackForwardCacheDisablingFeatureRemoved(feature_);
-      }
-      render_frame_host_ = nullptr;
-    }
+    void Reset();
 
    private:
     friend class RenderFrameHostImpl;
@@ -1979,7 +2020,42 @@ class CONTENT_EXPORT RenderFrameHostImpl
   void OnBackForwardCacheDisablingStickyFeatureUsed(
       BackForwardCacheDisablingFeature feature);
 
-  // Returns true if the frame is frozen.
+  // Used to notify that a document is blocking another IDB transaction, which
+  // means that it must not be frozen.
+  class HoldingBlockingIDBLockHandle {
+   public:
+    HoldingBlockingIDBLockHandle();
+    HoldingBlockingIDBLockHandle(HoldingBlockingIDBLockHandle&&);
+    HoldingBlockingIDBLockHandle& operator=(
+        HoldingBlockingIDBLockHandle&& other) = default;
+
+    ~HoldingBlockingIDBLockHandle();
+
+    bool IsValid() const;
+
+    void Reset();
+
+   private:
+    friend class RenderFrameHostImpl;
+    explicit HoldingBlockingIDBLockHandle(
+        RenderFrameHostImpl* render_frame_host);
+
+    base::WeakPtr<RenderFrameHostImpl> render_frame_host_ = nullptr;
+  };
+
+  // Disables freezing for this document for the duration of the handle's
+  // lifetime.
+  HoldingBlockingIDBLockHandle RegisterHoldingBlockingIDBLockHandle();
+
+  // Invoked whenever a document starts/stops holding an IndexedDB lock that
+  // blocks other clients.
+  void OnStartHoldingBlockingIDBLock();
+  void OnStopHoldingBlockingIDBLock();
+
+  // Returns true if this document is frozen. As opposed to IsActive() or
+  // GetLifecycleState(), this considers if the document is frozen for reasons
+  // other than BFCache.
+  // TODO(crbug.com/40691610): Add a dedicated kFrozen state to LifecycleState.
   bool IsFrozen();
 
   // Set the `frame_` for sending messages to the renderer process.
@@ -2009,10 +2085,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
 
 #if !BUILDFLAG(IS_ANDROID)
   void GetHidService(mojo::PendingReceiver<blink::mojom::HidService> receiver);
+#endif
 
   void BindSerialService(
       mojo::PendingReceiver<blink::mojom::SerialService> receiver);
-#endif
 
 #if BUILDFLAG(IS_CHROMEOS)
   void GetSmartCardService(
@@ -2050,8 +2126,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   void CreatePaymentManager(
       mojo::PendingReceiver<payments::mojom::PaymentManager> receiver);
 
-  void CreatePaymentCredential(
-      mojo::PendingReceiver<payments::mojom::PaymentCredential> receiver);
+  void CreateSecurePaymentConfirmationService(
+      mojo::PendingReceiver<payments::mojom::SecurePaymentConfirmationService>
+          receiver);
 
   void GetWebAuthenticationService(
       mojo::PendingReceiver<blink::mojom::Authenticator> receiver);
@@ -2111,6 +2188,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
       const net::IsolationInfo& isolation_info,
       const url::Origin& origin,
       net::CookieSettingOverrides cookie_setting_overrides);
+
+  void BindReportingObserver(
+      mojo::PendingReceiver<blink::mojom::ReportingObserver>
+          reporting_observer_receiver);
 
   // Requires the following preconditions, reporting a bad message otherwise.
   //
@@ -2223,6 +2304,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
     return soap_by_default_virtual_browsing_context_group_;
   }
 
+  DocumentIsolationPolicyReporter* dip_reporter() {
+    return dip_reporter_.get();
+  }
   const network::mojom::ContentSecurityPolicy* required_csp() {
     return required_csp_.get();
   }
@@ -2278,11 +2362,22 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // This is not exactly the opposite of IsRenderFrameLive().
   // IsRenderFrameLive() is false when the RenderProcess died, but it is also
   // false when it hasn't been initialized.
-  bool must_be_replaced() const { return must_be_replaced_; }
+  bool must_be_replaced_for_crash() const {
+    return must_be_replaced_for_crash_;
+  }
   // Resets the must_be_replaced after the RFH has been reinitialized. Do not
   // add any more usages of this.
   // TODO(crbug.com/40615943): Remove this.
-  void reset_must_be_replaced() { must_be_replaced_ = false; }
+  void reset_must_be_replaced() { must_be_replaced_for_crash_ = false; }
+
+  // True if the RenderFrameHost should be replaced because we are navigating
+  // the main frame to about:blank between web tests.
+  bool must_be_replaced_for_webtest() const {
+    return must_be_replaced_for_webtest_;
+  }
+  void set_must_be_replaced_for_webtest() {
+    must_be_replaced_for_webtest_ = true;
+  }
 
   int renderer_exit_count() const { return renderer_exit_count_; }
 
@@ -2290,6 +2385,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Used in case we need to add or remove intercepting proxies to the
   // running renderer, or in case of Network Service connection errors.
   void UpdateSubresourceLoaderFactories();
+
+  void UpdateLocalResourceLoader(
+      blink::mojom::LocalResourceLoaderConfigPtr loader_config);
 
   std::unique_ptr<blink::PendingURLLoaderFactoryBundle>
   CreateCrossOriginPrefetchLoaderFactoryBundle();
@@ -2312,17 +2410,17 @@ class CONTENT_EXPORT RenderFrameHostImpl
   }
 
   // These are the content internal equivalents of
-  // |RenderFrameHost::ForEachRenderFrameHost| whose comment can be referred to
+  // `RenderFrameHost::ForEachRenderFrameHost` whose comment can be referred to
   // for details. Content internals can also access speculative
   // RenderFrameHostImpls if necessary by using the
-  // |ForEachRenderFrameHostIncludingSpeculative| variations.
-  void ForEachRenderFrameHostWithAction(
+  // `ForEachRenderFrameHostImplIncludingSpeculative` variations.
+  void ForEachRenderFrameHostImplWithAction(
       base::FunctionRef<FrameIterationAction(RenderFrameHostImpl*)> on_frame);
-  void ForEachRenderFrameHost(
+  void ForEachRenderFrameHostImpl(
       base::FunctionRef<void(RenderFrameHostImpl*)> on_frame);
-  void ForEachRenderFrameHostIncludingSpeculativeWithAction(
+  void ForEachRenderFrameHostImplIncludingSpeculativeWithAction(
       base::FunctionRef<FrameIterationAction(RenderFrameHostImpl*)> on_frame);
-  void ForEachRenderFrameHostIncludingSpeculative(
+  void ForEachRenderFrameHostImplIncludingSpeculative(
       base::FunctionRef<void(RenderFrameHostImpl*)> on_frame);
 
   bool DocumentUsedWebOTP() override;
@@ -2373,7 +2471,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
       ui::ScrollGranularity granularity) override;
   void DidBlockNavigation(
       const GURL& blocked_url,
-      const GURL& initiator_url,
       blink::mojom::NavigationBlockedReason reason) override;
   void DidChangeLoadProgress(double load_progress) override;
   void DidFinishLoad(const GURL& validated_url) override;
@@ -2389,7 +2486,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
   void NavigateEventHandlerPresenceChanged(bool present) override;
   void UpdateTitle(const std::optional<::std::u16string>& title,
                    base::i18n::TextDirection title_direction) override;
-  void UpdateAppTitle(const ::std::u16string& app_title) override;
+  void UpdateApplicationTitle(
+      const ::std::u16string& application_title) override;
   void UpdateUserActivationState(
       blink::mojom::UserActivationUpdateType update_type,
       blink::mojom::UserActivationNotificationType notification_type) override;
@@ -2428,7 +2526,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   void ShowPopupMenu(
       mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
       const gfx::Rect& bounds,
-      int32_t item_height,
       double font_size,
       int32_t selected_item,
       std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -2563,6 +2660,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   void DraggableRegionsChanged(
       std::vector<blink::mojom::DraggableRegionPtr> regions) override;
   void NotifyDocumentInteractive() override;
+  void OnFirstContentfulPaint() override;
 
   void ReportNoBinderForInterface(const std::string& error);
 
@@ -2650,8 +2748,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
   mojo::PendingRemote<network::mojom::URLLoaderNetworkServiceObserver>
   CreateURLLoaderNetworkObserver();
 
+  // All `CookieAccessDetails` reported via the returned `PendingRemote` will
+  // have their source member set to `source`.
   mojo::PendingRemote<network::mojom::CookieAccessObserver>
-  CreateCookieAccessObserver();
+  CreateCookieAccessObserver(CookieAccessDetails::Source source);
 
   mojo::PendingRemote<network::mojom::TrustTokenAccessObserver>
   CreateTrustTokenAccessObserver();
@@ -2662,9 +2762,16 @@ class CONTENT_EXPORT RenderFrameHostImpl
   mojo::PendingRemote<device::mojom::VibrationManagerListener>
   CreateVibrationManagerListener();
 
-  // network::mojom::CookieAccessObserver:
-  void OnCookiesAccessed(std::vector<network::mojom::CookieAccessDetailsPtr>
-                             details_vector) override;
+  mojo::PendingRemote<network::mojom::DeviceBoundSessionAccessObserver>
+  CreateDeviceBoundSessionObserver();
+
+  // Emits cookie warnings/metrics and calls OnCookiesAccessed() on the
+  // RenderFrameHostDelegate, for all cookies in `details_vector`. Every
+  // `CookieAccessDetails` passed to `OnCookiesAccessed()` will have its source
+  // set to `source`.
+  void NotifyCookiesAccessed(
+      std::vector<network::mojom::CookieAccessDetailsPtr> details_vector,
+      CookieAccessDetails::Source source);
 
   // network::mojom::TrustTokenAccessObserver:
   void OnTrustTokensAccessed(
@@ -2676,6 +2783,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
 
   // device::mojom::VibrationManagerListener:
   void OnVibrate() override;
+
+  // network::mojom::DeviceBoundSessionAccessObserver
+  void OnDeviceBoundSessionAccessed(
+      const net::device_bound_sessions::SessionAccess& access) override;
 
   void GetSavableResourceLinksFromRenderer();
 
@@ -2868,8 +2979,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // from the browser process, this may be different.
   // |is_payment_credential_creation| indicates whether MakeCredential is making
   // a payment credential.
-  // |remote_desktop_client_override| optionally contains a
-  // RemoteDesktopClientOverride client extension for the request.
+  // |remote_desktop_client_override_origin| is the origin from the
+  // RemoteDesktopClientOverride client extension for this request, if present.
   // |PerformGetAssertionWebAuthSecurityChecks| returns a security check result
   // and a boolean representing whether the given origin is cross-origin with
   // any frame in this frame's ancestor chain. This extra cross-origin bit is
@@ -2878,12 +2989,14 @@ class CONTENT_EXPORT RenderFrameHostImpl
       const std::string& relying_party_id,
       const url::Origin& effective_origin,
       bool is_payment_credential_get_assertion,
+      const std::optional<url::Origin>& remote_desktop_client_override_origin,
       base::OnceCallback<void(blink::mojom::AuthenticatorStatus, bool)>
           callback);
   void PerformMakeCredentialWebAuthSecurityChecks(
       const std::string& relying_party_id,
       const url::Origin& effective_origin,
       bool is_payment_credential_creation,
+      const std::optional<url::Origin>& remote_desktop_client_override_origin,
       base::OnceCallback<void(blink::mojom::AuthenticatorStatus, bool)>
           callback);
 #endif
@@ -2981,17 +3094,22 @@ class CONTENT_EXPORT RenderFrameHostImpl
   bool HasStickyUserActivationForHistoryIntervention() const;
 
   // Parameter for `ClosePage()` that indicates whether the request comes from
-  // the browser or the renderer. This is used to determine whether navigation
-  // should prevent the page from closing, since navigations should not prevent
-  // the page from closing if the browser is trying to close the page.
-  enum class ClosePageSource { kRenderer, kBrowser };
+  // the browser, the renderer or intended prerender cancellation. This is used
+  // to determine whether navigation should prevent the page from closing, since
+  // navigations should not prevent the page from closing if the browser or
+  // prerender cancellation is trying to close the page.
+  enum class ClosePageSource { kRenderer, kBrowser, kPrerenderDiscard };
 
   // Tells the renderer process to run the page's unload handler.
   // A completion callback is invoked by the renderer when the handler
   // execution completes. The `source` parameter indicates whether this request
   // comes from the browser or the renderer. If the request comes from the
   // renderer, then it may be ignored if a different document commits first.
-  void ClosePage(ClosePageSource source);
+  // The `completion_callback` parameter is fired on completion of page close
+  // only when source is kPrerenderDiscard. Otherwise, it's ignored.
+  void ClosePage(
+      ClosePageSource source,
+      base::RepeatingClosure completion_callback = base::DoNothing());
 
   // When true, indicates that the unload handlers have already executed (e.g.,
   // after receiving a ClosePage ACK) or that they should be ignored. This is
@@ -3002,6 +3120,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Retrieves the information about the cookie changes that are observed on the
   // last committed document.
   CookieChangeListener::CookieChangeInfo GetCookieChangeInfo();
+
+  // Retrieves the whether a device bound session on the last committed
+  // document has been terminated.
+  bool IsDeviceBoundSessionTerminated();
 
   // Records metrics on sudden termination handlers found in this frame and
   // subframes.
@@ -3132,6 +3254,31 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // happen before it fires (to avoid flakiness).
   void DisableUnloadTimerForTesting();
 
+  // Returns true if the `delegate()` for this host is a partitioned
+  // popin and this host is not within a fenced frame (as this prevents the
+  // popin from impacting partitioning).
+  // See https://explainers-by-googlers.github.io/partitioned-popins/
+  bool ShouldPartitionAsPopin() const override;
+
+  void SimulateDiscardShutdownKeepAliveTimeoutForTesting();
+
+  // Returns true if no frame ancestors of a sandboxed context are cross-site
+  // with `frame_origin` (or its precursor if opaque).
+  bool AncestorsAllowSameSiteNoneCookiesOverride(
+      const url::Origin& frame_origin) const;
+
+  const std::map<std::string, base::WeakPtr<ServiceWorkerClient>>&
+  service_worker_clients_for_testing() const {
+    return service_worker_clients_;
+  }
+
+  void SetDeviceBoundSessionTerminatedCallback(base::OnceClosure callback) {
+    if (device_bound_session_observer_) {
+      device_bound_session_observer_->SetTerminatedCallback(
+          std::move(callback));
+    }
+  }
+
  protected:
   friend class RenderFrameHostFactory;
 
@@ -3183,7 +3330,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
           keep_alive_loader_factory,
       mojo::PendingAssociatedRemote<blink::mojom::FetchLaterLoaderFactory>
           fetch_later_loader_factory,
-      const std::optional<blink::ParsedPermissionsPolicy>& permissions_policy,
+      const std::optional<network::ParsedPermissionsPolicy>& permissions_policy,
       blink::mojom::PolicyContainerPtr policy_container,
       const blink::DocumentToken& document_token,
       const base::UnguessableToken& devtools_navigation_token);
@@ -3513,10 +3660,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // mojom::DomAutomationControllerHost:
   void DomOperationResponse(const std::string& json_string) override;
 
-  // network::mojom::CookieAccessObserver
-  void Clone(mojo::PendingReceiver<network::mojom::CookieAccessObserver>
-                 observer) override;
-
   // network::mojom::TrustTokenAccessObserver
   void Clone(mojo::PendingReceiver<network::mojom::TrustTokenAccessObserver>
                  observer) override;
@@ -3524,6 +3667,11 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // network::mojom::SharedDictionaryAccessObserver
   void Clone(
       mojo::PendingReceiver<network::mojom::SharedDictionaryAccessObserver>
+          observer) override;
+
+  // network::mojom::DeviceBoundSessionAccessObserver
+  void Clone(
+      mojo::PendingReceiver<network::mojom::DeviceBoundSessionAccessObserver>
           observer) override;
 
   // Resets any waiting state of this RenderFrameHost that is no longer
@@ -3672,7 +3820,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
       const std::vector<GURL>& redirects,
       const GURL& original_request_url,
       bool is_same_document,
-      bool is_same_document_history_api_navigation);
+      bool is_same_document_history_api_navigation,
+      base::TimeTicks actual_navigation_start);
 
   // Helper to process the beforeunload completion callback. |proceed| indicates
   // whether the navigation or tab close should be allowed to proceed.  If
@@ -3758,7 +3907,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Clears any existing policy and constructs a new policy for this frame,
   // based on its parent frame and the parsed `header_policy`.
   void ResetPermissionsPolicy(
-      const blink::ParsedPermissionsPolicy& header_policy);
+      const network::ParsedPermissionsPolicy& header_policy);
 
   // Runs |callback| for all the local roots immediately under this frame, i.e.
   // local roots which are under this frame and their first ancestor which is a
@@ -3829,13 +3978,18 @@ class CONTENT_EXPORT RenderFrameHostImpl
 
   // Called when we receive the confirmation that a navigation committed in the
   // renderer. Used by both DidCommitSameDocumentNavigation and
-  // DidCommitNavigation.
-  // Returns true if the navigation did commit properly, false if the commit
-  // state should be restored to its pre-commit value.
+  // DidCommitNavigation. Returns true if the navigation did commit properly,
+  // false if the commit state should be restored to its pre-commit value.
+  //
+  // `did_commit_ipc_received_time` is the time at which the browser received
+  // either a DidCommitNavigation IPC or reply to a prior CommitNavigation
+  // IPC, which should be recorded just before a call to this function takes
+  // place.
   bool DidCommitNavigationInternal(
       std::unique_ptr<NavigationRequest> navigation_request,
       mojom::DidCommitProvisionalLoadParamsPtr params,
-      mojom::DidCommitSameDocumentNavigationParamsPtr same_document_params);
+      mojom::DidCommitSameDocumentNavigationParamsPtr same_document_params,
+      const base::TimeTicks& did_commit_ipc_received_time);
 
   // Whether or not to reset DocumentAssociatedData at commit. Normally, this
   // data is reset with each cross-document navigation, but there are some
@@ -3975,6 +4129,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
                                       bool is_same_document_navigation,
                                       NavigationRequest* navigation_request);
 
+  void UpdateOrDisableCompositorMetricRecorder() const;
+
   // Verifies that browser-calculated and renderer-calculated values for some
   // params in DidCommitProvisionalLoadParams match, to ensure we can completely
   // remove the dependence on the renderer-calculated values. Logs crash keys
@@ -4015,10 +4171,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   static RenderFrameHost::LifecycleState GetLifecycleStateFromImpl(
       LifecycleStateImpl state);
 
-  void BindReportingObserver(
-      mojo::PendingReceiver<blink::mojom::ReportingObserver>
-          reporting_observer_receiver);
-
   // Check the renderer provided sandbox flags matches with what the browser
   // process computed on its own. This triggers DCHECK and DumpWithoutCrashing()
   //
@@ -4057,8 +4209,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Returns true if this frame requires a proxy to talk to its parent.
   // Note: Using a proxy to talk to a parent does not imply that the parent
   // is in a different process.
-  // (e.g. kProcessSharingWithStrictSiteInstances mode uses proxies for frames
-  //  that are in the same process.)
   bool RequiresProxyToParent();
 
   // Increases by one `commit_navigation_sent_counter_`.
@@ -4103,6 +4253,19 @@ class CONTENT_EXPORT RenderFrameHostImpl
       mojo::PendingAssociatedReceiver<blink::mojom::BroadcastChannelProvider>
           receiver);
 
+  void LogWebFeatureForCurrentPage(blink::mojom::WebFeature feature);
+
+  // This runs when the storage_key check fails
+  // in `BlobURLStoreImpl::ResolveAsURLLoaderFactory` and increments the use
+  // counter.
+  void ReportBlockingCrossPartitionBlobURL(
+      const GURL& blocked_url,
+      std::optional<blink::mojom::PartitioningBlobURLInfo> info);
+
+  // This runs when fetches to cross-partition, same-origin Blob URL checks for
+  // storage access
+  bool DoesDocumentHaveStorageAccess();
+
   // For frames and main thread worklets we use a navigation-associated
   // interface and bind `receiver` to a `BlobURLStore` instance, which
   // implements the Blob URL API in the browser process.
@@ -4137,15 +4300,23 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // and the ACK is received, or (2) when a timeout for running those events
   // has expired. The `source` parameter indicates whether this request comes
   // from the browser or the renderer. If the request comes from the renderer,
-  // then it may be ignored if a different document commits first.
-  void ClosePageIgnoringUnloadEvents(ClosePageSource source);
+  // then it may be ignored if a different document commits first. The
+  // `completion_callback` parameter is fired on completion of page close only
+  // when source is kPrerenderDiscard. Otherwise, it's ignored.
+  void ClosePageIgnoringUnloadEvents(
+      ClosePageSource source,
+      base::RepeatingClosure completion_callback = base::DoNothing());
 
   // Called when this frame's page has started closing via ClosePage(), and the
   // timer for running unload events has expired. The `source` parameter
   // indicates whether this request comes from the browser or the renderer. If
   // the request comes from the renderer, then it may be ignored if a different
-  // document commits first.
-  void ClosePageTimeout(ClosePageSource source);
+  // document commits first. The `completion_callback` parameter is fired on
+  // completion of page close only when source is kPrerenderDiscard. Otherwise,
+  // it's ignored.
+  void ClosePageTimeout(
+      ClosePageSource source,
+      base::RepeatingClosure completion_callback = base::DoNothing());
 
   // Perform pre-conditions checks on RenderFrameHost lifecycle state and fenced
   // frame properties that are common for `SendFencedFrameReportingBeacon()` and
@@ -4181,7 +4352,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
 
   // Returns whether the `RenderFrameHost` can use Additional Windowing Controls
   // APIs.
-  // https://github.com/ivansandrk/additional-windowing-controls/blob/main/awc-explainer.md
+  // https://github.com/explainers-by-googlers/additional-windowing-controls/blob/main/README.md
   bool CanUseWindowingControls(std::string_view js_api_name);
 
   // Notifies when the renderer side Widget instance has been created and mojo
@@ -4236,6 +4407,14 @@ class CONTENT_EXPORT RenderFrameHostImpl
   blink::mojom::PermissionStatus GetCombinedPermissionStatus(
       blink::PermissionType permission_type);
 
+  // Creates and returns a
+  // `media::PictureInPictureEventsInfo::AutoPipReasonCallback`. This callback
+  // is used to retrieve the reason for entering picture in picture
+  // automatically. Ownership is transferred to the `MediaMetricsProvider`
+  // during the provider creation.
+  media::PictureInPictureEventsInfo::AutoPipReasonCallback
+  CreateAutoPipReasonCallback();
+
   // The RenderViewHost that this RenderFrameHost is associated with.
   //
   // It is kept alive as long as any RenderFrameHosts or RenderFrameProxyHosts
@@ -4262,8 +4441,8 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // creation time.
   // This ref is used to avoid recreating the renderer process if it has
   // crashed, since using
-  // SiteInstance::GetProcess()/GetOrCreateAgentSchedulingGroupHost() has the
-  // side effect of creating the process again if it is gone.
+  // SiteInstance::GetOrCreateProcess()/GetOrCreateAgentSchedulingGroupHost()
+  // has the side effect of creating the process again if it is gone.
   //
   // It is a `SafeRef` so that the browser process crashes cleanly if `this`
   // unintentionally outlives its associated `RenderFrameProcessHost` but tries
@@ -4394,7 +4573,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // This property normally depends on the last committed origin and the state
   // of |ContentBrowserClient| at the time the navigation committed. Due to the
   // fact that this is based on the origin computed by the browser process in
-  // |NavigationRequest|, whereas |last_commited_origin_| is computed by the
+  // |NavigationRequest|, whereas |last_committed_origin_| is computed by the
   // renderer process (see crbug.com/888079), there can be rare discrepancies.
   //
   // TODO(crbug.com/40092527): Simplify the above comment when the
@@ -4590,7 +4769,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // A mapping of each AXNodeID managed by `browser_accessibility_manager_`,
   // which is only unique within its renderer, to an AXUniqueId, which is unique
   // within the scope of the web contents.
-  std::map<ui::AXNodeID, ui::AXUniqueId> ax_unique_ids_;
+  absl::flat_hash_map<ui::AXNodeID, ui::AXUniqueId> ax_unique_ids_;
 
   // This is the value of the reset token expected for accessibility messages.
   // Any message with a different reset token will be dropped.
@@ -4660,6 +4839,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   std::unique_ptr<WebUIImpl> web_ui_;
   WebUI::TypeID web_ui_type_ = WebUI::kNoWebUI;
 
+  // Resource metadata to be sent to WebUI renderer processes.
+  blink::mojom::LocalResourceLoaderConfigPtr local_resource_loader_config_;
+
   // If true, then the RenderFrame has selected text.
   bool has_selection_ = false;
 
@@ -4704,7 +4886,17 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // whereas this field is updated at CommitNavigation() time.
   bool has_committed_any_navigation_ = false;
 
-  bool must_be_replaced_ = false;
+  // True if the RenderFrameHost should be replaced because the renderer process
+  // has crashed.
+  // TODO(crbug.com/40228869): After crrev.com/c/5321191 lands, we can commbine
+  // must_be_replaced_for_crash_ and must_be_replaced_for_webtest_ into one.
+  bool must_be_replaced_for_crash_ = false;
+
+  // True if the RenderFrameHost should be replaced because we are navigating
+  // the main frame to about:blank between web tests.
+  // TODO(crbug.com/40228869): After crrev.com/c/5321191 lands, we can commbine
+  // must_be_replaced_for_crash_ and must_be_replaced_for_webtest_ into one.
+  bool must_be_replaced_for_webtest_ = false;
 
   // Counts the number of times the associated renderer process has exited.
   // This is used to track problematic RenderFrameHost reuse.
@@ -4783,10 +4975,10 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // Parsed permissions policy header. It is parsed from blink, received during
   // DidCommitProvisionalLoad. This is constant during the whole lifetime of
   // this document.
-  blink::ParsedPermissionsPolicy permissions_policy_header_;
+  network::ParsedPermissionsPolicy permissions_policy_header_;
 
   // Tracks the permissions policy which has been set on this frame.
-  std::unique_ptr<blink::PermissionsPolicy> permissions_policy_;
+  std::unique_ptr<network::PermissionsPolicy> permissions_policy_;
 
   // Tracks the document policy which has been set on this frame.
   std::unique_ptr<blink::DocumentPolicy> document_policy_;
@@ -4938,6 +5130,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   base::flat_map<BackForwardCacheDisablingFeature, int>
       browser_reported_bfcache_disabling_features_counts_;
 
+  // Counts the number of blocking IndexedDB locks being currently held.
+  int holding_blocking_idb_lock_count_ = 0;
+
   // Holds prefetched signed exchanges for SignedExchangeSubresourcePrefetch.
   // They will be passed to the next navigation.
   scoped_refptr<PrefetchedSignedExchangeCache>
@@ -4950,6 +5145,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // This is specific to a document and should be reset on every cross-document
   // commit.
   //
+  //
   // When a new frame is created:
   // 1) If the origin of the creator frame is known, then the new frame inherits
   //    the IsolationInfo from the creator frame, similarly to the last
@@ -4957,7 +5153,11 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // 2) If the origin of the creator frame is not known (e.g. in no-opener case)
   //    then the initial transient isolation info (i.e. the default value below)
   //    will be used.  This will match the opaque origin of such a frame.
-  net::IsolationInfo isolation_info_ = net::IsolationInfo::CreateTransient();
+  //
+  // The default value is a transient IsolationInfo with a nullopt nonce, until
+  // a navigation commits.
+  net::IsolationInfo isolation_info_ =
+      net::IsolationInfo::CreateTransient(/*nonce=*/std::nullopt);
 
   // Salt for generating frame-specific media device IDs.
   std::string media_device_id_salt_base_;
@@ -4977,6 +5177,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // The fenced frames owned by this document, ordered with newer fenced frames
   // being appended to the end.
   std::vector<std::unique_ptr<FencedFrame>> fenced_frames_;
+
+  // The guest frame trees owned by this document.
+  std::vector<std::unique_ptr<GuestPageHolderImpl>> guest_pages_;
 
   // Tracking active features in this frame, for use in figuring out whether
   // or not it can be frozen.
@@ -5014,6 +5217,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   base::TimeTicks last_xr_overlay_setup_time_;
 
   std::unique_ptr<CrossOriginEmbedderPolicyReporter> coep_reporter_;
+  std::unique_ptr<DocumentIsolationPolicyReporter> dip_reporter_;
   CrossOriginOpenerPolicyAccessReportManager coop_access_report_manager_;
 
   // https://github.com/camillelamy/explainers/blob/master/coop_reporting.md#virtual-browsing-context-group-id
@@ -5052,23 +5256,22 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // scoped lifetime and changes on cross-document navigations.
   std::optional<base::UnguessableToken> embedding_token_;
 
-  // Observers listening to cookie access notifications for the current document
-  // in this RenderFrameHost.
-  // Note: at the moment this set is not cleared when a new document is created
-  // in this RenderFrameHost. This is done because the first observer is created
-  // before the navigation actually commits and because the old routing-id based
-  // behaved in the same way as well.
-  // This problem should go away with RenderDocumentHost in any case.
-  // TODO(crbug.com/40615943): Remove this warning after the RDH ships.
-  mojo::ReceiverSet<network::mojom::CookieAccessObserver> cookie_observers_;
+  // Observers listening to cookie access notifications for the current
+  // document in this RenderFrameHost. Note: at the moment this set is not
+  // cleared when a new document is created in this RenderFrameHost. This is
+  // done because the first observer is created before the navigation actually
+  // commits and because the old routing-id based behaved in the same way as
+  // well. This problem should go away with RenderDocument in any case.
+  // TODO(crbug.com/40615943): Remove this warning after the RD ships.
+  CookieAccessObservers cookie_observers_;
 
   // Observers listening to Trust Token access notifications for the current
   // document in this RenderFrameHost. Note: at the moment this set is not
   // cleared when a new document is created in this RenderFrameHost. This is
   // done because the first observer is created before the navigation actually
   // commits and because the old routing-id based behaved in the same way as
-  // well. This problem should go away with RenderDocumentHost in any case.
-  // TODO(crbug.com/40615943): Remove this warning after the RDH ships.
+  // well. This problem should go away with RenderDocument in any case.
+  // TODO(crbug.com/40615943): Remove this warning after the RD ships.
   mojo::ReceiverSet<network::mojom::TrustTokenAccessObserver>
       trust_token_observers_;
 
@@ -5077,13 +5280,25 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // not cleared when a new document is created in this RenderFrameHost. This is
   // done because the first observer is created before the navigation actually
   // commits and because the old routing-id based behaved in the same way as
-  // well. This problem should go away with RenderDocumentHost in any case.
-  // TODO(crbug.com/40615943): Remove this warning after the RDH ships.
+  // well. This problem should go away with RenderDocument in any case.
+  // TODO(crbug.com/40615943): Remove this warning after the RD ships.
   mojo::ReceiverSet<network::mojom::SharedDictionaryAccessObserver>
       shared_dictionary_observers_;
 
   mojo::ReceiverSet<device::mojom::VibrationManagerListener>
       vibration_manager_listeners_;
+
+  // Observers listening to device bound session access notifications
+  // (https://github.com/WICG/dbsc/blob/main/README.md) for the current
+  // document in this RenderFrameHost. Note: at the moment this set is
+  // not cleared when a new document is created in this
+  // RenderFrameHost. This is done because the first observer is created
+  // before the navigation actually commits and because the old
+  // routing-id based behaved in the same way as well. This problem
+  // should go away with RenderDocument in any case.
+  // TODO(crbug.com/40615943): Remove this warning after the RD ships.
+  mojo::ReceiverSet<network::mojom::DeviceBoundSessionAccessObserver>
+      device_bound_session_observers_;
 
   // Indicates whether this frame is an outer delegate frame for some other
   // RenderFrameHost. This will be a valid ID if so, and invalid otherwise.
@@ -5250,6 +5465,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // the destruction of the document. See the comments of the
   // `cookie_change_listener_` in `NavigationRequest`.
   std::unique_ptr<CookieChangeListener> cookie_change_listener_;
+
+  // Listens for changes to DeviceBoundSessions on this page.
+  std::unique_ptr<DeviceBoundSessionObserver> device_bound_session_observer_;
 
   // If true, the renderer side widget is created after the navigation is
   // committed.

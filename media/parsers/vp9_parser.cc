@@ -17,6 +17,7 @@
 #include "media/parsers/vp9_parser.h"
 
 #include <algorithm>
+#include <array>
 
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
@@ -39,7 +40,7 @@ constexpr size_t kQIndexRange = 256;
 // libva is the only user of high bit depth VP9 formats and only supports
 // 10 bits per component, see https://github.com/01org/libva/issues/137.
 // TODO(mcasas): Add the 12 bit versions of these tables.
-const int16_t kDcQLookup[][kQIndexRange] = {
+constexpr auto kDcQLookup = std::to_array<std::array<const int16_t, kQIndexRange>>({
     {
         4,    8,    8,    9,    10,   11,   12,   12,  13,   14,   15,   16,
         17,   18,   19,   19,   20,   21,   22,   23,  24,   25,   26,   26,
@@ -88,9 +89,9 @@ const int16_t kDcQLookup[][kQIndexRange] = {
         3188, 3280, 3375, 3478, 3586, 3702, 3823, 3953, 4089, 4236, 4394, 4559,
         4737, 4929, 5130, 5347
    }
-};
+});
 
-const int16_t kAcQLookup[][kQIndexRange] = {
+constexpr auto kAcQLookup = std::to_array<std::array<const int16_t, kQIndexRange>>({
     {
         4,    8,    9,    10,   11,   12,   13,   14,   15,   16,   17,   18,
         19,   20,   21,   22,   23,   24,   25,   26,   27,   28,   29,   30,
@@ -139,7 +140,7 @@ const int16_t kAcQLookup[][kQIndexRange] = {
         5476, 5584, 5692, 5804, 5916, 6032, 6148, 6268, 6388, 6512, 6640, 6768,
         6900, 7036, 7172, 7312
    }
-};
+});
 // clang-format on
 
 static_assert(std::size(kDcQLookup[0]) == std::size(kAcQLookup[0]),
@@ -495,7 +496,6 @@ void Vp9Parser::Reset() {
   bytes_left_ = 0;
   frames_.clear();
   spatial_layer_frame_size_.clear();
-  curr_frame_info_.Reset();
 
   context_.Reset();
 }
@@ -569,53 +569,43 @@ Vp9Parser::Result Vp9Parser::ParseNextFrame(
   FrameInfo frame_info;
   Result result;
 
-  // If |curr_frame_info_| is valid, uncompressed header was parsed into
-  // |curr_frame_header_| and we are awaiting context update to proceed with
-  // compressed header parsing.
-  if (curr_frame_info_.IsValid()) {
-    DCHECK(parsing_compressed_header_);
-    frame_info = std::move(curr_frame_info_);
-    curr_frame_info_.Reset();
-  } else {
+  if (frames_.empty()) {
+    // No frames to be decoded, if there is no more stream, request more.
+    if (!stream_) {
+      return kEOStream;
+    }
+
+    // New stream to be parsed, parse it and fill frames_.
+    if (!spatial_layer_frame_size_.empty()) {
+      // If it is SVC stream, we have to parse the stream with
+      // |spatial_layer_frame_size_|.
+      frames_ = ParseSVCFrame();
+    } else {
+      frames_ = ParseSuperframe();
+    }
+
     if (frames_.empty()) {
-      // No frames to be decoded, if there is no more stream, request more.
-      if (!stream_) {
-        return kEOStream;
-      }
-
-      // New stream to be parsed, parse it and fill frames_.
-      if (!spatial_layer_frame_size_.empty()) {
-        // If it is SVC stream, we have to parse the stream with
-        // |spatial_layer_frame_size_|.
-        frames_ = ParseSVCFrame();
-      } else {
-        frames_ = ParseSuperframe();
-      }
-
-      if (frames_.empty()) {
-        DVLOG(1) << "Failed parsing superframes/SVC frame";
-        return kInvalidStream;
-      }
+      DVLOG(1) << "Failed parsing superframes/SVC frame";
+      return kInvalidStream;
     }
+  }
 
-    frame_info = std::move(frames_.front());
-    frames_.pop_front();
-    if (frame_decrypt_config) {
-      if (frame_info.decrypt_config) {
-        *frame_decrypt_config = frame_info.decrypt_config->Clone();
-      } else {
-        *frame_decrypt_config = nullptr;
-      }
+  frame_info = std::move(frames_.front());
+  frames_.pop_front();
+  if (frame_decrypt_config) {
+    if (frame_info.decrypt_config) {
+      *frame_decrypt_config = frame_info.decrypt_config->Clone();
+    } else {
+      *frame_decrypt_config = nullptr;
     }
+  }
 
-    if (ParseUncompressedHeader(frame_info, fhdr, &result, &context_)) {
-      return result;
-    }
+  if (ParseUncompressedHeader(frame_info, fhdr, &result, &context_)) {
+    return result;
   }
 
   if (parsing_compressed_header_) {
     if (ParseCompressedHeader(frame_info, &result)) {
-      DCHECK(curr_frame_info_.IsValid());
       return result;
     }
   }

@@ -92,6 +92,8 @@ class RecorderAppUI
 
   mojo::Remote<MachineLearningService>& GetMlService();
 
+  bool CanUseGenerativeAi();
+
   void UpdateSodaState(const speech::LanguageCode& language_code,
                        ModelState state);
 
@@ -101,6 +103,10 @@ class RecorderAppUI
 
   void UpdateModelState(const base::Uuid& model_id, ModelState state);
 
+  void LoadModelResultCallback(const base::Uuid& model_id,
+                               LoadModelCallback callback,
+                               on_device_model::mojom::LoadModelResult result);
+
   void GetMicrophoneInfoWithDeviceId(
       GetMicrophoneInfoCallback callback,
       const std::optional<std::string>& device_id);
@@ -109,7 +115,12 @@ class RecorderAppUI
 
   ModelState GetSodaState(const speech::LanguageCode& language_code);
 
+  ModelState GetCachedSodaState(const speech::LanguageCode& language_code);
+
   // recorder_app::mojom::PageHandler:
+  void GetModelInfo(on_device_model::mojom::FormatFeature feature,
+                    GetModelInfoCallback callback) override;
+
   void LoadModel(
       const base::Uuid& model_id,
       mojo::PendingReceiver<on_device_model::mojom::OnDeviceModel> model,
@@ -145,6 +156,8 @@ class RecorderAppUI
       AddSodaMonitorCallback callback) override;
 
   void GetAvailableLangPacks(GetAvailableLangPacksCallback callback) override;
+
+  void GetDefaultLanguage(GetDefaultLanguageCallback callback) override;
 
   void OpenAiFeedbackDialog(const std::string& description_template) override;
 
@@ -194,9 +207,11 @@ class RecorderAppUI
 
   base::flat_map<speech::LanguageCode, ModelState> soda_states_;
 
-  base::flat_set<speech::LanguageCode> available_languages_;
+  base::flat_set<speech::LanguageCode> transcription_supported_languages_;
 
   base::flat_set<speech::LanguageCode> gen_ai_supported_languages_;
+
+  base::flat_set<speech::LanguageCode> speaker_label_supported_languages_;
 
   std::map<base::Uuid, mojo::RemoteSet<recorder_app::mojom::ModelStateMonitor>>
       model_monitors_;

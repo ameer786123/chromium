@@ -26,9 +26,9 @@
 namespace metrics::dwa {
 
 // Enables DWA recording.
-COMPONENT_EXPORT(DWA) BASE_DECLARE_FEATURE(kDwaFeature);
+COMPONENT_EXPORT(DWA_RECORDER) BASE_DECLARE_FEATURE(kDwaFeature);
 
-class COMPONENT_EXPORT(DWA) DwaRecorder {
+class COMPONENT_EXPORT(DWA_RECORDER) DwaRecorder {
  public:
   DwaRecorder();
 
@@ -66,6 +66,13 @@ class COMPONENT_EXPORT(DWA) DwaRecorder {
 
   // Takes all existing |page_load_events_| out from DwaRecorder and returns it.
   std::vector<::dwa::PageLoadEvents> TakePageLoadEvents();
+
+  // Returns true if |page_load_events_| is non-empty.
+  bool HasPageLoadEvents();
+
+  // Returns a vector to internal list of DwaEntryPtr for testing.
+  const std::vector<metrics::dwa::mojom::DwaEntryPtr>& GetEntriesForTesting()
+      const;
 
  private:
   SEQUENCE_CHECKER(sequence_checker_);

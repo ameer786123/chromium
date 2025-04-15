@@ -20,8 +20,16 @@ config("nearby_include_config") {
     "//third_party",
 
     # For bloom filter.
-    "//third_party/smhasher",
+    "//third_party/smhasher/src",
   ]
+}
+
+# TODO(crbug.com/362502228): Remove upon completion of BleL2capServerSocket.
+config("unused_private_field_warning") {
+  cflags = []
+  if (is_clang) {
+    cflags += [ "-Wno-unused-private-field" ]
+  }
 }
 
 config("nearby_defines") {
@@ -93,17 +101,49 @@ source_set("connections_types") {
 }
 
 # src/connections/implementation
+source_set("connections_implementation_types") {
+  public_configs = [
+    ":nearby_include_config",
+    ":nearby_defines",
+  ]
+  public = [
+    "src/connections/implementation/pcp.h",
+    "src/connections/implementation/webrtc_state.h",
+  ]
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+}
+
+source_set("connections_implementation_ble_advertisement") {
+  public_configs = [
+    ":nearby_include_config",
+    ":nearby_defines",
+  ]
+  sources = [ "src/connections/implementation/ble_advertisement.cc" ]
+  public = [ "src/connections/implementation/ble_advertisement.h" ]
+  public_deps = [
+    ":connections_implementation_types",
+    ":platform_base",
+    ":platform_base_util",
+    ":platform_public_types",
+    "//third_party/abseil-cpp:absl",
+  ]
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+}
+
 source_set("connections_implementation") {
   public_configs = [
     ":nearby_include_config",
     ":nearby_defines",
   ]
   sources = [
+    "src/connections/implementation/awdl_endpoint_channel.cc",
     "src/connections/implementation/base_bwu_handler.cc",
     "src/connections/implementation/base_endpoint_channel.cc",
     "src/connections/implementation/base_pcp_handler.cc",
-    "src/connections/implementation/ble_advertisement.cc",
     "src/connections/implementation/ble_endpoint_channel.cc",
+    "src/connections/implementation/ble_l2cap_endpoint_channel.cc",
     "src/connections/implementation/ble_v2_endpoint_channel.cc",
     "src/connections/implementation/bluetooth_bwu_handler.cc",
     "src/connections/implementation/bluetooth_device_name.cc",
@@ -138,11 +178,13 @@ source_set("connections_implementation") {
     "src/connections/implementation/wifi_lan_service_info.cc",
   ]
   public = [
+    "src/connections/implementation/awdl_endpoint_channel.h",
     "src/connections/implementation/base_bwu_handler.h",
     "src/connections/implementation/base_endpoint_channel.h",
     "src/connections/implementation/base_pcp_handler.h",
     "src/connections/implementation/ble_advertisement.h",
     "src/connections/implementation/ble_endpoint_channel.h",
+    "src/connections/implementation/ble_l2cap_endpoint_channel.h",
     "src/connections/implementation/ble_v2_endpoint_channel.h",
     "src/connections/implementation/bluetooth_bwu_handler.h",
     "src/connections/implementation/bluetooth_device_name.h",
@@ -158,7 +200,6 @@ source_set("connections_implementation") {
     "src/connections/implementation/injected_bluetooth_device_store.h",
     "src/connections/implementation/internal_payload.h",
     "src/connections/implementation/internal_payload_factory.h",
-    "src/connections/implementation/message_lite.h",
     "src/connections/implementation/offline_frames.h",
     "src/connections/implementation/offline_frames_validator.h",
     "src/connections/implementation/offline_service_controller.h",
@@ -166,7 +207,6 @@ source_set("connections_implementation") {
     "src/connections/implementation/p2p_point_to_point_pcp_handler.h",
     "src/connections/implementation/p2p_star_pcp_handler.h",
     "src/connections/implementation/payload_manager.h",
-    "src/connections/implementation/pcp.h",
     "src/connections/implementation/pcp_handler.h",
     "src/connections/implementation/pcp_manager.h",
     "src/connections/implementation/reconnect_manager.h",
@@ -185,9 +225,11 @@ source_set("connections_implementation") {
   public_deps = [
     ":connections_enums_proto",
     ":connections_implementation_analytics",
+    ":connections_implementation_ble_advertisement",
     ":connections_implementation_flags",
     ":connections_implementation_mediums",
     ":connections_implementation_mediums_webrtc",
+    ":connections_implementation_types",
     ":connections_types",
     ":interop_authentication_status",
     ":interop_authentication_transport_interface",
@@ -280,6 +322,10 @@ source_set("connections_implementation_mediums") {
     ":nearby_defines",
   ]
   sources = [
+    "src/connections/implementation/mediums/advertisements/advertisement_util.cc",
+    "src/connections/implementation/mediums/advertisements/data_element.cc",
+    "src/connections/implementation/mediums/advertisements/dct_advertisement.cc",
+    "src/connections/implementation/mediums/awdl.cc",
     "src/connections/implementation/mediums/ble.cc",
     "src/connections/implementation/mediums/ble_v2.cc",
     "src/connections/implementation/mediums/ble_v2/advertisement_read_result.cc",
@@ -303,6 +349,10 @@ source_set("connections_implementation_mediums") {
     "src/connections/implementation/mediums/wifi_lan.cc",
   ]
   public = [
+    "src/connections/implementation/mediums/advertisements/advertisement_util.h",
+    "src/connections/implementation/mediums/advertisements/data_element.h",
+    "src/connections/implementation/mediums/advertisements/dct_advertisement.h",
+    "src/connections/implementation/mediums/awdl.h",
     "src/connections/implementation/mediums/ble.h",
     "src/connections/implementation/mediums/ble_v2.h",
     "src/connections/implementation/mediums/ble_v2/advertisement_read_result.h",
@@ -329,9 +379,12 @@ source_set("connections_implementation_mediums") {
   ]
   public_deps = [
     ":ble_frames_proto",
+    ":connections_implementation_ble_advertisement",
     ":connections_implementation_flags",
     ":connections_implementation_mediums_webrtc",
+    ":connections_implementation_types",
     ":connections_types",
+    ":crypto_cros",
     ":multiplex_frames_proto",
     ":platform_api_types",
     ":platform_base",
@@ -615,6 +668,7 @@ source_set("platform_api_comm") {
     ":nearby_defines",
   ]
   sources = [
+    "src/internal/platform/implementation/awdl.h",
     "src/internal/platform/implementation/ble.h",
     "src/internal/platform/implementation/ble_v2.h",
     "src/internal/platform/implementation/bluetooth_adapter.h",
@@ -790,12 +844,14 @@ source_set("platform_base_util") {
     ":nearby_defines",
   ]
   sources = [
-    "src/internal/platform/base_input_stream.cc",
     "src/internal/platform/byte_utils.cc",
+    "src/internal/platform/stream_reader.cc",
+    "src/internal/platform/stream_writer.cc",
   ]
   public = [
-    "src/internal/platform/base_input_stream.h",
     "src/internal/platform/byte_utils.h",
+    "src/internal/platform/stream_reader.h",
+    "src/internal/platform/stream_writer.h",
   ]
   public_deps = [
     ":platform_base",
@@ -942,6 +998,7 @@ source_set("platform_public_types") {
     "src/internal/platform/timer_impl.h",
   ]
   public_deps = [
+    ":connections_implementation_flags",
     ":flags",
     ":platform_api_platform",
     ":platform_api_types",
@@ -961,8 +1018,12 @@ source_set("platform_public_comm") {
   public_configs = [
     ":nearby_include_config",
     ":nearby_defines",
+
+    # TODO(crbug.com/362502228): Remove upon completion of BleL2capServerSocket.
+    ":unused_private_field_warning",
   ]
   sources = [
+    "src/internal/platform/awdl.cc",
     "src/internal/platform/ble.cc",
     "src/internal/platform/ble_v2.cc",
     "src/internal/platform/bluetooth_classic.cc",
@@ -973,6 +1034,7 @@ source_set("platform_public_comm") {
     "src/internal/platform/wifi_lan.cc",
   ]
   public = [
+    "src/internal/platform/awdl.h",
     "src/internal/platform/ble.h",
     "src/internal/platform/ble_v2.h",
     "src/internal/platform/bluetooth_adapter.h",
@@ -1124,6 +1186,7 @@ source_set("presence_internal") {
     "src/presence/implementation/connection_authenticator_impl.cc",
     "src/presence/implementation/credential_manager_impl.cc",
     "src/presence/implementation/ldt.cc",
+    "src/presence/implementation/ldt_stub.c",
     "src/presence/implementation/scan_manager.cc",
     "src/presence/implementation/service_controller_impl.cc",
   ]
@@ -1140,6 +1203,7 @@ source_set("presence_internal") {
     "src/presence/implementation/credential_manager.h",
     "src/presence/implementation/credential_manager_impl.h",
     "src/presence/implementation/ldt.h",
+    "src/presence/implementation/np_ldt.h",
     "src/presence/implementation/scan_manager.h",
     "src/presence/implementation/service_controller.h",
     "src/presence/implementation/service_controller_impl.h",
@@ -1158,7 +1222,6 @@ source_set("presence_internal") {
     ":presence_mediums",
     ":presence_types",
     "//third_party/abseil-cpp:absl",
-    "//third_party/beto-core:ldt_np_adv_ffi",
     "//third_party/boringssl:boringssl",
   ]
   configs -= [ "//build/config/compiler:chromium_code" ]
@@ -1355,13 +1418,24 @@ proto_library("certificate_rpc_proto") {
   link_deps = [ ":rpc_resources_proto" ]
 }
 
+config("sharing_log_proto_inputs_config") {
+  inputs = [ "//third_party/protobuf/src/google/protobuf/duration.proto" ]
+}
+
+group("sharing_log_proto_inputs") {
+  public_configs = [ ":sharing_log_proto_inputs_config" ]
+}
+
 # src/sharing/proto/analytics
 proto_library("sharing_log_proto") {
   proto_in_dir = "src"
   sources =
       [ "${proto_in_dir}/sharing/proto/analytics/nearby_sharing_log.proto" ]
   proto_out_dir = "third_party/nearby"
-  proto_deps = [ ":sharing_enums_proto" ]
+  proto_deps = [
+    ":sharing_enums_proto",
+    ":sharing_log_proto_inputs",
+  ]
   link_deps = [ ":sharing_enums_proto" ]
 
   # For built-in protos, specifically duration.proto.

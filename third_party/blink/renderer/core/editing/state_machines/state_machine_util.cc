@@ -17,7 +17,7 @@ namespace {
 // The list of code points which has Indic_Syllabic_Category=Virama property.
 // Must be sorted.
 // See http://www.unicode.org/Public/9.0.0/ucd/IndicSyllabicCategory-9.0.0d2.txt
-const auto kIndicSyllabicCategoryViramaList = std::to_array<uint32_t>({
+constexpr auto kIndicSyllabicCategoryViramaList = std::to_array<uint32_t>({
     // Do not include 0+0BCD TAMIL SIGN VIRAMA as Tamil works differently from
     // other Indic languages. See crbug.com/693687.
     0x094D,  0x09CD,  0x0A4D,  0x0ACD,  0x0B4D,  0x0C4D,  0x0CCD,  0x0D4D,
@@ -80,9 +80,9 @@ bool IsGraphemeBreak(UChar32 prev_code_point, UChar32 next_code_point) {
   // [^RI] (RI RI)* RI x RI
   //                RI ÷ RI
   if (Character::IsRegionalIndicator(prev_code_point) &&
-      Character::IsRegionalIndicator(next_code_point))
-    NOTREACHED_IN_MIGRATION()
-        << "Do not use this function for regional indicators.";
+      Character::IsRegionalIndicator(next_code_point)) {
+    NOTREACHED() << "Do not use this function for regional indicators.";
+  }
 
   // Rule GB9, x (Extend | ZWJ)
   // Rule GB9a, x SpacingMark

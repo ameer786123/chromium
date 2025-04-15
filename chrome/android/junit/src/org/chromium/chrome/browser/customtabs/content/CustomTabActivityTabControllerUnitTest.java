@@ -33,12 +33,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.JniMocker;
+import org.chromium.chrome.browser.content.WebContentsFactory;
+import org.chromium.chrome.browser.content.WebContentsFactoryJni;
 import org.chromium.chrome.browser.cookies.CookiesFetcher;
 import org.chromium.chrome.browser.cookies.CookiesFetcherJni;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -56,11 +58,11 @@ import org.chromium.net.NetId;
         shadows = {ShadowUrlUtilities.class})
 @Features.EnableFeatures(ChromeFeatureList.CCT_PREWARM_TAB)
 public class CustomTabActivityTabControllerUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public final CustomTabActivityContentTestEnvironment env =
             new CustomTabActivityContentTestEnvironment();
-
-    @Rule public final JniMocker jniMocker = new JniMocker();
 
     private CustomTabActivityTabController mTabController;
 
@@ -70,12 +72,12 @@ public class CustomTabActivityTabControllerUnitTest {
     @Mock private Network mNetwork;
 
     @Mock private CookiesFetcher.Natives mCookiesFetcherJni;
+    @Mock private WebContentsFactory.Natives mWebContentsFactoryJni;
 
     private static final long TEST_TARGET_NETWORK = 1000;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         when(env.profileProvider.getOriginalProfile()).thenReturn(mProfile);
         when(env.profileProvider.getOffTheRecordProfile(eq(true))).thenReturn(mIncognitoProfile);
         when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
@@ -84,7 +86,8 @@ public class CustomTabActivityTabControllerUnitTest {
         mTabController = env.createTabController();
         PrivacyPreferencesManagerImpl.setInstanceForTesting(mPrivacyPreferencesManager);
 
-        jniMocker.mock(CookiesFetcherJni.TEST_HOOKS, mCookiesFetcherJni);
+        CookiesFetcherJni.setInstanceForTesting(mCookiesFetcherJni);
+        WebContentsFactoryJni.setInstanceForTesting(mWebContentsFactoryJni);
     }
 
     @Test
@@ -198,14 +201,18 @@ public class CustomTabActivityTabControllerUnitTest {
         Tab hiddenTab = env.prepareHiddenTab();
         mTabController.setUpInitialTab(hiddenTab);
         mTabController.finishNativeInitialization();
-        verify(env.reparentingTaskProvider.get(hiddenTab)).finish(any(), any());
+        verify(env.reparentingTask).finish(any(), any());
     }
 
     @Test
     public void usesWebContentsCreatedWithWarmRenderer_ByDefault() {
         WebContents webContents = mock(WebContents.class);
-        when(env.webContentsFactory.createWebContentsWithWarmRenderer(
-                        any(), anyBoolean(), anyLong()))
+        when(mWebContentsFactoryJni.createWebContents(
+                        /* profile= */ any(),
+                        /* initiallyHidden= */ anyBoolean(),
+                        /* initializeRenderer= */ eq(true),
+                        /* targetNetwork= */ anyLong(),
+                        any()))
                 .thenReturn(webContents);
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
@@ -217,11 +224,58 @@ public class CustomTabActivityTabControllerUnitTest {
         when(env.intentDataProvider.getTargetNetwork()).thenReturn(TEST_TARGET_NETWORK);
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
-        verify(env.webContentsFactory, never())
-                .createWebContentsWithWarmRenderer(
-                        any(), anyBoolean(), not(eq(TEST_TARGET_NETWORK)));
-        verify(env.webContentsFactory)
-                .createWebContentsWithWarmRenderer(any(), anyBoolean(), eq(TEST_TARGET_NETWORK));
+        verify(mWebContentsFactoryJni, never())
+                .createWebContents(
+                        /* profile= */ any(),
+                        /* initiallyHidden= */ anyBoolean(),
+                        /* initializeRenderer= */ eq(true),
+                        /* targetNetwork= */ not(eq(TEST_TARGET_NETWORK)),
+                        any());
+        verify(mWebContentsFactoryJni)
+                .createWebContents(
+                        /* profile= */ any(),
+                        /* initiallyHidden= */ anyBoolean(),
+                        /* initializeRenderer= */ eq(true),
+                        /* targetNetwork= */ eq(TEST_TARGET_NETWORK),
+                        any());
+    }
+
+    @Test
+    public void createsWebContentsFromScratch_whenIntentDataProviderTargetsNetwork() {
+        WebContents webContents = mock(WebContents.class);
+        when(env.intentDataProvider.getTargetNetwork()).thenReturn(TEST_TARGET_NETWORK);
+        when(mWebContentsFactoryJni.createWebContents(
+                        /* profile= */ any(),
+                        /* initiallyHidden= */ anyBoolean(),
+                        /* initializeRenderer= */ eq(true),
+                        /* targetNetwork= */ eq(TEST_TARGET_NETWORK),
+                        any()))
+                .thenReturn(webContents);
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        // CustomTabActivityTabController#takeWebContents is the only entrypoint that can correctly
+        // handle IntentDataProvider#targetNetwork. As such, we expect it to always create a
+        // WebContents, targeting that network, when a network is specified in the intent.
+        // What does this mean? In practice, with the current code layout, we expect
+        // CustomTabActivityTabFactory#createTab to
+        // be called with a pre-existing WebContents. More specifically, we expect
+        // WebContentsFactory#createWebContentsWithWarmRenderer, within
+        // CustomTabActivityTabController#takeWebContents to have handled that (for the reasons
+        // stated above).
+        // Note: This is a lot of ifs and poking into internal implementation details, which is
+        // definitely not ideal. Unfortunately, this is the best we could come up to confirm that
+        // IntentDataProvider#targetNetwork is being correctly handled.
+        verify(env.tabFactory, never())
+                .createTab(
+                        /* webContents= */ eq(null),
+                        /* delegateFactory= */ any(),
+                        /* action= */ any());
+        verify(env.tabFactory)
+                .createTab(
+                        /* webContents= */ eq(webContents),
+                        /* delegateFactory= */ any(),
+                        /* action= */ any());
+        assertEquals(webContents, env.webContentsCaptor.getValue());
     }
 
     @Test
@@ -288,5 +342,21 @@ public class CustomTabActivityTabControllerUnitTest {
         mTabController.setUpInitialTab(null);
         mTabController.finishNativeInitialization();
         verify(handler).setTabObserverRegistrar(env.tabObserverRegistrar);
+    }
+
+    @Test
+    public void usesTabFromIntent_IfAvailable() {
+        Tab tab = env.prepareTransferredTab();
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        assertEquals(tab, env.tabProvider.getTab());
+    }
+
+    @Test
+    public void doesNotUseTabFromIntent_IfNotInAsyncParamsManager() {
+        Tab tab = env.prepareTransferredTab();
+        mTabController.setUpInitialTab(null);
+        mTabController.finishNativeInitialization();
+        assertEquals(tab, env.tabProvider.getTab());
     }
 }

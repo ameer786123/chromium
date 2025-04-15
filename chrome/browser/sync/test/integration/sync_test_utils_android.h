@@ -5,7 +5,14 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_TEST_UTILS_ANDROID_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_TEST_UTILS_ANDROID_H_
 
+#include <optional>
 #include <string>
+
+#include "chrome/browser/android/tab_android.h"
+#include "components/saved_tab_groups/public/types.h"
+#include "components/tab_groups/tab_group_color.h"
+#include "google_apis/gaia/gaia_id.h"
+#include "url/gurl.h"
 
 // Utilities that interface with Java to support Sync testing on Android.
 
@@ -13,6 +20,9 @@ namespace sync_test_utils_android {
 
 // Sets up the test account and signs in synchronously.
 void SetUpAccountAndSignInForTesting();
+
+// Returns GaiaId for the default test account on Android.
+GaiaId GetGaiaIdForDefaultTestAccount();
 
 // Sets up the test account, signs in, and enables Sync-the-feature
 // synchronously.
@@ -54,6 +64,18 @@ void SetUpLiveAccountAndSignInAndEnableSyncForTesting(
 //
 // Should be called from PostRunTestOnMainThread() method of the test fixture.
 void ShutdownLiveAuthForTesting();
+
+// Creates a new tab group with the given `tab`. Returns the local tab group ID
+// of the created tab.
+tab_groups::LocalTabGroupID CreateGroupFromTab(TabAndroid* tab);
+
+// Returns the local tab group ID for the `tab` if it's in any group.
+std::optional<tab_groups::LocalTabGroupID> GetGroupIdForTab(TabAndroid* tab);
+
+// Update title and color of the tab group (represented by its `tab`).
+void UpdateTabGroupVisualData(TabAndroid* tab,
+                              const std::string_view& title,
+                              tab_groups::TabGroupColorId color);
 
 }  // namespace sync_test_utils_android
 

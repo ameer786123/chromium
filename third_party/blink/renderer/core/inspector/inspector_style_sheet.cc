@@ -171,24 +171,24 @@ bool VerifyRuleText(Document* document, const String& rule_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = rule_text + " div { " + bogus_property_name + ": none; }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
-  unsigned rule_count = source_data->size();
+  unsigned rule_count = source_data.size();
 
   // Exactly two rules should be parsed.
   if (rule_count != 2)
     return false;
 
   // Added rule must be style rule.
-  if (!source_data->at(0)->HasProperties())
+  if (!source_data.at(0)->HasProperties()) {
     return false;
+  }
 
   Vector<CSSPropertySourceData>& property_data =
-      source_data->at(1)->property_data;
+      source_data.at(1)->property_data;
   unsigned property_count = property_data.size();
 
   // Exactly one property should be in rule.
@@ -214,18 +214,17 @@ bool VerifyStyleText(Document* document,
 bool VerifyNestedDeclarations(Document* document, const String& rule_text) {
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = ".a { .b {} " + rule_text + " }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kStyle) {
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kStyle) {
     return false;
   }
-  const CSSRuleSourceData& rule_data = *source_data->front();
+  const CSSRuleSourceData& rule_data = *source_data.front();
   if (rule_data.child_rules.size() != 2) {
     return false;
   }
@@ -235,8 +234,7 @@ bool VerifyNestedDeclarations(Document* document, const String& rule_text) {
   auto is_valid = [](const CSSPropertySourceData& data) {
     return data.parsed_ok && !data.disabled;
   };
-  if (!base::ranges::any_of(rule_data.child_rules[1]->property_data,
-                            is_valid)) {
+  if (!std::ranges::any_of(rule_data.child_rules[1]->property_data, is_valid)) {
     return false;
   }
   return true;
@@ -245,19 +243,19 @@ bool VerifyNestedDeclarations(Document* document, const String& rule_text) {
 bool VerifyPropertyNameText(Document* document, const String& name_text) {
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text =
       "@property " + name_text + " { syntax: \"*\"; inherits: false; }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kProperty)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kProperty) {
     return false;
+  }
 
-  const CSSRuleSourceData& property_data = *source_data->at(0);
+  const CSSRuleSourceData& property_data = *source_data.at(0);
   if (property_data.property_data.size() != 2)
     return false;
 
@@ -267,20 +265,20 @@ bool VerifyPropertyNameText(Document* document, const String& name_text) {
 bool VerifyKeyframeKeyText(Document* document, const String& key_text) {
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = "@keyframes boguzAnim { " + key_text +
                 " { -webkit-boguz-propertee : none; } }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
   // Exactly one should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kKeyframes)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kKeyframes) {
     return false;
+  }
 
-  const CSSRuleSourceData& keyframe_data = *source_data->at(0);
+  const CSSRuleSourceData& keyframe_data = *source_data.at(0);
   if (keyframe_data.child_rules.size() != 1 ||
       keyframe_data.child_rules.at(0)->type != StyleRule::kKeyframe)
     return false;
@@ -298,21 +296,21 @@ bool VerifySelectorText(Document* document, const String& selector_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = selector_text + " { " + bogus_property_name + ": none; }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
   // Exactly one rule should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kStyle)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kStyle) {
     return false;
+  }
 
   // Exactly one property should be in style rule.
   Vector<CSSPropertySourceData>& property_data =
-      source_data->at(0)->property_data;
+      source_data.at(0)->property_data;
   unsigned property_count = property_data.size();
   if (property_count != 1)
     return false;
@@ -328,21 +326,21 @@ bool VerifyMediaText(Document* document, const String& media_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = "@media " + media_text + " { div { " + bogus_property_name +
                 ": none; } }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
   // Exactly one media rule should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kMedia)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kMedia) {
     return false;
+  }
 
   // Media rule should have exactly one style rule child.
-  CSSRuleSourceDataList& child_source_data = source_data->at(0)->child_rules;
+  CSSRuleSourceDataList& child_source_data = source_data.at(0)->child_rules;
   rule_count = child_source_data.size();
   if (rule_count != 1 || !child_source_data.at(0)->HasProperties())
     return false;
@@ -366,11 +364,10 @@ bool VerifyContainerQueryText(Document* document,
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = "@container " + container_query_text + " { div { " +
                 bogus_property_name + ": none; } }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
@@ -378,12 +375,13 @@ bool VerifyContainerQueryText(Document* document,
   // those for media queries. We should enforce container-query-specific
   // checks once the spec is finalized.
   // Exactly one container rule should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kContainer)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kContainer) {
     return false;
+  }
 
   // Container rule should have exactly one style rule child.
-  CSSRuleSourceDataList& child_source_data = source_data->at(0)->child_rules;
+  CSSRuleSourceDataList& child_source_data = source_data.at(0)->child_rules;
   rule_count = child_source_data.size();
   if (rule_count != 1 || !child_source_data.at(0)->HasProperties())
     return false;
@@ -406,21 +404,21 @@ bool VerifySupportsText(Document* document, const String& supports_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList source_data;
   String text = "@supports " + supports_text + " { div { " +
                 bogus_property_name + ": none; } }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
   // Exactly one supports rule should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kSupports)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kSupports) {
     return false;
+  }
 
   // Supports rule should have exactly one style rule child.
-  CSSRuleSourceDataList& child_source_data = source_data->at(0)->child_rules;
+  CSSRuleSourceDataList& child_source_data = source_data.at(0)->child_rules;
   rule_count = child_source_data.size();
   if (rule_count != 1 || !child_source_data.at(0)->HasProperties())
     return false;
@@ -443,26 +441,26 @@ bool VerifyScopeText(Document* document, const String& scope_text) {
   DEFINE_STATIC_LOCAL(String, bogus_property_name, ("-webkit-boguz-propertee"));
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       ParserContextForDocument(document));
-  CSSRuleSourceDataList* source_data =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
-  String text = "@scope " + scope_text + " { div { " + bogus_property_name +
-                ": none; } }";
-  InspectorCSSParserObserver observer(text, document, source_data);
+  CSSRuleSourceDataList source_data;
+  String text =
+      "@scope " + scope_text + " { " + bogus_property_name + ": none; }";
+  InspectorCSSParserObserver observer(text, document, &source_data);
   CSSParser::ParseSheetForInspector(ParserContextForDocument(document),
                                     style_sheet, text, observer);
 
   // Exactly one scope rule should be parsed.
-  unsigned rule_count = source_data->size();
-  if (rule_count != 1 || source_data->at(0)->type != StyleRule::kScope)
+  unsigned rule_count = source_data.size();
+  if (rule_count != 1 || source_data.at(0)->type != StyleRule::kScope) {
     return false;
+  }
 
-  // Scope rule should have exactly one style rule child.
-  CSSRuleSourceDataList& child_source_data = source_data->at(0)->child_rules;
+  // Scope rule should have exactly one CSSNestedDeclarationsRule child.
+  CSSRuleSourceDataList& child_source_data = source_data.at(0)->child_rules;
   rule_count = child_source_data.size();
   if (rule_count != 1 || !child_source_data.at(0)->HasProperties())
     return false;
 
-  // Exactly one property should be in style rule.
+  // Exactly one property should be in the CSSNestedDeclarationsRule.
   Vector<CSSPropertySourceData>& property_data =
       child_source_data.at(0)->property_data;
   unsigned property_count = property_data.size();
@@ -477,7 +475,7 @@ bool VerifyScopeText(Document* document, const String& scope_text) {
 }
 
 void FlattenSourceData(const CSSRuleSourceDataList& data_list,
-                       CSSRuleSourceDataList* result) {
+                       GCedCSSRuleSourceDataList* result) {
   for (CSSRuleSourceData* data : data_list) {
     // The result->append()'ed types should be exactly the same as in
     // collectFlatRules().
@@ -500,6 +498,7 @@ void FlattenSourceData(const CSSRuleSourceDataList& data_list,
       case StyleRule::kLayerBlock:
       case StyleRule::kFontFeatureValues:
       case StyleRule::kProperty:
+      case StyleRule::kStartingStyle:
         result->push_back(data);
         FlattenSourceData(data->child_rules, result);
         break;
@@ -519,6 +518,10 @@ CSSRuleList* AsCSSRuleList(CSSRule* rule) {
 
   if (auto* media_rule = DynamicTo<CSSMediaRule>(rule))
     return media_rule->cssRules();
+
+  if (auto* starting_style_rule = DynamicTo<CSSStartingStyleRule>(rule)) {
+    return starting_style_rule->cssRules();
+  }
 
   if (auto* scope_rule = DynamicTo<CSSScopeRule>(rule))
     return scope_rule->cssRules();
@@ -574,6 +577,7 @@ void CollectFlatRules(RuleList rule_list, CSSRuleVector* result) {
       case CSSRule::kLayerBlockRule:
       case CSSRule::kFontFeatureValuesRule:
       case CSSRule::kPropertyRule:
+      case CSSRule::kStartingStyleRule:
         result->push_back(rule);
         CollectFlatRules(AsCSSRuleList(rule), result);
         break;
@@ -924,7 +928,7 @@ InspectorStyle::LonghandProperties(
     auto result =
         std::make_unique<protocol::Array<protocol::CSS::CSSProperty>>();
     for (auto longhand_property : longhand_properties) {
-      String value = longhand_property.Value()->CssText();
+      String value = longhand_property.Value().CssText();
       std::unique_ptr<protocol::CSS::CSSProperty> longhand =
           protocol::CSS::CSSProperty::create()
               .setName(longhand_property.Name().ToAtomicString())
@@ -1646,13 +1650,12 @@ void InspectorStyleSheet::ReplaceText(const SourceRange& range,
 }
 
 void InspectorStyleSheet::ParseText(const String& text) {
-  CSSRuleSourceDataList* rule_tree =
-      MakeGarbageCollected<CSSRuleSourceDataList>();
+  CSSRuleSourceDataList rule_tree;
   auto* style_sheet = MakeGarbageCollected<StyleSheetContents>(
       page_style_sheet_->Contents()->ParserContext());
   Document* owner_document = page_style_sheet_->OwnerDocument();
   InspectorCSSParserObserver observer(
-      text, owner_document, rule_tree,
+      text, owner_document, &rule_tree,
       InspectorCSSParserObserver::IssueReportingContext{
           page_style_sheet_->BaseURL(),
           page_style_sheet_->StartPositionInSource()});
@@ -1676,8 +1679,8 @@ void InspectorStyleSheet::ParseText(const String& text) {
   parsed_flat_rules_.clear();
   CollectFlatRules(source_data_sheet, &parsed_flat_rules_);
 
-  source_data_ = MakeGarbageCollected<CSSRuleSourceDataList>();
-  FlattenSourceData(*rule_tree, source_data_.Get());
+  source_data_ = MakeGarbageCollected<GCedCSSRuleSourceDataList>();
+  FlattenSourceData(rule_tree, source_data_.Get());
 
   // The number of rules parsed should be equal to the number of source data
   // entries:
@@ -1950,9 +1953,9 @@ InspectorStyleSheet::BuildObjectForSelectorList(CSSStyleRule* rule) {
       .build();
 }
 
-static bool CanBind(const String& origin) {
-  return origin != protocol::CSS::StyleSheetOriginEnum::UserAgent &&
-         origin != protocol::CSS::StyleSheetOriginEnum::Injected;
+bool InspectorStyleSheet::CanBindOrigin() {
+  return origin_ != protocol::CSS::StyleSheetOriginEnum::UserAgent &&
+         origin_ != protocol::CSS::StyleSheetOriginEnum::Injected;
 }
 
 std::unique_ptr<protocol::CSS::CSSRule>
@@ -1969,7 +1972,7 @@ InspectorStyleSheet::BuildObjectForRuleWithoutAncestorData(
                                         pseudo_argument))
           .build();
 
-  if (CanBind(origin_)) {
+  if (CanBindOrigin()) {
     if (!Id().empty())
       result->setStyleSheetId(Id());
   }
@@ -1988,7 +1991,8 @@ InspectorStyleSheet::BuildObjectForRuleUsage(CSSRule* rule, bool was_used) {
                                source_data->rule_body_range.end + 1);
   auto type = rule->GetType();
   if (type == CSSRule::kMediaRule || type == CSSRule::kSupportsRule ||
-      type == CSSRule::kScopeRule || type == CSSRule::kContainerRule) {
+      type == CSSRule::kScopeRule || type == CSSRule::kContainerRule ||
+      type == CSSRule::kStartingStyleRule) {
     whole_rule_range.end = source_data->rule_header_range.end + 1;
   }
 
@@ -2019,7 +2023,7 @@ InspectorStyleSheet::BuildObjectForPositionTryRule(
           .setStyle(BuildObjectForStyle(position_try_rule->style(), nullptr))
           .setActive(active)
           .build();
-  if (CanBind(origin_) && !Id().empty()) {
+  if (CanBindOrigin() && !Id().empty()) {
     result->setStyleSheetId(Id());
   }
   return result;
@@ -2039,8 +2043,9 @@ InspectorStyleSheet::BuildObjectForFontPaletteValuesRule(
           .setOrigin(origin_)
           .setStyle(BuildObjectForStyle(values_rule->Style(), nullptr))
           .build();
-  if (CanBind(origin_) && !Id().empty())
+  if (CanBindOrigin() && !Id().empty()) {
     result->setStyleSheetId(Id());
+  }
   return result;
 }
 
@@ -2058,8 +2063,9 @@ InspectorStyleSheet::BuildObjectForPropertyRule(
           .setOrigin(origin_)
           .setStyle(BuildObjectForStyle(property_rule->Style(), nullptr))
           .build();
-  if (CanBind(origin_) && !Id().empty())
+  if (CanBindOrigin() && !Id().empty()) {
     result->setStyleSheetId(Id());
+  }
   return result;
 }
 
@@ -2078,8 +2084,9 @@ InspectorStyleSheet::BuildObjectForKeyframeRule(CSSKeyframeRule* keyframe_rule,
           .setOrigin(origin_)
           .setStyle(BuildObjectForStyle(keyframe_rule->style(), element))
           .build();
-  if (CanBind(origin_) && !Id().empty())
+  if (CanBindOrigin() && !Id().empty()) {
     result->setStyleSheetId(Id());
+  }
   return result;
 }
 
@@ -2305,24 +2312,6 @@ void InspectorStyleSheet::MapSourceDataToCSSOM() {
 
   CSSRuleVector& parsed_rules = parsed_flat_rules_;
 
-  if (page_style_sheet_->IsConstructed()) {
-    // If we are dealing with constructed stylesheets, the order
-    // of the parsed_rules matches the order of cssom_rules
-    // because the source CSS is generated based on CSSOM rules
-    // in the same order.
-    // Therefore, we can skip the expensive diff algorithm below
-    // that causes performance issues if there are subtle differences
-    // in rules due to specific issues with the CSS parser.
-    // See crbug.com/1131113, crbug.com/604023, crbug.com/1132778.
-    DCHECK(parsed_rules.size() == cssom_rules.size());
-    auto min_size = std::min(parsed_rules.size(), cssom_rules.size());
-    for (wtf_size_t i = 0; i < min_size; ++i) {
-      rule_to_source_data_.Set(i, i);
-      source_data_to_rule_.Set(i, i);
-    }
-    return;
-  }
-
   Vector<String> cssom_rules_text = Vector<String>();
   Vector<String> parsed_rules_text = Vector<String>();
   for (wtf_size_t i = 0; i < cssom_rules.size(); ++i)
@@ -2496,8 +2485,8 @@ bool InspectorStyleSheetForInlineStyle::SetText(
   {
     InspectorCSSAgent::InlineStyleOverrideScope override_scope(
         element_->GetExecutionContext());
-    element_->SetAttributeWithValidation(html_names::kStyleAttr,
-                                         AtomicString(text), exception_state);
+    element_->SetAttributeWithoutValidation(html_names::kStyleAttr,
+                                            AtomicString(text));
   }
   if (!exception_state.HadException())
     OnStyleSheetTextChanged();
@@ -2528,13 +2517,12 @@ CSSRuleSourceData* InspectorStyleSheetForInlineStyle::RuleSourceData() {
     rule_source_data->rule_body_range.start = 0;
     rule_source_data->rule_body_range.end = 0;
   } else {
-    CSSRuleSourceDataList* rule_source_data_result =
-        MakeGarbageCollected<CSSRuleSourceDataList>();
+    CSSRuleSourceDataList rule_source_data_result;
     InspectorCSSParserObserver observer(text, &element_->GetDocument(),
-                                        rule_source_data_result);
+                                        &rule_source_data_result);
     CSSParser::ParseDeclarationListForInspector(
         ParserContextForDocument(&element_->GetDocument()), text, observer);
-    rule_source_data = rule_source_data_result->front();
+    rule_source_data = rule_source_data_result.front();
   }
   return rule_source_data;
 }

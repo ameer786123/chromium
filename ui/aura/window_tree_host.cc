@@ -19,7 +19,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/host/host_frame_sink_manager.h"
@@ -831,6 +830,15 @@ void WindowTreeHost::OnSetPreferredRefreshRate(ui::Compositor*,
                                                float preferred_refresh_rate) {
   observers_.Notify(&WindowTreeHostObserver::OnSetPreferredRefreshRate, this,
                     preferred_refresh_rate);
+}
+
+void WindowTreeHost::OnFirstSurfaceActivation(
+    ui::Compositor*,
+    const viz::SurfaceInfo& surface_info) {
+  window()->UpdateLocalSurfaceIdFromEmbeddedClient(
+      surface_info.id().local_surface_id());
+  observers_.Notify(&WindowTreeHostObserver::OnLocalSurfaceIdChanged, this,
+                    window()->GetLocalSurfaceId());
 }
 
 }  // namespace aura

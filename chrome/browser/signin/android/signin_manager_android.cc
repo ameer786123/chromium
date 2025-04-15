@@ -36,7 +36,6 @@
 #include "components/signin/public/identity_manager/account_managed_status_finder.h"
 #include "components/signin/public/identity_manager/accounts_cookie_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
-#include "components/sync/service/sync_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/browsing_data_remover.h"
@@ -110,7 +109,7 @@ class ProfileDataRemover : public content::BrowsingDataRemover::Observer {
   ProfileDataRemover(const ProfileDataRemover&) = delete;
   ProfileDataRemover& operator=(const ProfileDataRemover&) = delete;
 
-  ~ProfileDataRemover() override {}
+  ~ProfileDataRemover() override = default;
 
   void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
     remover_->RemoveObserver(this);
@@ -170,9 +169,8 @@ SigninManagerAndroid::SigninManagerAndroid(
 
   java_signin_manager_ = Java_SigninManagerImpl_create(
       base::android::AttachCurrentThread(), reinterpret_cast<intptr_t>(this),
-      profile_->GetJavaObject(), identity_manager_->GetJavaObject(),
-      identity_manager_->GetIdentityMutatorJavaObject(),
-      SyncServiceFactory::GetForProfile(profile_)->GetJavaObject());
+      profile_, identity_manager_,
+      identity_manager_->GetIdentityMutatorJavaObject());
 }
 
 base::android::ScopedJavaLocalRef<jobject>
@@ -180,7 +178,7 @@ SigninManagerAndroid::GetJavaObject() {
   return base::android::ScopedJavaLocalRef<jobject>(java_signin_manager_);
 }
 
-SigninManagerAndroid::~SigninManagerAndroid() {}
+SigninManagerAndroid::~SigninManagerAndroid() = default;
 
 void SigninManagerAndroid::Shutdown() {
   Java_SigninManagerImpl_destroy(base::android::AttachCurrentThread(),
@@ -201,7 +199,7 @@ bool SigninManagerAndroid::IsSigninAllowed() const {
   return signin_allowed_.GetValue();
 }
 
-bool SigninManagerAndroid::IsSigninAllowedByPolicy(JNIEnv* env) const {
+bool SigninManagerAndroid::IsSigninAllowed(JNIEnv* env) const {
   return IsSigninAllowed();
 }
 
@@ -219,7 +217,7 @@ bool SigninManagerAndroid::MatchesCachedIsAccountManagedEntry(
 
 void SigninManagerAndroid::OnSigninAllowedPrefChanged() const {
   VLOG(1) << "::OnSigninAllowedPrefChanged() " << IsSigninAllowed();
-  Java_SigninManagerImpl_onSigninAllowedByPolicyChanged(
+  Java_SigninManagerImpl_onSigninAllowedChanged(
       base::android::AttachCurrentThread(), java_signin_manager_,
       IsSigninAllowed());
 }
@@ -253,9 +251,8 @@ void SigninManagerAndroid::RegisterPolicyWithAccount(
 
 void SigninManagerAndroid::FetchAndApplyCloudPolicy(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& j_account_info,
+    const CoreAccountInfo& account,
     const base::RepeatingClosure& callback) {
-  CoreAccountInfo account = ConvertFromJavaCoreAccountInfo(env, j_account_info);
   RegisterPolicyWithAccount(
       account,
       base::BindOnce(&SigninManagerAndroid::OnPolicyRegisterDone,

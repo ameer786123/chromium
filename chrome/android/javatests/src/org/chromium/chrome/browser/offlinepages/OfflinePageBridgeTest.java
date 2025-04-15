@@ -462,8 +462,8 @@ public class OfflinePageBridgeTest {
     @Test
     @MediumTest
     @MinAndroidSdkLevel(
-            value = VERSION_CODES.R,
-            reason = "OfflinePage File Path is content uri on R+")
+            value = VERSION_CODES.Q,
+            reason = "OfflinePage File Path is content uri on Q+")
     // TODO: expand this test to match testGetLoadUrlParamsForOpeningMhtmlFileUrl_File.
     public void testGetLoadUrlParamsForOpeningMhtmlFileUrl_ContentUri() throws Exception {
         sActivityTestRule.loadUrl(mTestPage);
@@ -495,8 +495,8 @@ public class OfflinePageBridgeTest {
     @Test
     @MediumTest
     @MaxAndroidSdkLevel(
-            value = VERSION_CODES.Q,
-            reason = "OfflinePage File Path is content uri on R+")
+            value = VERSION_CODES.P,
+            reason = "OfflinePage File Path is content uri on Q+")
     public void testGetLoadUrlParamsForOpeningMhtmlFileUrl_File() throws Exception {
         sActivityTestRule.loadUrl(mTestPage);
         savePage(SavePageResult.SUCCESS, mTestPage);
@@ -669,13 +669,6 @@ public class OfflinePageBridgeTest {
                 });
         Assert.assertTrue(semaphore.tryAcquire(TIMEOUT_MS, TimeUnit.MILLISECONDS));
         return result;
-    }
-
-    private void forceConnectivityStateOnUiThread(final boolean state) {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    NetworkChangeNotifier.forceConnectivityState(state);
-                });
     }
 
     private Set<String> getUrlsExistOfflineFromSet(final Set<String> query)

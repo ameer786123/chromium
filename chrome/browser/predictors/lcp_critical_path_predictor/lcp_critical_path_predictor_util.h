@@ -30,11 +30,40 @@ struct LastVisitTimeCompare {
 }  // namespace lcpp
 struct PreconnectPrediction;
 
+bool RecordLcpElementLocatorHistogramForTesting(
+    int sliding_window_size,
+    int max_histogram_buckets,
+    const std::string& lcp_element_locator,
+    LcppStat& stat);
+
 // Converts LcppStat to LCPCriticalPathPredictorNavigationTimeHint
 // so that it can be passed to the renderer via the navigation handle.
 std::optional<blink::mojom::LCPCriticalPathPredictorNavigationTimeHint>
 ConvertLcppStatToLCPCriticalPathPredictorNavigationTimeHint(
     const LcppStat& data);
+
+// Converts LcpElementLocatorStat to a list of (confidence, ElementLocator)
+// pairs. The result is ordered by confidence (the most confident one comes
+// first). If there is no data, it returns an empty vector.
+std::vector<std::pair<double, std::string>>
+ConvertLcpElementLocatorStatToConfidenceStringPairs(
+    const predictors::LcpElementLocatorStat& stat);
+
+// Converts LcppStringFrequencyStatData to a list of (confidence, element)
+// pairs. The result is ordered by confidence (the most confident one comes
+// first). If there is no data, it returns an empty vector.
+std::vector<std::pair<double, std::string>>
+ConvertLcppStringFrequencyStatDataToConfidenceStringPairs(
+    const LcppStringFrequencyStatData& data);
+
+// Returns LCP element locators in the past loads for a given `stat` that have
+// above `confidence_threshold`.  The returned LCP element locators are ordered
+// by descending confidence (the most confident one comes first). If there is no
+// data, it returns an empty vector.
+std::vector<std::string> PredictLcpElementLocators(
+    const predictors::LcpElementLocatorStat& stat,
+    const double confidence_threshold,
+    const double total_frequency_threshold);
 
 // Returns possible fonts from past loads for a given `stat`.
 // The returned urls are ordered by descending frequency (the most
@@ -53,6 +82,11 @@ std::vector<GURL> PredictPreconnectableOrigins(const LcppStat& stat);
 // frequent one comes first). If there is no data, it returns an empty
 // vector.
 std::vector<GURL> PredictFetchedSubresourceUrls(const LcppStat& stat);
+
+std::vector<GURL> PredictFetchedSubresourceUrlsForTesting(
+    const LcppStat& stat,
+    const double confidence_threshold,
+    const double total_frequency_threshold);
 
 // Returns possible unused preload URLs from past loads for a given `stat`.
 // The returned URLs are ordered by descending frequency (the most
@@ -74,7 +108,9 @@ struct LcppDataInputs {
   // data of the LCP candidate that won.
   //
   // a locator of the LCP element.
-  std::string lcp_element_locator;
+  std::optional<std::string> lcp_element_locator;
+  std::optional<std::string> lcp_element_locator_image;
+
   // async script urls of the latest LCP candidate element.
   std::vector<GURL> lcp_influencer_scripts;
   std::vector<GURL> preconnect_origins;
@@ -106,6 +142,9 @@ struct LcppDataInputs {
   // URLs of preloaded but not actually used resources.
   std::vector<GURL> unused_preload_resources;
 };
+
+const std::optional<std::string>& GetLcpElementLocatorForCriticalPathPredictor(
+    const LcppDataInputs& inputs);
 
 bool UpdateLcppStatWithLcppDataInputs(const LoadingPredictorConfig& config,
                                       const LcppDataInputs& inputs,
@@ -209,10 +248,6 @@ std::string GetFirstLevelPath(const GURL& url);
 // Returns true if `url1` and `url2` are the same site.
 bool IsSameSite(const GURL& url1, const GURL& url2);
 
-void MaybeAddPreconnectAndPrefetchRequest(const GURL& url,
-                                          const LcppStat& lcpp_stat,
-                                          PreconnectPrediction& prediction);
-
 class LcppDataMap {
  public:
   using DataTable = sqlite_proto::KeyValueTable<LcppData>;
@@ -247,6 +282,11 @@ class LcppDataMap {
   void DeleteUrls(const std::vector<GURL>& urls);
 
   void DeleteAllData();
+
+  void GetPreconnectAndPrefetchRequest(
+      const std::optional<url::Origin>& initiator_origin,
+      const GURL& url,
+      PreconnectPrediction& prediction);
 
   static std::unique_ptr<LcppDataMap> CreateWithMockTableForTesting(
 

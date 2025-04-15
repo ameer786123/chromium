@@ -13,12 +13,13 @@
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_member.h"
+#include "components/signin/public/base/signin_buildflags.h"
 #include "components/sync/base/passphrase_enums.h"
 #include "components/sync/base/user_selectable_type.h"
 
+class GaiaId;
 class PrefRegistrySimple;
 class PrefService;
 class PrefValueMap;
@@ -59,7 +60,7 @@ class SyncPrefs {
     kSyncing = 2
   };
 
-  // |pref_service| must not be null and must outlive this object.
+  // `pref_service` must not be null and must outlive this object.
   explicit SyncPrefs(PrefService* pref_service);
 
   SyncPrefs(const SyncPrefs&) = delete;
@@ -102,8 +103,7 @@ class SyncPrefs {
   // Returns the set of types for the given gaia_id_hash for sign-in users.
   // If some types are force-disabled by policy, they will not be included.
   // Note: this is used for signed-in not syncing users.
-  UserSelectableTypeSet GetSelectedTypesForAccount(
-      const signin::GaiaIdHash& gaia_id_hash) const;
+  UserSelectableTypeSet GetSelectedTypesForAccount(const GaiaId& gaia_id) const;
 
   // Returns whether `type` is "managed" i.e. controlled by enterprise policy.
   bool IsTypeManagedByPolicy(UserSelectableType type) const;
@@ -126,20 +126,14 @@ class SyncPrefs {
   bool IsTypeDisabledByUserForAccount(const UserSelectableType type,
                                       const signin::GaiaIdHash& gaia_id_hash);
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-  // On Desktop, kPasswords isn't considered "selected" by default in transport
-  // mode. This method returns how many accounts selected (enabled) the type.
-  int GetNumberOfAccountsWithPasswordsSelected() const;
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-
-  // Sets the selection state for all |registered_types| and "keep everything
+  // Sets the selection state for all `registered_types` and "keep everything
   // synced" flag.
-  // |keep_everything_synced| indicates that all current and future types
+  // `keep_everything_synced` indicates that all current and future types
   // should be synced. If this is set to true, then GetSelectedTypes() will
   // always return UserSelectableTypeSet::All(), even if not all of them are
   // registered or individually marked as selected.
   // Changes are still made to the individual selectable type prefs even if
-  // |keep_everything_synced| is true, but won't be visible until it's set to
+  // `keep_everything_synced` is true, but won't be visible until it's set to
   // false.
   void SetSelectedTypesForSyncingUser(bool keep_everything_synced,
                                       UserSelectableTypeSet registered_types,
@@ -149,9 +143,13 @@ class SyncPrefs {
   void SetSelectedTypeForAccount(UserSelectableType type,
                                  bool is_type_on,
                                  const signin::GaiaIdHash& gaia_id_hash);
+  // Used to reset user's selected types prefs in Sync-the-transport mode to its
+  // default value. Note: this is used for signed-in not syncing users.
+  void ResetSelectedTypeForAccount(UserSelectableType type,
+                                   const signin::GaiaIdHash& gaia_id_hash);
 
   // Used to clear per account prefs for all users *except* the ones in the
-  // passed-in |available_gaia_ids|.
+  // passed-in `available_gaia_ids`.
   void KeepAccountSettingsPrefsOnlyForUsers(
       const std::vector<signin::GaiaIdHash>& available_gaia_ids);
 
@@ -171,10 +169,10 @@ class SyncPrefs {
                           UserSelectableOsTypeSet registered_types,
                           UserSelectableOsTypeSet selected_types);
 
-  // Maps |type| to its corresponding preference name.
+  // Maps `type` to its corresponding preference name.
   static const char* GetPrefNameForOsTypeForTesting(UserSelectableOsType type);
 
-  // Sets |type| as disabled in the given |policy_prefs|, which should
+  // Sets `type` as disabled in the given `policy_prefs`, which should
   // correspond to the "managed" (aka policy-controlled) pref store.
   static void SetOsTypeDisabledByPolicy(PrefValueMap* policy_prefs,
                                         UserSelectableOsType type);
@@ -183,15 +181,15 @@ class SyncPrefs {
   // Whether Sync is disabled on the client for all profiles and accounts.
   bool IsSyncClientDisabledByPolicy() const;
 
-  // Maps |type| to its corresponding preference name.
+  // Maps `type` to its corresponding preference name.
   static const char* GetPrefNameForTypeForTesting(UserSelectableType type);
 
-  // Sets |type| as disabled in the given |policy_prefs|, which should
+  // Sets `type` as disabled in the given `policy_prefs`, which should
   // correspond to the "managed" (aka policy-controlled) pref store.
   static void SetTypeDisabledByPolicy(PrefValueMap* policy_prefs,
                                       UserSelectableType type);
 
-  // Sets |type| as disabled in the given |supervised_user_prefs|, which should
+  // Sets `type` as disabled in the given `supervised_user_prefs`, which should
   // correspond to the custodian-controlled pref store (i.e. controlled by
   // parent/guardian of a child account).
   static void SetTypeDisabledByCustodian(PrefValueMap* supervised_user_prefs,
@@ -205,6 +203,14 @@ class SyncPrefs {
   std::optional<PassphraseType> GetCachedPassphraseType() const;
   void SetCachedPassphraseType(PassphraseType passphrase_type);
   void ClearCachedPassphraseType();
+
+  // Cached notion of whether or not a persistent auth error exists, useful
+  // during profile startup before IdentityManager can determine the
+  // authoritative value.
+  bool HasCachedPersistentAuthErrorForMetrics() const;
+  void SetHasCachedPersistentAuthErrorForMetrics(
+      bool has_persistent_auth_error);
+  void ClearCachedPersistentAuthErrorForMetrics();
 
   // The user's TrustedVaultAutoUpgradeExperimentGroup, determined the first
   // time the engine is successfully initialized.
@@ -280,9 +286,8 @@ class SyncPrefs {
       PrefService* pref_service,
       const signin::GaiaIdHash& gaia_id_hash);
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-  // If switches::kExplicitBrowserSigninUIOnDesktop is enabled, performs a
-  // one-off migration which ensures that, for a user who...
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  // Performs a one-off migration which ensures that, for a user who...
   // ...enabled sync-the-feature, then...
   // ...disabled an autofill data type, then...
   // ...disabled sync-the-feature, then...
@@ -291,7 +296,7 @@ class SyncPrefs {
   // Internally this works by reading the global passwords setting and writing
   // it to the account setting for kGoogleServicesLastSyncingGaiaId.
   static void MaybeMigrateAutofillToPerAccountPref(PrefService* pref_service);
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
  private:
   static void RegisterTypeSelectedPref(PrefRegistrySimple* prefs,

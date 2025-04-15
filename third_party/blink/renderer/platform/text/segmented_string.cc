@@ -70,7 +70,7 @@ void SegmentedString::Append(const SegmentedSubstring& s) {
 }
 
 void SegmentedString::Push(UChar c) {
-  DCHECK(c);
+  CHECK(c);
 
   // pushIfPossible attempts to rewind the pointer in the SegmentedSubstring,
   // however it will fail if the SegmentedSubstring is empty, or
@@ -81,7 +81,8 @@ void SegmentedString::Push(UChar c) {
     return;
   }
 
-  Prepend(SegmentedString(String(&c, 1u)), PrependType::kUnconsume);
+  Prepend(SegmentedString(String(base::span_from_ref(c))),
+          PrependType::kUnconsume);
 }
 
 void SegmentedString::Prepend(const SegmentedSubstring& s, PrependType type) {

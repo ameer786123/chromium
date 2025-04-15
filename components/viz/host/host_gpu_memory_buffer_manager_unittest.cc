@@ -18,7 +18,6 @@
 #include "base/test/bind.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "media/media_buildflags.h"
@@ -32,6 +31,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/android_hardware_buffer_compat.h"
+#include "base/android/scoped_hardware_buffer_handle.h"
 #endif
 
 namespace viz {
@@ -93,22 +93,35 @@ class TestGpuService : public mojom::GpuService {
     auto& req = allocation_requests_[index];
 
     gfx::GpuMemoryBufferHandle handle;
+
+    if (emulate_native_handle) {
+#if BUILDFLAG(IS_OZONE)
+      handle.type = gfx::NATIVE_PIXMAP;
+#elif BUILDFLAG(IS_ANDROID)
+      handle = gfx::GpuMemoryBufferHandle(
+          base::android::ScopedHardwareBufferHandle());
+#elif BUILDFLAG(IS_APPLE)
+      handle.type = gfx::IO_SURFACE_BUFFER;
+#elif BUILDFLAG(IS_WIN)
+      handle.type = gfx::DXGI_SHARED_HANDLE;
+#else
+      FAIL() << "gfx::NATIVE_PIXMAP is not supported on this platform!";
+#endif
+    } else {
+      // In the context of these tests, HostGpuMemoryBufferManager will create
+      // shared-memory GMBs from these handles, and creation of those GMBs will
+      // fail if the buffer size and stride are determined to be invalid. In
+      // production this is not an issue as the handle itself will be created
+      // via GpuMemoryBufferImplSharedMemory, which takes care of setting the
+      // buffer size and stride appropriately based on the requested format and
+      // size. However, as we don't have the requested format or size here,
+      // simply set hardcoded parameter values that ensure that this creation
+      // will succeed for the formats and sizes used in these tests.
+      constexpr size_t kBufferSizeBytes = 6144;
+      handle = gfx::GpuMemoryBufferHandle(
+          base::UnsafeSharedMemoryRegion::Create(kBufferSizeBytes));
+    }
     handle.id = req.id;
-
-    handle.type =
-        emulate_native_handle ? gfx::NATIVE_PIXMAP : gfx::SHARED_MEMORY_BUFFER;
-
-    // In the context of these tests, HostGpuMemoryBufferManager will create
-    // shared-memory GMBs from these handles, and creation of those GMBs will
-    // fail if the buffer size and stride are determined to be invalid. In
-    // production this is not an issue as the handle itself will be created via
-    // GpuMemoryBufferImplSharedMemory, which takes care of setting the buffer
-    // size and stride appropriately based on the requested format and size.
-    // However, as we don't have the requested format or size here, simply set
-    // hardcoded parameter values that ensure that this creation will succeed
-    // for the formats and sizes used in these tests.
-    constexpr size_t kBufferSizeBytes = 6144;
-    handle.region = base::UnsafeSharedMemoryRegion::Create(kBufferSizeBytes);
     handle.stride = 64;
 
     DCHECK(req.callback);
@@ -133,7 +146,7 @@ class TestGpuService : public mojom::GpuService {
       const gpu::GpuDiskCacheHandle& handle) override {}
 
   void CloseChannel(int32_t client_id) override {}
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
   void CreateArcVideoDecodeAccelerator(
       mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver)
@@ -162,7 +175,7 @@ class TestGpuService : public mojom::GpuService {
   void CreateJpegEncodeAccelerator(
       mojo::PendingReceiver<chromeos_camera::mojom::JpegEncodeAccelerator>
           jea_receiver) override {}
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   void BindWebNNContextProvider(
       mojo::PendingReceiver<webnn::mojom::WebNNContextProvider> receiver,
@@ -204,10 +217,6 @@ class TestGpuService : public mojom::GpuService {
                            CopyGpuMemoryBufferCallback callback) override {
     std::move(callback).Run(false);
   }
-
-  void BindClientGmbInterface(
-      mojo::PendingReceiver<gpu::mojom::ClientGmbInterface> receiver,
-      int client_id) override {}
 
   void GetVideoMemoryUsageStats(
       GetVideoMemoryUsageStatsCallback callback) override {}
@@ -316,7 +325,7 @@ class HostGpuMemoryBufferManagerTest : public ::testing::Test {
 
   // Not all platforms support native configurations (currently only Windows,
   // Mac and some Ozone platforms). Abort the test in those platforms.
-  bool IsNativePixmapConfigSupported() {
+  bool IsNativeHandleSupported() {
     bool native_pixmap_supported = false;
 #if BUILDFLAG(IS_OZONE)
     native_pixmap_supported =
@@ -397,8 +406,9 @@ TEST_F(HostGpuMemoryBufferManagerTest,
 // Tests that if an allocated buffer is received after the gpu service issuing
 // it has died, HGMBManager retries the allocation request properly.
 TEST_F(HostGpuMemoryBufferManagerTest, AllocationRequestFromDeadGpuService) {
-  if (!IsNativePixmapConfigSupported())
+  if (!IsNativeHandleSupported()) {
     return;
+  }
 
   // Request allocation. No allocation should happen yet.
   gfx::GpuMemoryBufferHandle allocated_handle;

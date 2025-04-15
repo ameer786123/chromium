@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.tab;
 
 import android.content.Context;
-import android.content.res.Resources;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -14,19 +13,18 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 
 import org.chromium.base.ObserverList;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.components.browser_ui.util.BrowserControlsVisibilityDelegate;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.lang.ref.WeakReference;
@@ -36,12 +34,9 @@ import java.lang.ref.WeakReference;
 @Config(manifest = Config.NONE)
 @LooperMode(LooperMode.Mode.LEGACY)
 public class TabBrowserControlsConstraintsHelperTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private final UserDataHost mUserDataHost = new UserDataHost();
 
-    @Rule public JniMocker mocker = new JniMocker();
-
-    @Mock Context mContext;
-    @Mock Resources mResources;
     @Mock TabImpl mTab;
     @Mock WebContents mWebContents;
     @Mock TabDelegateFactory mDelegateFactory;
@@ -53,8 +48,7 @@ public class TabBrowserControlsConstraintsHelperTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mocker.mock(TabBrowserControlsConstraintsHelperJni.TEST_HOOKS, mJniMock);
+        TabBrowserControlsConstraintsHelperJni.setInstanceForTesting(mJniMock);
         Mockito.when(mTab.getUserDataHost()).thenReturn(mUserDataHost);
         Mockito.when(mTab.getDelegateFactory()).thenReturn(mDelegateFactory);
         Mockito.when(mTab.getWebContents()).thenReturn(mWebContents);
@@ -66,13 +60,6 @@ public class TabBrowserControlsConstraintsHelperTest {
         mVisibilityDelegate = new TestVisibilityDelegate();
         Mockito.when(mDelegateFactory.createBrowserControlsVisibilityDelegate(Mockito.any()))
                 .thenReturn(mVisibilityDelegate);
-
-        // TODO(b/370495692) Remove when we don't need to restrict stable
-        // experiment to phones.
-        Mockito.when(mTab.getContext()).thenReturn(mContext);
-        Mockito.when(mContext.getResources()).thenReturn(mResources);
-        Mockito.when(mResources.getInteger(org.chromium.ui.R.integer.min_screen_width_bucket))
-                .thenReturn(DeviceFormFactor.SCREEN_BUCKET_TABLET - 1);
     }
 
     private void initHelper() {

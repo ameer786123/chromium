@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/renderer/render_thread_impl.h"
 
+#include <algorithm>
 #include <atomic>
 #include <limits>
 #include <map>
@@ -42,11 +38,11 @@
 #include "base/path_service.h"
 #include "base/process/process.h"
 #include "base/process/process_metrics.h"
-#include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/bind_post_task.h"
@@ -59,10 +55,8 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_pressure_level_proto.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/typed_macros.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/base/histograms.h"
 #include "cc/base/switches.h"
 #include "cc/mojo_embedder/async_layer_tree_frame_sink.h"
@@ -98,8 +92,6 @@
 #include "content/renderer/agent_scheduling_group.h"
 #include "content/renderer/browser_exposed_renderer_interfaces.h"
 #include "content/renderer/effective_connection_type_helper.h"
-#include "content/renderer/media/codec_factory.h"
-#include "content/renderer/media/gpu/gpu_video_accelerator_factories_impl.h"
 #include "content/renderer/media/media_factory.h"
 #include "content/renderer/media/render_media_client.h"
 #include "content/renderer/net_info_helper.h"
@@ -129,6 +121,8 @@
 #include "media/base/media.h"
 #include "media/base/media_switches.h"
 #include "media/media_buildflags.h"
+#include "media/mojo/clients/mojo_codec_factory.h"
+#include "media/mojo/clients/mojo_gpu_video_accelerator_factories.h"
 #include "media/renderers/default_decoder_factory.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
@@ -203,7 +197,7 @@
 #endif
 
 #ifdef ENABLE_VTUNE_JIT_INTERFACE
-#include "v8/src/third_party/vtune/v8-vtune.h"
+#include "v8/third_party/vtune/v8-vtune.h"
 #endif
 
 #if defined(ENABLE_IPC_FUZZER)
@@ -218,12 +212,12 @@
 #endif
 
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
-#include "content/renderer/media/codec_factory_mojo.h"
+#include "media/mojo/clients/mojo_codec_factory_mojo_decoder.h"
 #include "media/mojo/mojom/interface_factory.mojom.h"
 #endif
 
 #if BUILDFLAG(IS_FUCHSIA)
-#include "content/renderer/media/codec_factory_fuchsia.h"
+#include "media/mojo/clients/mojo_codec_factory_fuchsia.h"
 #include "media/mojo/mojom/fuchsia_media.mojom.h"
 #endif
 
@@ -278,7 +272,7 @@ BASE_FEATURE(kUseThreadPoolForMediaTaskRunner,
 void UpdateForegroundCrashKey(bool foreground) {
   static auto* const crash_key = base::debug::AllocateCrashKeyString(
       "renderer_foreground", base::debug::CrashKeySize::Size32);
-  base::debug::SetCrashKeyString(crash_key, foreground ? "true" : "false");
+  base::debug::SetCrashKeyString(crash_key, base::ToString(foreground));
 }
 
 scoped_refptr<viz::ContextProviderCommandBuffer> CreateOffscreenContext(
@@ -287,7 +281,7 @@ scoped_refptr<viz::ContextProviderCommandBuffer> CreateOffscreenContext(
     bool support_locking,
     bool support_gles2_interface,
     bool support_raster_interface,
-    bool support_oop_rasterization,
+    bool support_gpu_rasterization,
     bool support_grcontext,
     bool automatic_flushes,
     viz::command_buffer_metrics::ContextType type,
@@ -308,12 +302,11 @@ scoped_refptr<viz::ContextProviderCommandBuffer> CreateOffscreenContext(
   attributes.enable_grcontext = support_grcontext;
   // Using RasterDecoder for OOP-R backend, so we need support_raster_interface
   // and !support_gles2_interface.
-  attributes.enable_oop_rasterization = support_oop_rasterization &&
+  attributes.enable_gpu_rasterization = support_gpu_rasterization &&
                                         support_raster_interface &&
                                         !support_gles2_interface;
   return base::MakeRefCounted<viz::ContextProviderCommandBuffer>(
       std::move(gpu_channel_host), stream_id, stream_priority,
-      gpu::kNullSurfaceHandle,
       GURL("chrome://gpu/RenderThreadImpl::CreateOffscreenContext/" +
            viz::command_buffer_metrics::ContextTypeToString(type)),
       automatic_flushes, support_locking, limits, attributes, type);
@@ -346,6 +339,36 @@ bool IsBackgrounded(std::optional<base::Process::Priority> process_priority) {
     case base::Process::Priority::kUserBlocking:
       return false;
   }
+}
+
+perfetto::StaticString ProcessPriorityToString(
+    std::optional<base::Process::Priority> priority) {
+  if (!priority) {
+    return "Unknown";
+  }
+  switch (*priority) {
+    case base::Process::Priority::kBestEffort:
+      return "Best effort";
+    case base::Process::Priority::kUserVisible:
+      return "User visible";
+    case base::Process::Priority::kUserBlocking:
+      return "User blocking";
+  }
+  NOTREACHED();
+}
+
+perfetto::StaticString ProcessVisibilityToString(
+    std::optional<mojom::RenderProcessVisibleState> visible_state) {
+  if (!visible_state) {
+    return "Unknown";
+  }
+  switch (*visible_state) {
+    case mojom::RenderProcessVisibleState::kVisible:
+      return "Visible";
+    case mojom::RenderProcessVisibleState::kHidden:
+      return "Hidden";
+  }
+  NOTREACHED();
 }
 
 }  // namespace
@@ -513,15 +536,18 @@ RenderThreadImpl::RenderThreadImpl(
 }
 
 void RenderThreadImpl::Init() {
+  TRACE_EVENT_BEGIN("renderer", ProcessPriorityToString(std::nullopt),
+                    process_priority_track_);
+  TRACE_EVENT_BEGIN("renderer", ProcessVisibilityToString(std::nullopt),
+                    process_visibility_track_);
+  base::trace_event::TraceLog::GetInstance()->AddAsyncEnabledStateObserver(
+      weak_factory_.GetWeakPtr());
+
   TRACE_EVENT0("startup", "RenderThreadImpl::Init");
 
   SCOPED_UMA_HISTOGRAM_TIMER("Renderer.RenderThreadImpl.Init");
 
   GetContentClient()->renderer()->PostIOThreadCreated(GetIOTaskRunner().get());
-
-  base::trace_event::TraceLog::GetInstance()->SetThreadSortIndex(
-      base::PlatformThread::CurrentId(),
-      kTraceEventRendererMainThreadSortIndex);
 
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
   // On Mac and Android Java UI, the select popups are rendered by the browser.
@@ -664,6 +690,12 @@ void RenderThreadImpl::Init() {
 }
 
 RenderThreadImpl::~RenderThreadImpl() {
+  base::trace_event::TraceLog::GetInstance()->RemoveAsyncEnabledStateObserver(
+      this);
+
+  TRACE_EVENT_END("renderer", process_priority_track_);
+  TRACE_EVENT_END("renderer", process_visibility_track_);
+
   // The destructor should not run in multi-process mode because Shutdown()
   // terminates the process. The destructor only needs to clean up for tests.
   CHECK(IsSingleProcess());
@@ -721,6 +753,18 @@ std::string RenderThreadImpl::GetLocale() {
   DCHECK(!lang.empty());
   return lang;
 }
+
+void RenderThreadImpl::OnTraceLogEnabled() {
+  TRACE_EVENT_END("renderer", process_priority_track_);
+  TRACE_EVENT_BEGIN("renderer", ProcessPriorityToString(process_priority_),
+                    process_priority_track_);
+
+  TRACE_EVENT_END("renderer", process_visibility_track_);
+  TRACE_EVENT_BEGIN("renderer", ProcessVisibilityToString(visible_state_),
+                    process_visibility_track_);
+}
+
+void RenderThreadImpl::OnTraceLogDisabled() {}
 
 #if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
 IPC::SyncMessageFilter* RenderThreadImpl::GetSyncMessageFilter() {
@@ -880,7 +924,10 @@ void RenderThreadImpl::InitializeRenderer(
     const std::string& user_agent,
     const blink::UserAgentMetadata& user_agent_metadata,
     const std::vector<std::string>& cors_exempt_header_list,
-    blink::mojom::OriginTrialsSettingsPtr origin_trials_settings) {
+    blink::mojom::OriginTrialsSettingsPtr origin_trials_settings,
+    uint64_t trace_id) {
+  TRACE_EVENT("navigation", "RenderThreadImpl::InitializeRenderer",
+              perfetto::TerminatingFlow::Global(trace_id));
   DCHECK(user_agent_.IsNull());
 
   user_agent_ = WebString::FromUTF8(user_agent);
@@ -888,9 +935,9 @@ void RenderThreadImpl::InitializeRenderer(
   user_agent_metadata_ = user_agent_metadata;
   cors_exempt_header_list_ = cors_exempt_header_list;
 
-  blink::WebVector<blink::WebString> web_cors_exempt_header_list(
+  std::vector<blink::WebString> web_cors_exempt_header_list(
       cors_exempt_header_list.size());
-  base::ranges::transform(
+  std::ranges::transform(
       cors_exempt_header_list, web_cors_exempt_header_list.begin(),
       [](const auto& header) { return blink::WebString::FromLatin1(header); });
   blink::SetCorsExemptHeaderList(web_cors_exempt_header_list);
@@ -939,6 +986,12 @@ void RenderThreadImpl::RegisterSchemes() {
         chrome_untrusted_scheme);
   }
 
+  if (base::FeatureList::IsEnabled(features::kWebUIBundledCodeCache)) {
+    WebSecurityPolicy::RegisterURLSchemeAsWebUIBundledBytecode(chrome_scheme);
+    WebSecurityPolicy::RegisterURLSchemeAsWebUIBundledBytecode(
+        chrome_untrusted_scheme);
+  }
+
   // devtools:
   WebString devtools_scheme(WebString::FromASCII(kChromeDevToolsScheme));
   WebSecurityPolicy::RegisterURLSchemeAsDisplayIsolated(devtools_scheme);
@@ -983,7 +1036,7 @@ media::GpuVideoAcceleratorFactories* RenderThreadImpl::GetGpuFactories() {
 
     GetMediaSequencedTaskRunner()->PostTask(
         FROM_HERE,
-        base::BindOnce(&GpuVideoAcceleratorFactoriesImpl::DestroyContext,
+        base::BindOnce(&media::MojoGpuVideoAcceleratorFactories::DestroyContext,
                        base::Unretained(gpu_factories_.back().get())));
   }
 
@@ -1041,10 +1094,7 @@ media::GpuVideoAcceleratorFactories* RenderThreadImpl::GetGpuFactories() {
 #else
       cmd_line->HasSwitch(switches::kEnableGpuMemoryBufferVideoFrames);
 #endif
-  const bool enable_media_stream_gpu_memory_buffers =
-      enable_gpu_memory_buffers &&
-      base::FeatureList::IsEnabled(
-          features::kWebRtcUseGpuMemoryBufferVideoFrames);
+  const bool enable_media_stream_gpu_memory_buffers = enable_gpu_memory_buffers;
   bool enable_video_gpu_memory_buffers = enable_gpu_memory_buffers;
 #if BUILDFLAG(IS_WIN)
   enable_video_gpu_memory_buffers =
@@ -1053,10 +1103,10 @@ media::GpuVideoAcceleratorFactories* RenderThreadImpl::GetGpuFactories() {
        gpu_channel_host->gpu_info().overlay_info.supports_overlays);
 #endif  // BUILDFLAG(IS_WIN)
 
-  auto codec_factory = CreateMediaCodecFactory(media_context_provider,
-                                               enable_video_decode_accelerator,
-                                               enable_video_encode_accelerator);
-  gpu_factories_.push_back(GpuVideoAcceleratorFactoriesImpl::Create(
+  auto codec_factory = CreateMediaMojoCodecFactory(
+      media_context_provider, enable_video_decode_accelerator,
+      enable_video_encode_accelerator);
+  gpu_factories_.push_back(media::MojoGpuVideoAcceleratorFactories::Create(
       std::move(gpu_channel_host),
       base::SingleThreadTaskRunner::GetCurrentDefault(),
       GetMediaSequencedTaskRunner(), std::move(media_context_provider),
@@ -1153,10 +1203,13 @@ RenderThreadImpl::SharedMainThreadContextProvider() {
 
   bool support_locking = false;
   bool support_raster_interface = true;
+  // TODO(zmo): today if Skia backend is set, Chrome either runs in GPU
+  // acceleration mode, either on top of real GPU, or on top of SwiftShader
+  // (for testing). This may change in the future if we move Skia software
+  // rendering to be OOP as well.
   bool support_oop_rasterization =
-      gpu_channel_host->gpu_feature_info()
-          .status_values[gpu::GPU_FEATURE_TYPE_CANVAS_OOP_RASTERIZATION] ==
-      gpu::kGpuFeatureStatusEnabled;
+      gpu_channel_host->gpu_info().skia_backend_type !=
+      gpu::SkiaBackendType::kNone;
   bool support_gles2_interface = false;
   bool support_grcontext = !support_oop_rasterization;
   // Enable automatic flushes to improve canvas throughput.
@@ -1243,11 +1296,6 @@ int32_t RenderThreadImpl::GetClientId() {
   return client_id_;
 }
 
-void RenderThreadImpl::SetRendererProcessType(
-    blink::scheduler::WebRendererProcessType type) {
-  main_thread_scheduler_->SetRendererProcessType(type);
-}
-
 blink::WebString RenderThreadImpl::GetUserAgent() {
   DCHECK(!user_agent_.IsNull());
 
@@ -1277,10 +1325,6 @@ bool RenderThreadImpl::IsLcdTextEnabled() {
 
 bool RenderThreadImpl::IsElasticOverscrollEnabled() {
   return is_elastic_overscroll_enabled_;
-}
-
-gpu::GpuMemoryBufferManager* RenderThreadImpl::GetGpuMemoryBufferManager() {
-  return gpu_->gpu_memory_buffer_manager();
 }
 
 blink::scheduler::WebThreadScheduler*
@@ -1323,7 +1367,7 @@ void RenderThreadImpl::OnProcessFinalRelease() {
   // caused race conditions, where the browser process was reusing renderer
   // processes that were shutting down.
   // See https://crbug.com/535246 or https://crbug.com/873541/#c8.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 #if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
@@ -1380,6 +1424,17 @@ void RenderThreadImpl::SetProcessState(
       OnRendererHidden();
   }
 
+  if (process_priority_ != process_priority) {
+    TRACE_EVENT_END("renderer", process_priority_track_);
+    TRACE_EVENT_BEGIN("renderer", ProcessPriorityToString(process_priority),
+                      process_priority_track_);
+  }
+
+  if (visible_state_ != visible_state) {
+    TRACE_EVENT_END("renderer", process_visibility_track_);
+    TRACE_EVENT_BEGIN("renderer", ProcessVisibilityToString(visible_state),
+                      process_visibility_track_);
+  }
   process_priority_ = process_priority;
   visible_state_ = visible_state;
 }
@@ -1413,6 +1468,11 @@ void RenderThreadImpl::SetIsWebSecurityDisabled(bool value) {
 
 void RenderThreadImpl::SetIsIsolatedContext(bool value) {
   blink::SetIsIsolatedContext(value);
+}
+
+void RenderThreadImpl::SetWebUIResourceUrlToCodeCacheMap(
+    const base::flat_map<GURL, int>& resource_map) {
+  blink_platform_impl_->set_webui_resource_to_code_cache_id_map(resource_map);
 }
 
 void RenderThreadImpl::CompositingModeFallbackToSoftware() {
@@ -1535,7 +1595,7 @@ void RenderThreadImpl::SetWebKitSharedTimersSuspended(bool suspend) {
     main_thread_scheduler_->ResumeTimersForAndroidWebView();
   }
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif
 }
 
@@ -1555,7 +1615,7 @@ void RenderThreadImpl::UpdateScrollbarTheme(
 #if BUILDFLAG(IS_APPLE)
   is_elastic_overscroll_enabled_ = params->scroll_view_rubber_banding;
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif  // BUILDFLAG(IS_APPLE)
 }
 
@@ -1565,7 +1625,7 @@ void RenderThreadImpl::OnSystemColorsChanged(int32_t aqua_color_variant) {
   // that rely on system colors, such as the accent and highlight colors.
   blink::SystemColorsChanged();
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif
 }
 
@@ -1592,7 +1652,7 @@ void RenderThreadImpl::PurgePluginListCache(bool reload_pages) {
   for (auto& observer : observers_)
     observer.PluginListChanged();
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif
 }
 
@@ -1803,7 +1863,8 @@ gfx::ColorSpace RenderThreadImpl::GetRenderingColorSpace() {
   return rendering_color_space_;
 }
 
-std::unique_ptr<CodecFactory> RenderThreadImpl::CreateMediaCodecFactory(
+std::unique_ptr<media::MojoCodecFactory>
+RenderThreadImpl::CreateMediaMojoCodecFactory(
     scoped_refptr<viz::ContextProviderCommandBuffer> context_provider,
     bool enable_video_decode_accelerator,
     bool enable_video_encode_accelerator) {
@@ -1824,7 +1885,7 @@ std::unique_ptr<CodecFactory> RenderThreadImpl::CreateMediaCodecFactory(
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
   mojo::PendingRemote<media::mojom::InterfaceFactory> interface_factory;
   BindHostReceiver(interface_factory.InitWithNewPipeAndPassReceiver());
-  return std::make_unique<CodecFactoryMojo>(
+  return std::make_unique<media::MojoCodecFactoryMojoDecoder>(
       GetMediaSequencedTaskRunner(), context_provider,
       enable_video_decode_accelerator, enable_video_encode_accelerator,
       std::move(vea_provider), std::move(interface_factory));
@@ -1832,12 +1893,12 @@ std::unique_ptr<CodecFactory> RenderThreadImpl::CreateMediaCodecFactory(
   mojo::PendingRemote<media::mojom::FuchsiaMediaCodecProvider>
       media_codec_provider;
   BindHostReceiver(media_codec_provider.InitWithNewPipeAndPassReceiver());
-  return std::make_unique<CodecFactoryFuchsia>(
+  return std::make_unique<media::MojoCodecFactoryFuchsia>(
       GetMediaSequencedTaskRunner(), context_provider,
       enable_video_decode_accelerator, enable_video_encode_accelerator,
       std::move(vea_provider), std::move(media_codec_provider));
 #else
-  return std::make_unique<CodecFactoryDefault>(
+  return std::make_unique<media::MojoCodecFactoryDefault>(
       GetMediaSequencedTaskRunner(), context_provider,
       enable_video_decode_accelerator, enable_video_encode_accelerator,
       std::move(vea_provider));

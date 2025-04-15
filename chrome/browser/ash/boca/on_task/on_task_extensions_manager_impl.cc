@@ -61,6 +61,9 @@ void OnTaskExtensionsManagerImpl::DisableExtensions() {
     }
   }
 
+  if (disabled_extension_ids.empty()) {
+    return;
+  }
   SaveDisabledExtensionIds(disabled_extension_ids);
 }
 
@@ -89,12 +92,6 @@ bool OnTaskExtensionsManagerImpl::CanDisableExtension(
     const Extension* extension) {
   CHECK(extension);
 
-  // TODO (b/374827023): Remove feature flag for user installed extension.
-  if (features::IsBocaExtensionConsumerEnabled() &&
-      extension->location() == extensions::mojom::ManifestLocation::kUnpacked) {
-    return false;
-  }
-
   bool is_component_extension =
       extensions::Manifest::IsComponentLocation(extension->location());
   const ManagementPolicy* const policy =
@@ -108,8 +105,7 @@ bool OnTaskExtensionsManagerImpl::CanEnableExtension(
   CHECK(extension);
   const ManagementPolicy* const policy =
       ExtensionSystem::Get(profile_)->management_policy();
-  return !policy->MustRemainDisabled(extension, /*reason=*/nullptr,
-                                     /*error=*/nullptr);
+  return !policy->MustRemainDisabled(extension, /*reason=*/nullptr);
 }
 
 void OnTaskExtensionsManagerImpl::SaveDisabledExtensionIds(

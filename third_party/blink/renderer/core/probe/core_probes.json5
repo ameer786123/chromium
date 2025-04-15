@@ -46,6 +46,8 @@
         "RecalculateStyle",
         "UpdateLayout",
         "WillHandlePromise",
+        "UserEntryPoint",
+        "FrameRelatedTask",
       ]
     },
     InspectorIssueReporter: {
@@ -74,6 +76,7 @@
         "DocumentDetached",
         "FontsUpdated",
         "ForcePseudoState",
+        "ForceStartingStyle",
         "MediaQueryResultChanged",
         "WillChangeStyleElement",
         "LocalFontsEnabled",
@@ -210,6 +213,13 @@
         "WebTransportCreated",
         "WebTransportConnectionEstablished",
         "WebTransportClosed",
+        "DirectTCPSocketCreated",
+        "DirectTCPSocketOpened",
+        "DirectTCPSocketAborted",
+        "DirectTCPSocketClosed",
+        "DirectTCPSocketChunkSent",
+        "DirectTCPSocketChunkReceived",
+        "DirectTCPSocketChunkError",
         "WillCreateP2PSocketUdp",
         "WillCreateWebSocket",
         "WillDispatchEventSourceEvent",
@@ -217,9 +227,11 @@
         "WillSendEventSourceRequest",
         "WillSendRequest",
         "WillSendNavigationRequest",
+        "WillSendWorkerMainRequest",
         "WillSendWebSocketHandshakeRequest",
         "SetDevToolsIds",
         "IsCacheDisabled",
+        "ShouldApplyDevtoolsCookieSettingOverrides",
       ]
     },
     InspectorPageAgent: {

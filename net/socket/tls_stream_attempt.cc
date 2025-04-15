@@ -6,23 +6,44 @@
 
 #include <memory>
 #include <optional>
+#include <string_view>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/values.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
+#include "net/base/tracing.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/tcp_stream_attempt.h"
 #include "net/ssl/ssl_cert_request_info.h"
 
 namespace net {
 
+// static
+std::string_view TlsStreamAttempt::StateToString(State state) {
+  switch (state) {
+    case State::kNone:
+      return "None";
+    case State::kTcpAttempt:
+      return "TcpAttempt";
+    case State::kTcpAttemptComplete:
+      return "TcpAttemptComplete";
+    case State::kTlsAttempt:
+      return "TlsAttempt";
+    case State::kTlsAttemptComplete:
+      return "TlsAttemptComplete";
+  }
+}
+
 TlsStreamAttempt::TlsStreamAttempt(const StreamAttemptParams* params,
                                    IPEndPoint ip_endpoint,
+                                   perfetto::Track track,
                                    HostPortPair host_port_pair,
                                    SSLConfigProvider* ssl_config_provider)
     : StreamAttempt(params,
                     ip_endpoint,
+                    std::move(track),
                     NetLogSourceType::TLS_STREAM_ATTEMPT,
                     NetLogEventType::TLS_STREAM_ATTEMPT_ALIVE),
       host_port_pair_(std::move(host_port_pair)),
@@ -42,6 +63,18 @@ LoadState TlsStreamAttempt::GetLoadState() const {
     case State::kTlsAttemptComplete:
       return LOAD_STATE_SSL_HANDSHAKE;
   }
+}
+
+base::Value::Dict TlsStreamAttempt::GetInfoAsValue() const {
+  base::Value::Dict dict;
+  dict.Set("next_state", StateToString(next_state_));
+  dict.Set("tcp_handshake_completed", tcp_handshake_completed_);
+  dict.Set("tls_handshake_started", tls_handshake_started_);
+  dict.Set("has_ssl_config", ssl_config_.has_value());
+  if (nested_attempt_) {
+    dict.Set("nested_attempt", nested_attempt_->GetInfoAsValue());
+  }
+  return dict;
 }
 
 scoped_refptr<SSLCertRequestInfo> TlsStreamAttempt::GetCertRequestInfo() {
@@ -106,8 +139,8 @@ int TlsStreamAttempt::DoLoop(int rv) {
 
 int TlsStreamAttempt::DoTcpAttempt() {
   next_state_ = State::kTcpAttemptComplete;
-  nested_attempt_ =
-      std::make_unique<TcpStreamAttempt>(&params(), ip_endpoint(), &net_log());
+  nested_attempt_ = std::make_unique<TcpStreamAttempt>(&params(), ip_endpoint(),
+                                                       track(), &net_log());
   return nested_attempt_->Start(
       base::BindOnce(&TlsStreamAttempt::OnIOComplete, base::Unretained(this)));
 }
@@ -136,8 +169,13 @@ int TlsStreamAttempt::DoTcpAttemptComplete(int rv) {
     return OK;
   }
 
-  return ssl_config_provider_->WaitForSSLConfigReady(
-      base::BindOnce(&TlsStreamAttempt::OnIOComplete, base::Unretained(this)));
+  int ssl_config_ready_result =
+      ssl_config_provider_->WaitForSSLConfigReady(base::BindOnce(
+          &TlsStreamAttempt::OnIOComplete, weak_ptr_factory_.GetWeakPtr()));
+  if (ssl_config_ready_result == ERR_IO_PENDING) {
+    TRACE_EVENT_INSTANT("net.stream", "WaitForSSLConfig", track());
+  }
+  return ssl_config_ready_result;
 }
 
 int TlsStreamAttempt::DoTlsAttempt(int rv) {
@@ -178,6 +216,7 @@ int TlsStreamAttempt::DoTlsAttempt(int rv) {
       params().ssl_client_context, std::move(nested_socket), host_port_pair_,
       *ssl_config_);
 
+  TRACE_EVENT_INSTANT("net.stream", "TlsConnectStart", track());
   net_log().BeginEvent(NetLogEventType::TLS_STREAM_ATTEMPT_CONNECT);
 
   return ssl_socket_->Connect(
@@ -185,6 +224,7 @@ int TlsStreamAttempt::DoTlsAttempt(int rv) {
 }
 
 int TlsStreamAttempt::DoTlsAttemptComplete(int rv) {
+  TRACE_EVENT_INSTANT("net.stream", "TlsConnectEnd", track(), "result", rv);
   net_log().EndEventWithNetErrorCode(
       NetLogEventType::TLS_STREAM_ATTEMPT_CONNECT, rv);
 

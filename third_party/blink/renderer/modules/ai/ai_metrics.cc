@@ -14,16 +14,20 @@ namespace {
 
 std::string_view GetAISessionTypeName(AIMetrics::AISessionType session_type) {
   switch (session_type) {
-    case AIMetrics::AISessionType::kAssistant:
-      return "Assistant";
+    case AIMetrics::AISessionType::kLanguageModel:
+      return "LanguageModel";
     case AIMetrics::AISessionType::kWriter:
       return "Writer";
     case AIMetrics::AISessionType::kRewriter:
       return "Rewriter";
     case AIMetrics::AISessionType::kSummarizer:
       return "Summarizer";
+    case AIMetrics::AISessionType::kTranslator:
+      return "Translator";
+    case AIMetrics::AISessionType::kLanguageDetector:
+      return "LanguageDetector";
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -34,10 +38,9 @@ std::string AIMetrics::GetAIAPIUsageMetricName(AISessionType session_type) {
 }
 
 // static
-std::string AIMetrics::GetAICapabilityAvailabilityMetricName(
-    AISessionType session_type) {
+std::string AIMetrics::GetAIAvailabilityMetricName(AISessionType session_type) {
   return base::StrCat(
-      {"AI.", GetAISessionTypeName(session_type), ".Availability"});
+      {"AI.", GetAISessionTypeName(session_type), ".AvailabilityV2"});
 }
 
 // static

@@ -41,6 +41,9 @@ struct ExtensionLoadedParams {
   // If the extension uses the default list of blocked / allowed URLs.
   bool uses_default_policy_blocked_allowed_hosts;
 
+  // Whether the extension is allowed to use the userScript API.
+  bool user_scripts_allowed;
+
   // We keep this separate so that it can be used in logging and testing.
   string id;
 
@@ -102,12 +105,14 @@ interface Renderer {
   // Informs the renderer whether or not the developer mode is enabled.
   SetDeveloperMode(bool developer_mode_only);
 
+  // Informs the renderer whether the userScripts API has been allowed for the
+  // extension.
+  SetUserScriptsAllowed(string extension_id, bool allowed);
+
   // Informs the renderer what channel (dev, beta, stable, etc) and user session
-  // type is running. |is_lock_screen_context| represents whether the browser
-  // context is associated with Chrome OS lock screen.
+  // type is running.
   SetSessionInfo(Channel channel,
-                 FeatureSessionType session,
-                 bool is_lock_screen_context);
+                 FeatureSessionType session);
 
   // Tells the renderer process the platform's system font.
   SetSystemFont(string font_family, string font_size);

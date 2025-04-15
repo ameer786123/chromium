@@ -13,25 +13,34 @@
 #include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/scoped_observation.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
-#include "components/autofill/core/browser/ui/suggestion_hiding_reason.h"
-#include "components/autofill/core/browser/ui/suggestion_type.h"
+#include "components/autofill/core/browser/data_quality/validation.h"
+#include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling/filling_product.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion_hiding_reason.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/common/aliases.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "components/autofill/core/common/plus_address_survey_type.h"
 #include "components/plus_addresses/features.h"
 #include "components/plus_addresses/metrics/plus_address_metrics.h"
 #include "components/plus_addresses/plus_address_allocator.h"
 #include "components/plus_addresses/plus_address_blocklist_data.h"
+#include "components/plus_addresses/plus_address_hats_utils.h"
 #include "components/plus_addresses/plus_address_http_client.h"
 #include "components/plus_addresses/plus_address_http_client_impl.h"
 #include "components/plus_addresses/plus_address_jit_allocator.h"
 #include "components/plus_addresses/plus_address_preallocator.h"
+#include "components/plus_addresses/plus_address_prefs.h"
 #include "components/plus_addresses/plus_address_suggestion_generator.h"
 #include "components/plus_addresses/plus_address_types.h"
 #include "components/plus_addresses/plus_address_ui_utils.h"
@@ -57,6 +66,8 @@ using autofill::FormFieldData;
 using autofill::Suggestion;
 using autofill::SuggestionType;
 using PasswordFormClassification = autofill::PasswordFormClassification;
+
+constexpr char16_t kPlusAddressDomain[] = u"@grelay.com";
 
 affiliations::FacetURI OriginToFacet(const url::Origin& origin) {
   // For a valid `origin`, `origin.GetURL().spec()` is always a valid spec.
@@ -138,7 +149,9 @@ PlusAddressServiceImpl::PlusAddressServiceImpl(
   if (webdata_service_) {
     webdata_service_observation_.Observe(webdata_service_.get());
     if (IsEnabled()) {
-      webdata_service_->GetPlusProfiles(this);
+      webdata_service_->GetPlusProfiles(
+          base::BindOnce(&PlusAddressServiceImpl::OnWebDataServiceRequestDone,
+                         weak_ptr_factory_.GetWeakPtr()));
     }
   }
   identity_manager_observation_.Observe(identity_manager);
@@ -179,8 +192,7 @@ bool PlusAddressServiceImpl::IsPlusAddressCreationEnabled(
 
   // We've met the prerequisites. If this isn't an OTR session and the global
   // settings toggle isn't off, plus address creation is supported.
-  return !base::FeatureList::IsEnabled(features::kPlusAddressGlobalToggle) ||
-         setting_service_->GetIsPlusAddressesEnabled();
+  return setting_service_->GetIsPlusAddressesEnabled();
 }
 
 bool PlusAddressServiceImpl::ShouldShowManualFallback(
@@ -204,8 +216,7 @@ bool PlusAddressServiceImpl::ShouldShowManualFallback(
 
   // If the user doesn't have an existing plus address for `origin` and this
   // session is not off-the-record, the global toggle must be enabled.
-  return !base::FeatureList::IsEnabled(features::kPlusAddressGlobalToggle) ||
-         setting_service_->GetIsPlusAddressesEnabled();
+  return setting_service_->GetIsPlusAddressesEnabled();
 }
 
 std::optional<PlusAddress> PlusAddressServiceImpl::GetPlusAddress(
@@ -264,6 +275,12 @@ bool PlusAddressServiceImpl::IsPlusAddress(
   return plus_address_cache_.IsPlusAddress(potential_plus_address);
 }
 
+bool PlusAddressServiceImpl::MatchesPlusAddressFormat(
+    const std::u16string& value) const {
+  return autofill::IsValidEmailAddress(value) &&
+         value.ends_with(kPlusAddressDomain);
+}
+
 bool PlusAddressServiceImpl::IsPlusAddressFillingEnabled(
     const url::Origin& origin) const {
   // Check that the feature is enabled and the origin is supported (not opaque,
@@ -273,6 +290,22 @@ bool PlusAddressServiceImpl::IsPlusAddressFillingEnabled(
 
 bool PlusAddressServiceImpl::IsPlusAddressFullFormFillingEnabled() const {
   return base::FeatureList::IsEnabled(features::kPlusAddressFullFormFill);
+}
+
+bool PlusAddressServiceImpl::IsFieldEligibleForPlusAddress(
+    const autofill::AutofillField& field) const {
+  autofill::FillingProduct filling_product =
+      autofill::GetFillingProductFromFieldTypeGroup(field.Type().group());
+
+  if (filling_product == autofill::FillingProduct::kAddress) {
+    return true;
+  }
+
+  return base::FeatureList::IsEnabled(
+             features::kPlusAddressSuggestionsOnUsernameFields) &&
+         (field.server_type() == autofill::FieldType::USERNAME ||
+          field.server_type() == autofill::FieldType::SINGLE_USERNAME) &&
+         field.heuristic_type() == autofill::FieldType::EMAIL_ADDRESS;
 }
 
 void PlusAddressServiceImpl::GetAffiliatedPlusAddresses(
@@ -297,10 +330,10 @@ std::vector<Suggestion> PlusAddressServiceImpl::GetSuggestionsFromPlusAddresses(
     const url::Origin& origin,
     bool is_off_the_record,
     const autofill::FormData& focused_form,
+    const autofill::FormFieldData& focused_field,
     const base::flat_map<autofill::FieldGlobalId, autofill::FieldTypeGroup>&
         form_field_type_groups,
     const autofill::PasswordFormClassification& focused_form_classification,
-    const autofill::FieldGlobalId& focused_field_id,
     AutofillSuggestionTriggerSource trigger_source) {
   if (!IsPlusAddressFillingEnabled(origin)) {
     return {};
@@ -313,8 +346,8 @@ std::vector<Suggestion> PlusAddressServiceImpl::GetSuggestionsFromPlusAddresses(
                                      plus_address_allocator_.get(),
                                      std::move(origin))
           .GetSuggestions(plus_addresses, is_creation_enabled, focused_form,
-                          form_field_type_groups, focused_form_classification,
-                          focused_field_id, trigger_source);
+                          focused_field, form_field_type_groups,
+                          focused_form_classification, trigger_source);
   const autofill::DenseSet<SuggestionType> suggestion_types(suggestions,
                                                             &Suggestion::type);
 
@@ -530,6 +563,47 @@ bool PlusAddressServiceImpl::IsSupportedOrigin(
 void PlusAddressServiceImpl::RecordAutofillSuggestionEvent(
     SuggestionEvent suggestion_event) {
   metrics::RecordAutofillSuggestionEvent(suggestion_event);
+
+  using enum autofill::AutofillPlusAddressDelegate::SuggestionEvent;
+  switch (suggestion_event) {
+    case kRefreshPlusAddressInlineClicked:
+      base::RecordAction(base::UserMetricsAction("PlusAddresses.Refreshed"));
+      return;
+    case kExistingPlusAddressSuggested:
+      base::RecordAction(base::UserMetricsAction(
+          "PlusAddresses.StandaloneFillSuggestionShown"));
+      return;
+    case kCreateNewPlusAddressSuggested: {
+      if (setting_service_->GetHasAcceptedNotice()) {
+        base::RecordAction(
+            base::UserMetricsAction("PlusAddresses.CreateSuggestionShown"));
+      } else {
+        base::RecordAction(base::UserMetricsAction(
+            "PlusAddresses.CreateSuggestionFirstTimeNoticeShown"));
+      }
+      return;
+    }
+    case kCreateNewPlusAddressInlineSuggested:
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.CreateSuggestionShown"));
+      return;
+    case kExistingPlusAddressChosen:
+      base::RecordAction(base::UserMetricsAction(
+          "PlusAddresses.FillStandaloneSuggestionAccepted"));
+      return;
+    case kCreateNewPlusAddressChosen:
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.CreateSuggestionAccepted"));
+      return;
+    case kCreateNewPlusAddressInlineChosen:
+      base::RecordAction(
+          base::UserMetricsAction("PlusAddresses.OfferedPlusAddressAccepted"));
+      return;
+    case kErrorDuringReserve:
+    case kCreateNewPlusAddressInlineReserveLoadingStateShown:
+      return;
+  }
+  NOTREACHED();
 }
 
 void PlusAddressServiceImpl::OnPlusAddressSuggestionShown(
@@ -543,6 +617,14 @@ void PlusAddressServiceImpl::OnPlusAddressSuggestionShown(
   submission_logger_.OnPlusAddressSuggestionShown(
       manager, form, field, suggestion_context, form_type, suggestion_type,
       /*plus_address_count=*/plus_address_cache_.Size());
+}
+
+void PlusAddressServiceImpl::DidFillPlusAddress() {
+  pref_service_->SetTime(prefs::kLastPlusAddressFillingTime, base::Time::Now());
+}
+
+size_t PlusAddressServiceImpl::GetPlusAddressesCount() {
+  return GetPlusProfiles().size();
 }
 
 void PlusAddressServiceImpl::OnClickedRefreshInlineSuggestion(
@@ -655,6 +737,25 @@ void PlusAddressServiceImpl::OnAcceptedInlineSuggestion(
                      std::move(show_affiliation_error_dialog),
                      std::move(show_error_dialog),
                      std::move(reshow_suggestions), requested_plus_address));
+}
+
+std::map<std::string, std::string>
+PlusAddressServiceImpl::GetPlusAddressHatsData() const {
+  auto time_pref_to_string = [&](std::string_view pref) {
+    const base::Time time = pref_service_->GetTime(pref);
+    if (time.is_null()) {
+      return std::string("-1");
+    }
+    const base::TimeDelta delta = base::Time::Now() - time;
+    return delta.is_positive() ? base::ToString(delta.InSeconds())
+                               : std::string("-1");
+  };
+
+  return {{hats::kPlusAddressesCount, base::ToString(GetPlusProfiles().size())},
+          {hats::kFirstPlusAddressCreationTime,
+           time_pref_to_string(prefs::kFirstPlusAddressCreationTime)},
+          {hats::kLastPlusAddressFillingTime,
+           time_pref_to_string(prefs::kLastPlusAddressFillingTime)}};
 }
 
 void PlusAddressServiceImpl::OnConfirmInlineCreation(

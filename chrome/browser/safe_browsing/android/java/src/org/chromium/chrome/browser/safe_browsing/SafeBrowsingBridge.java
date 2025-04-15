@@ -12,11 +12,13 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.WebContents;
 
 /** Bridge providing access to native-side Safe Browsing data. */
 @JNINamespace("safe_browsing")
+@NullMarked
 public final class SafeBrowsingBridge {
     private final Profile mProfile;
 
@@ -47,6 +49,11 @@ public final class SafeBrowsingBridge {
      */
     public void setSafeBrowsingExtendedReportingEnabled(boolean enabled) {
         SafeBrowsingBridgeJni.get().setSafeBrowsingExtendedReportingEnabled(mProfile, enabled);
+    }
+
+    /** Set the Safe Browsing setting set locally pref as true. */
+    public void enableSafeBrowsingSettingSetLocallyPref() {
+        SafeBrowsingBridgeJni.get().enableSafeBrowsingSettingSetLocallyPref(mProfile);
     }
 
     /**
@@ -134,6 +141,8 @@ public final class SafeBrowsingBridge {
         int getSafeBrowsingState(Profile profile);
 
         void setSafeBrowsingState(Profile profile, @SafeBrowsingState int state);
+
+        void enableSafeBrowsingSettingSetLocallyPref(Profile profile);
 
         boolean isSafeBrowsingManaged(Profile profile);
 

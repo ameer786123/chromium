@@ -7,7 +7,6 @@
 #include "base/containers/contains.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/fido/cable/fido_cable_discovery.h"
@@ -53,7 +52,7 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
       return {};
     case FidoTransportProtocol::kHybrid:
 #if BUILDFLAG(IS_MAC)
-      if (!base::IsProcessSelfResponsible()) {
+      if (!base::DoesResponsibleProcessHaveBluetoothMetadata()) {
         // On recent macOS a process must have listed Bluetooth metadata in
         // its Info.plist in order to call Bluetooth APIs. Failure to do so
         // results in the system killing with process with SIGABRT once
@@ -67,11 +66,24 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
         //
         // Thus, if the responsible process is not Chromium itself, then we
         // disable caBLE (and thus avoid Bluetooth calls).
-        FIDO_LOG(ERROR) << "Cannot start caBLE because process is not "
-                           "self-responsible. Launch from Finder to fix.";
+        FIDO_LOG(ERROR) << "Cannot use Bluetooth because the responsible app "
+                           "for the process does not have Bluetooth metadata "
+                           "in its Info.plist. Launch from Finder to fix.";
         return {};
       }
-#endif
+#endif  // BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_WIN)
+      {
+        device::WinWebAuthnApi* const webauthn_api =
+            device::WinWebAuthnApi::GetDefault();
+        if (webauthn_api && webauthn_api->SupportsHybrid() &&
+            base::FeatureList::IsEnabled(
+                device::kWebAuthnSkipHybridConfigIfSystemSupported)) {
+          FIDO_LOG(EVENT) << "Not starting hybrid because Windows handles it.";
+          return {};
+        }
+      }
+#endif  // BUILDFLAG(IS_WIN)
       if (device::BluetoothAdapterFactory::Get()->IsLowEnergySupported() &&
           (cable_data_.has_value() || qr_generator_key_.has_value())) {
         auto v1_discovery = std::make_unique<FidoCableDiscovery>(
@@ -115,8 +127,7 @@ std::vector<std::unique_ptr<FidoDiscoveryBase>> FidoDiscoveryFactory::Create(
 
 std::optional<std::unique_ptr<FidoDiscoveryBase>>
 FidoDiscoveryFactory::MaybeCreateEnclaveDiscovery() {
-  if (!base::FeatureList::IsEnabled(kWebAuthnEnclaveAuthenticator) ||
-      !enclave_ui_request_stream_ || !network_context_factory_) {
+  if (!enclave_ui_request_stream_ || !network_context_factory_) {
     return std::nullopt;
   }
   return std::make_unique<enclave::EnclaveAuthenticatorDiscovery>(
@@ -210,7 +221,8 @@ FidoDiscoveryFactory::MaybeCreatePlatformDiscovery() const {
     ret.emplace_back(std::make_unique<fido::mac::FidoTouchIdDiscovery>(
         *mac_touch_id_config_));
   }
-  if (fido::icloud_keychain::IsSupported() && nswindow_ != 0) {
+  if (fido::icloud_keychain::IsSupported() &&
+      (nswindow_ || allow_no_nswindow_for_testing_)) {
     ret.emplace_back(fido::icloud_keychain::NewDiscovery(nswindow_));
   }
   return ret;

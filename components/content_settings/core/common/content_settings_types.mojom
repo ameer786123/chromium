@@ -312,7 +312,7 @@ enum ContentSettingsType {
   // HTTP header.
   FEDERATED_IDENTITY_IDENTITY_PROVIDER_SIGNIN_STATUS,
 
-  // Website setting which is used for UnusedSitePermissionsService to
+  // Website setting which is used for RevokedPermissionsService to
   // store revoked permissions of unused sites from unused site permissions
   // feature.
   REVOKED_UNUSED_SITE_PERMISSIONS,
@@ -421,7 +421,7 @@ enum ContentSettingsType {
   // to mouse inputs.
   POINTER_LOCK,
 
-  // Website setting which is used for UnusedSitePermissionsService to store
+  // Website setting which is used for RevokedPermissionsService to store
   // auto-revoked notification permissions from abusive sites.
   REVOKED_ABUSIVE_NOTIFICATION_PERMISSIONS,
 
@@ -463,5 +463,25 @@ enum ContentSettingsType {
   // Content settings for private network access in the context of the
   // Direct Sockets API.
   DIRECT_SOCKETS_PRIVATE_NETWORK_ACCESS,
+
+  // Content settings for legacy cookie scope.
+  // Checks whether cookies scope is handled according to origin-bound cookies
+  // or legacy behavior.
+  LEGACY_COOKIE_SCOPE,
+
+  // Website setting to indicate whether the user has allowlisted suspicious
+  // notifications for the origin.
+  ARE_SUSPICIOUS_NOTIFICATIONS_ALLOWLISTED_BY_USER,
+
+  // Content settings for access to the Controlled Frame API.
+  CONTROLLED_FRAME,
+
+  // Website setting which is used for RevokedPermissionsService to
+  // store revoked notification permissions of disruptive sites.
+  REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS,
+
+  // Content setting for whether the site is allowed to make local network
+  // requests.
+  LOCAL_NETWORK_ACCESS,
 };
 // LINT.ThenChange(//components/content_settings/core/browser/content_settings_uma_util.cc:kHistogramValue)

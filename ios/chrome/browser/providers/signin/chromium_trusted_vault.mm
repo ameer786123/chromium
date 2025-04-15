@@ -2,10 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/public/provider/chrome/browser/signin/trusted_vault_api.h"
-
 #import "base/functional/callback.h"
 #import "base/notreached.h"
+#import "ios/public/provider/chrome/browser/signin/trusted_vault_api.h"
 
 namespace ios {
 namespace provider {
@@ -45,7 +44,7 @@ class ChromiumTrustedVaultClientBackend final
                       base::OnceCallback<void(bool)> completion) final;
   void GetPublicKeyForIdentity(id<SystemIdentity> identity,
                                GetPublicKeyCallback completion) final;
-  CancelDialogCallback UpdateGPMPinForAccount(
+  void UpdateGPMPinForAccount(
       id<SystemIdentity> identity,
       trusted_vault::SecurityDomainId security_domain_id,
       UINavigationController* navigationController,
@@ -110,14 +109,13 @@ void ChromiumTrustedVaultClientBackend::GetPublicKeyForIdentity(
   NOTREACHED();
 }
 
-TrustedVaultClientBackend::CancelDialogCallback
-ChromiumTrustedVaultClientBackend::UpdateGPMPinForAccount(
+void ChromiumTrustedVaultClientBackend::UpdateGPMPinForAccount(
     id<SystemIdentity> identity,
     trusted_vault::SecurityDomainId security_domain_id,
     UINavigationController* navigationController,
     UIView* brandedNavigationItemTitleView,
     UpdateGPMPinCompletionCallback completion) {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // anonymous namespace

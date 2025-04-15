@@ -9,12 +9,13 @@
 
 #include "base/command_line.h"
 #include "base/functional/bind.h"
+#include "base/notreached.h"
+#include "chrome/browser/ui/ash/editor_menu/utils/pre_target_handler.h"
 #include "chrome/browser/ui/ash/quick_answers/quick_answers_ui_controller.h"
 #include "chrome/browser/ui/ash/quick_answers/ui/quick_answers_util.h"
 #include "chrome/browser/ui/ash/quick_answers/ui/typography.h"
 #include "chrome/browser/ui/ash/read_write_cards/read_write_cards_ui_controller.h"
 #include "chrome/browser/ui/ash/read_write_cards/read_write_cards_view.h"
-#include "chrome/browser/ui/views/editor_menu/utils/pre_target_handler.h"
 #include "chromeos/components/quick_answers/public/cpp/quick_answers_state.h"
 #include "chromeos/components/quick_answers/quick_answers_model.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
@@ -101,7 +102,7 @@ std::u16string ToUiString(IntentType intent_type) {
       return std::u16string();
   }
 
-  CHECK(false) << "Invalid intent type enum class provided";
+  NOTREACHED() << "Invalid intent type enum class provided";
 }
 
 int GetActualLabelWidth(int anchor_view_width) {
@@ -176,7 +177,7 @@ ResultType ToResultType(IntentType intent_type) {
       return ResultType::kNoResult;
   }
 
-  CHECK(false) << "An invalid IntentType enum class value is provided";
+  NOTREACHED() << "An invalid IntentType enum class value is provided";
 }
 
 std::u16string GetTitle(IntentType intent_type,
@@ -205,7 +206,7 @@ std::optional<int> GetTitleMessageIdFor(IntentType intent_type) {
       return std::nullopt;
   }
 
-  CHECK(false) << "An invalid IntentType enum class value is provided";
+  NOTREACHED() << "An invalid IntentType enum class value is provided";
 }
 
 std::u16string GetTitleForRefreshedUi(IntentType intent_type,
@@ -261,6 +262,7 @@ UserConsentView::UserConsentView(
                                         base::Unretained(this))),
       use_refreshed_design_(use_refreshed_design) {
   SetUseDefaultFillLayout(true);
+  SetBackground(views::CreateSolidBackground(ui::kColorPrimaryBackground));
 
   views::FlexLayoutView* content;
   views::FlexLayoutView* buttons_container;
@@ -284,7 +286,7 @@ UserConsentView::UserConsentView(
           .SetInteriorMargin(kMainViewInsets)
           .SetCrossAxisAlignment(views::LayoutAlignment::kStart)
           .AddChild(views::Builder<views::FlexLayoutView>()
-                        .SetBackground(views::CreateThemedRoundedRectBackground(
+                        .SetBackground(views::CreateRoundedRectBackground(
                             ui::kColorSysPrimaryContainer,
                             kIconBackgroundCornerRadiusDip))
                         .SetMainAxisAlignment(views::LayoutAlignment::kCenter)
@@ -317,6 +319,7 @@ UserConsentView::UserConsentView(
                       GetConfiguredLabelBuilder(use_refreshed_design_,
                                                 /*is_first_line=*/true)
                           .CopyAddressTo(&title_)
+                          .SetEnabledColor(ui::kColorLabelForeground)
                           .SetProperty(views::kMarginsKey, kLabelMargin)
                           .SetProperty(
                               views::kFlexBehaviorKey,
@@ -332,6 +335,7 @@ UserConsentView::UserConsentView(
                                   ? kDescriptionRefreshedMessageId
                                   : kDescriptionMessageId))
                           .SetMultiLine(true)
+                          .SetEnabledColor(ui::kColorLabelForegroundSecondary)
                           .SetProperty(views::kMarginsKey, kLabelMargin)
                           .SetProperty(
                               views::kFlexBehaviorKey,
@@ -444,19 +448,6 @@ void UserConsentView::OnFocus() {
   if (QuickAnswersState::Get()->spoken_feedback_enabled()) {
     no_thanks_button_->RequestFocus();
   }
-}
-
-void UserConsentView::OnThemeChanged() {
-  views::View::OnThemeChanged();
-
-  // TODO(b/340628664): Delete `UserConsentView::OnThemeChanged`. Let
-  // `views::Label`, etc handle those color changes.
-  SetBackground(views::CreateSolidBackground(
-      GetColorProvider()->GetColor(ui::kColorPrimaryBackground)));
-  title_->SetEnabledColor(
-      GetColorProvider()->GetColor(ui::kColorLabelForeground));
-  description_->SetEnabledColor(
-      GetColorProvider()->GetColor(ui::kColorLabelForegroundSecondary));
 }
 
 views::FocusTraversable* UserConsentView::GetPaneFocusTraversable() {

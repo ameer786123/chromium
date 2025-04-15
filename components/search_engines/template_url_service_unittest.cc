@@ -13,7 +13,6 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/search_engines/prepopulated_engines.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engines_switches.h"
@@ -26,6 +25,7 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 #include "url/origin.h"
 
 class TemplateURLServiceUnitTest : public TemplateURLServiceUnitTestBase {};
@@ -132,6 +132,86 @@ TEST_F(TemplateURLServiceUnitTest, InvalidDefaultSearchProviderOrigin) {
   EXPECT_TRUE(template_url_service().GetDefaultSearchProviderOrigin().opaque());
 }
 
+TEST_F(
+    TemplateURLServiceUnitTest,
+    GetFeaturedEnterpriseSearchEngines_IgnoresUnfeaturedEnterpriseSearchEngine) {
+  TemplateURLData sitesearch_turl_data;
+  sitesearch_turl_data.SetKeyword(u"sitesearch");
+  sitesearch_turl_data.SetShortName(u"sitesearch");
+  sitesearch_turl_data.SetURL("https://www.sitesearch.com?q={searchTerms}");
+  sitesearch_turl_data.policy_origin =
+      TemplateURLData::PolicyOrigin::kSiteSearch;
+  sitesearch_turl_data.enforced_by_policy = false;
+  sitesearch_turl_data.featured_by_policy = false;
+  sitesearch_turl_data.safe_for_autoreplace = false;
+  template_url_service().Add(
+      std::make_unique<TemplateURL>(sitesearch_turl_data));
+
+  TemplateURLData searchaggregator_turl_data;
+  searchaggregator_turl_data.SetKeyword(u"searchaggregator");
+  searchaggregator_turl_data.SetShortName(u"searchaggregator");
+  searchaggregator_turl_data.SetURL(
+      "https://www.searchaggregator.com?q={searchTerms}");
+  searchaggregator_turl_data.policy_origin =
+      TemplateURLData::PolicyOrigin::kSearchAggregator;
+  searchaggregator_turl_data.enforced_by_policy = false;
+  searchaggregator_turl_data.featured_by_policy = false;
+  searchaggregator_turl_data.safe_for_autoreplace = false;
+  template_url_service().Add(
+      std::make_unique<TemplateURL>(searchaggregator_turl_data));
+
+  EXPECT_TRUE(
+      template_url_service().GetFeaturedEnterpriseSearchEngines().empty());
+}
+
+TEST_F(
+    TemplateURLServiceUnitTest,
+    GetFeaturedEnterpriseSearchEngines_IncludesFeaturedEnterpriseSearchEngines) {
+  TemplateURLData sitesearch_turl_data;
+  sitesearch_turl_data.SetKeyword(u"@sitesearch");
+  sitesearch_turl_data.SetShortName(u"sitesearch");
+  sitesearch_turl_data.SetURL("https://www.sitesearch.com?q={searchTerms}");
+  sitesearch_turl_data.policy_origin =
+      TemplateURLData::PolicyOrigin::kSiteSearch;
+  sitesearch_turl_data.enforced_by_policy = false;
+  sitesearch_turl_data.featured_by_policy = true;
+  sitesearch_turl_data.safe_for_autoreplace = false;
+  template_url_service().Add(
+      std::make_unique<TemplateURL>(sitesearch_turl_data));
+
+  TemplateURLData searchaggregator_turl_data;
+  searchaggregator_turl_data.SetKeyword(u"@searchaggregator");
+  searchaggregator_turl_data.SetShortName(u"searchaggregator");
+  searchaggregator_turl_data.SetURL(
+      "https://www.searchaggregator.com?q={searchTerms}");
+  searchaggregator_turl_data.policy_origin =
+      TemplateURLData::PolicyOrigin::kSearchAggregator;
+  searchaggregator_turl_data.enforced_by_policy = false;
+  searchaggregator_turl_data.featured_by_policy = true;
+  searchaggregator_turl_data.safe_for_autoreplace = false;
+  template_url_service().Add(
+      std::make_unique<TemplateURL>(searchaggregator_turl_data));
+
+  EXPECT_EQ(
+      static_cast<int>(
+          template_url_service().GetFeaturedEnterpriseSearchEngines().size()),
+      2);
+  EXPECT_EQ(template_url_service()
+                .GetFeaturedEnterpriseSearchEngines()[0]
+                ->short_name(),
+            u"sitesearch");
+  EXPECT_EQ(
+      template_url_service().GetFeaturedEnterpriseSearchEngines()[0]->url(),
+      "https://www.sitesearch.com?q={searchTerms}");
+  EXPECT_EQ(template_url_service()
+                .GetFeaturedEnterpriseSearchEngines()[1]
+                ->short_name(),
+            u"searchaggregator");
+  EXPECT_EQ(
+      template_url_service().GetFeaturedEnterpriseSearchEngines()[1]->url(),
+      "https://www.searchaggregator.com?q={searchTerms}");
+}
+
 #if BUILDFLAG(IS_ANDROID)
 
 class TemplateURLServiceWithDatabaseUnitTest
@@ -155,7 +235,8 @@ class TemplateURLServiceWithDatabaseUnitTest
         std::make_unique<TemplateURL>(CreatePlayAPITemplateURLData(keyword)));
 
     CHECK(template_url);
-    CHECK(template_url->created_from_play_api());
+    CHECK(template_url->GetRegulatoryExtensionType() ==
+          RegulatoryExtensionType::kAndroidEEA);
     CHECK_EQ(template_url,
              template_url_service().GetTemplateURLForKeyword(keyword));
 
@@ -197,7 +278,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest, ResetPlayAPISearchEngine) {
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // We still have the same number of engines.
@@ -222,7 +304,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 }
 
@@ -245,12 +328,14 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(overriden_keyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
-  EXPECT_EQ(new_play_engine->prepopulate_id(), 0);
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
+  EXPECT_EQ(new_play_engine->prepopulate_id(), /* bing_id */ 3);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
-  // The properties are the ones coming from play, not the prepopulated ones.
-  EXPECT_EQ(new_play_engine->url(), new_engine_url_from_play);
+  // The properties are the ones coming from Chromium database: reconciliation
+  // detects matching defiition and re-uses it.
+  EXPECT_EQ(new_play_engine->url(), old_prepopulated_engine->url());
   EXPECT_EQ(new_play_engine->short_name(), new_engine_name_from_play);
 
   // Both the old prepopulated engine and the new one from play are registered.
@@ -293,7 +378,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // The old prepopulated engine is still there and is exposed when looking up
@@ -324,7 +410,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(play_engine_keyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // This is the only known engine matching this keyword.
@@ -349,8 +436,7 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   const TemplateURL* policy_engine =
       template_url_service().GetDefaultSearchProvider();
   ASSERT_EQ(policy_engine->keyword(), policy_engine_data.keyword());
-  ASSERT_EQ(policy_engine->created_by_policy(),
-            TemplateURLData::CreatedByPolicy::kDefaultSearchProvider);
+  ASSERT_TRUE(policy_engine->CreatedByDefaultSearchProviderPolicy());
 
   const auto new_play_engine_data =
       CreatePlayAPITemplateURLData(kNewPlayEngineKeyword);
@@ -362,7 +448,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
 
   EXPECT_NE(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
@@ -383,8 +470,7 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   const TemplateURL* policy_engine =
       template_url_service().GetDefaultSearchProvider();
   ASSERT_EQ(policy_engine->keyword(), policy_engine_data.keyword());
-  ASSERT_EQ(policy_engine->created_by_policy(),
-            TemplateURLData::CreatedByPolicy::kDefaultSearchProvider);
+  ASSERT_TRUE(policy_engine->CreatedByDefaultSearchProviderPolicy());
 
   // Add the Play API engine using the same keyword as the policy engine.
   const auto new_play_engine_data =

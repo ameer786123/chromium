@@ -7,11 +7,15 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/typed_macros.h"
+#include "third_party/blink/public/mojom/annotation/annotation.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
 #include "third_party/blink/renderer/core/annotation/annotation_selector.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/dom/focus_params.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
@@ -33,6 +37,7 @@
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -46,13 +51,14 @@ bool IsValidRange(const RangeInFlatTree* range) {
 }
 
 // There are several cases where text isn't visible/presented to the user but
-// does appear findable to FindBuffer. The TextFinder use case wants to prevent
-// offering scrolls to these sections as its confusing (in fact, document
-// Markers will avoid creating a highlight for these, despite the fact we can
-// scroll to it). We probably want to do this for general SharedHighlights as
-// well but that will require some more thought and spec changes but we can
-// experiment with this for TextFinder to see how it works.
-bool IsValidRangeForTextFinder(const RangeInFlatTree* range) {
+// does appear findable to FindBuffer. Some use cases (see
+// `ShouldUseIsValidRangeAndMarkable` below) want to prevent offering scrolls to
+// these sections as its confusing (in fact, document Markers will avoid
+// creating a highlight for these, despite the fact we can scroll to it). We
+// probably want to do this for general SharedHighlights as well but that will
+// require some more thought and spec changes but we can experiment with this to
+// see how it works.
+bool IsValidRangeAndMarkable(const RangeInFlatTree* range) {
   if (!IsValidRange(range)) {
     return false;
   }
@@ -66,6 +72,20 @@ bool IsValidRangeForTextFinder(const RangeInFlatTree* range) {
 
   LayoutObject* object = common_node->GetLayoutObject();
   CHECK(object);
+
+  PhysicalRect absolute_bounding_box =
+      object->AbsoluteBoundingBoxRectForScrollIntoView();
+
+  if (LocalFrameView* view = ephemeral_range.GetDocument().View()) {
+    PhysicalRect bounding_box_in_document =
+        view->FrameToDocument(absolute_bounding_box);
+    // If the box is positioned out of the document bounds (eg: something like
+    // position: absolute; top: -9999em), it cannot be highlighted.
+    if (bounding_box_in_document.Bottom() <= 0 ||
+        bounding_box_in_document.Right() <= 0) {
+      return false;
+    }
+  }
 
   for (; !object->IsLayoutView(); object = object->Parent()) {
     LayoutBox* box = DynamicTo<LayoutBox>(object);
@@ -100,9 +120,7 @@ bool IsValidRangeForTextFinder(const RangeInFlatTree* range) {
     if (box->StyleRef().GetPosition() == EPosition::kFixed) {
       PhysicalRect view_rect =
           PhysicalRect::EnclosingRect(box->View()->AbsoluteBoundingBoxRectF());
-      if (!view_rect.Intersects(
-              common_node->GetLayoutObject()
-                  ->AbsoluteBoundingBoxRectForScrollIntoView())) {
+      if (!view_rect.Intersects(absolute_bounding_box)) {
         return false;
       }
     }
@@ -110,18 +128,32 @@ bool IsValidRangeForTextFinder(const RangeInFlatTree* range) {
 
   return true;
 }
+
+bool ShouldUseIsValidRangeAndMarkable(mojom::blink::AnnotationType type) {
+  switch (type) {
+    case mojom::blink::AnnotationType::kTextFinder:
+    case mojom::blink::AnnotationType::kGlic:
+      return true;
+    case mojom::blink::AnnotationType::kSharedHighlight:
+    case mojom::blink::AnnotationType::kUserNote:
+      return false;
+  }
+}
+
 }  // namespace
 
 AnnotationAgentImpl::AnnotationAgentImpl(
     AnnotationAgentContainerImpl& owning_container,
     mojom::blink::AnnotationType annotation_type,
     AnnotationSelector& selector,
+    std::optional<DOMNodeId> search_range_start_node_id,
     AnnotationAgentContainerImpl::PassKey)
     : agent_host_(owning_container.GetSupplementable()->GetExecutionContext()),
       receiver_(this,
                 owning_container.GetSupplementable()->GetExecutionContext()),
       owning_container_(&owning_container),
       selector_(&selector),
+      search_range_start_node_id_(search_range_start_node_id),
       type_(annotation_type) {
   DCHECK(!IsAttached());
   DCHECK(!IsRemoved());
@@ -165,9 +197,30 @@ void AnnotationAgentImpl::Attach(AnnotationAgentContainerImpl::PassKey) {
   // collapsed due to DOM changes.
   attached_range_.Clear();
 
+  // Create the search range within which the agent will attempt to match the
+  // selector in.
+  Document* document = owning_container_->GetSupplementable();
+  Range* search_range = document->createRange();
+  if (document->body()) {
+    search_range->selectNode(document->body());
+  }
+
+  if (search_range_start_node_id_.has_value()) {
+    Node* search_range_start_node =
+        Node::FromDomNodeId(search_range_start_node_id_.value());
+    // Check if the search range start node is null, which is not in the
+    // document.
+    if (!search_range_start_node || search_range->collapsed()) {
+      needs_attachment_ = false;
+      agent_host_->DidFinishAttachment(
+          gfx::Rect(), mojom::blink::AttachmentResult::kRangeInvalid);
+      return;
+    }
+    search_range->setStart(search_range_start_node, 0);
+  }
+
   needs_attachment_ = false;
-  Document& document = *owning_container_->GetSupplementable();
-  selector_->FindRange(document, AnnotationSelector::kSynchronous,
+  selector_->FindRange(*search_range, AnnotationSelector::kSynchronous,
                        WTF::BindOnce(&AnnotationAgentImpl::DidFinishFindRange,
                                      WrapWeakPersistent(this)));
 }
@@ -219,7 +272,7 @@ void AnnotationAgentImpl::Remove() {
   owning_container_.Clear();
 }
 
-void AnnotationAgentImpl::ScrollIntoView() const {
+void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   DCHECK(!IsRemoved());
 
   if (!IsAttached())
@@ -253,6 +306,29 @@ void AnnotationAgentImpl::ScrollIntoView() const {
           ScrollAlignment::CenterAlways(), ScrollAlignment::CenterAlways(),
           mojom::blink::ScrollType::kProgrammatic);
   params->cross_origin_boundaries = false;
+  if (type_ == mojom::blink::AnnotationType::kGlic) {
+    params->behavior = mojom::blink::ScrollBehavior::kSmooth;
+  }
+
+  if (applies_focus) {
+    // If the first node accepts keyboard focus, move focus there to aid users
+    // relying on keyboard navigation. If the node is not focusable, clear focus
+    // so the next "Tab" press will start the search to find the next focusable
+    // element from this element.
+    auto* element = first_node.parentElement();
+    if (element && element->IsFocusable()) {
+      document.SetFocusedElement(
+          element, FocusParams(SelectionBehaviorOnFocus::kNone,
+                               mojom::blink::FocusType::kNone, nullptr));
+    } else {
+      document.ClearFocusedElement();
+    }
+  }
+
+  // Set the sequential focus navigation to the start of selection.
+  // Even if this element isn't focusable, "Tab" press will
+  // start the search to find the next focusable element from this element.
+  document.SetSequentialFocusNavigationStartingPoint(&first_node);
 
   scroll_into_view_util::ScrollRectToVisible(*first_node.GetLayoutObject(),
                                              bounding_box, std::move(params));
@@ -343,10 +419,9 @@ void AnnotationAgentImpl::PerformPreAttachDOMMutation() {
 void AnnotationAgentImpl::ProcessAttachmentFinished() {
   CHECK(!attached_range_);
 
-  // See IsValidRangeForTextFinder for why we treat kTextFinder differently
-  // here.
-  bool pending_range_valid = type_ == mojom::blink::AnnotationType::kTextFinder
-                                 ? IsValidRangeForTextFinder(pending_range_)
+  // See IsValidRangeAndMarkable for why we treat some types differently here.
+  bool pending_range_valid = ShouldUseIsValidRangeAndMarkable(type_)
+                                 ? IsValidRangeAndMarkable(pending_range_)
                                  : IsValidRange(pending_range_);
 
   if (pending_range_valid) {
@@ -400,8 +475,10 @@ void AnnotationAgentImpl::ProcessAttachmentFinished() {
       range_rect_in_document = view->FrameToDocument(rect_in_frame);
     }
 
-    // Empty rect means the selector didn't find its content.
-    agent_host_->DidFinishAttachment(range_rect_in_document);
+    mojom::blink::AttachmentResult attachment_result =
+        IsAttached() ? mojom::blink::AttachmentResult::kSuccess
+                     : mojom::blink::AttachmentResult::kSelectorNotMatched;
+    agent_host_->DidFinishAttachment(range_rect_in_document, attachment_result);
   }
 }
 

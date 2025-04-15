@@ -11,8 +11,9 @@ namespace blink::cssvalue {
 String CSSRepeatValue::CustomCSSText() const {
   StringBuilder result;
   result.Append("repeat(");
-  repetitions_ ? result.Append(repetitions_->CssText())
-               : result.Append(getValueName(CSSValueID::kAuto));
+  repetitions_
+      ? result.Append(repetitions_->CssText())
+      : result.Append(GetCSSValueNameAs<StringView>(CSSValueID::kAuto));
   result.Append(", ");
   result.Append(values_->CustomCSSText());
   result.Append(')');
@@ -40,7 +41,7 @@ void CSSRepeatValue::TraceAfterDispatch(blink::Visitor* visitor) const {
 }
 
 bool CSSRepeatValue::Equals(const CSSRepeatValue& other) const {
-  return repetitions_ == other.repetitions_ && values_ == other.values_;
+  return repetitions_ == other.repetitions_ && values_->Equals(other.Values());
 }
 
 }  // namespace blink::cssvalue

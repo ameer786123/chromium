@@ -36,7 +36,7 @@ import {getShortcutInputProvider} from '../device_page/shortcut_input_mojo_inter
 
 import {getTemplate} from './facegaze_actions_add_dialog.html.js';
 import type {KeyCombination} from './facegaze_constants.js';
-import {AssignedKeyCombo, ConflictingGestures, FACE_GAZE_GESTURE_TO_CONFIDENCE_PREF, FACE_GAZE_GESTURE_TO_CONFIDENCE_PREF_DICT, FACEGAZE_COMMAND_PAIR_ADDED_EVENT_NAME, FaceGazeActions, FaceGazeCommandPair, FaceGazeGestures, FaceGazeLocationDependentActions, FaceGazeLookGestures, FaceGazeUtils} from './facegaze_constants.js';
+import {AssignedKeyCombo, ComplexActions, ConflictingGestures, FACE_GAZE_GESTURE_TO_CONFIDENCE_PREF, FACE_GAZE_GESTURE_TO_CONFIDENCE_PREF_DICT, FACE_GAZE_GESTURE_TO_MACROS_PREF, FACEGAZE_COMMAND_PAIR_ADDED_EVENT_NAME, FaceGazeActions, FaceGazeCommandPair, FaceGazeGestures, FaceGazeLocationDependentActions, FaceGazeLookGestures, FaceGazeUtils} from './facegaze_constants.js';
 import type {FaceGazeSubpageBrowserProxy} from './facegaze_subpage_browser_proxy.js';
 import {FaceGazeSubpageBrowserProxyImpl} from './facegaze_subpage_browser_proxy.js';
 
@@ -104,7 +104,7 @@ export const FACEGAZE_CUSTOM_KEYBOARD_SHORTCUT_FLOW:
 
 export type ShortcutInputCompleteEvent = CustomEvent<{keyEvent: KeyEvent}>;
 
-export const FACEGAZE_CONFIDENCE_DEFAULT = 60;
+export const FACEGAZE_CONFIDENCE_DEFAULT = 50;
 export const FACEGAZE_CONFIDENCE_MIN = 1;
 export const FACEGAZE_CONFIDENCE_MAX = 100;
 export const FACEGAZE_CONFIDENCE_BUTTON_STEP = 5;
@@ -265,8 +265,23 @@ export class FaceGazeAddActionDialogElement extends
   private pageNavigation_: Record<AddDialogPage, PageNavigation> =
       FACEGAZE_DEFINED_MACRO_FLOW;
   private detectedGestureCount_ = 0;
-  private holdingGesture_ = false;
+  private disableActionNextButton_: boolean;
+  private disableCustomKeyboardNextButton_: boolean;
+  private disableGestureNextButton_: boolean;
+  private displayGesturePreviousButton_: boolean;
+  private displayThresholdPreviousButton_: boolean;
+  private displayedGestures_: FacialGesture[];
   private eventTracker_: EventTracker = new EventTracker();
+  private holdingGesture_ = false;
+  private keyComboChangeButtonLabel_: string;
+  private localizedGestureCountLabel_: string;
+  private localizedGestureThresholdTitle_: string;
+  private localizedSelectGestureTitle_: string;
+  private shortcutInputLabel_: string;
+  private showCustomKeyboard_: boolean;
+  private showGestureThreshold_: boolean;
+  private showSelectAction_: boolean;
+  private showSelectGesture_: boolean;
   private stream_: MediaStream|null;
   private streamTrack_: MediaStreamTrack|null;
 
@@ -395,34 +410,79 @@ export class FaceGazeAddActionDialogElement extends
     return this.i18n(FaceGazeUtils.getGestureDisplayTextName(gesture));
   }
 
-  private getConflictingGestureDisplayText_(gesture: FacialGesture|null): string
-      |null {
-    if (!gesture || !ConflictingGestures[gesture]) {
+  private getComplexActionDisplayText_(action: MacroName|null): string|null {
+    if (!action || !ComplexActions[action]) {
       return null;
     }
 
-    const conflicts = ConflictingGestures[gesture];
-    const substitutions = [];
-    for (const conflict of conflicts) {
-      substitutions.push(this.getGestureDisplayText_(conflict));
+    return this.i18n(ComplexActions[action]);
+  }
+
+  private getWarningDisplayText_(gesture: FacialGesture|null): string|null {
+    if (!gesture) {
+      return null;
     }
 
-    substitutions.unshift(this.getGestureDisplayText_(gesture));
+    let alreadyAssigned = false;
+    const bindings = this.get(FACE_GAZE_GESTURE_TO_MACROS_PREF);
+    const potentialConflicts = ConflictingGestures[gesture];
+    const conflicts: FacialGesture[] = [];
+    for (const assignedGesture of Object.keys(bindings) as FacialGesture[]) {
+      if (assignedGesture === gesture) {
+        alreadyAssigned = true;
+      }
 
-    // Decide which localized string to use based on the number of conflicting
-    // gestures.
-    let label;
-    if (conflicts.length === 1) {
-      label = 'faceGazeConflictingGesturesSingleLabel';
-    } else if (conflicts.length === 2) {
-      label = 'faceGazeConflictingGesturesDoubleLabel';
-    } else if (conflicts.length === 3) {
-      label = 'faceGazeConflictingGesturesTripleLabel';
+      if (potentialConflicts && potentialConflicts.includes(assignedGesture)) {
+        // Only show conflicts warning if the user has already assigned a
+        // conflicting gesture.
+        conflicts.push(assignedGesture);
+      }
+    }
+
+    if (conflicts.length === 0 && !alreadyAssigned) {
+      return null;
+    }
+
+    let conflictsString = '';
+    if (conflicts.length > 0) {
+      // Compute conflicting gestures string.
+      const substitutions = [];
+      for (const conflict of conflicts) {
+        substitutions.push(this.getGestureDisplayText_(conflict));
+      }
+      substitutions.unshift(this.getGestureDisplayText_(gesture));
+
+      // Decide which localized string to use based on the number of conflicting
+      // gestures.
+      if (conflicts.length === 1) {
+        conflictsString = this.i18n(
+            'faceGazeWarningConflictingGesturesSingleLabel', ...substitutions);
+      } else if (conflicts.length === 2) {
+        conflictsString = this.i18n(
+            'faceGazeWarningConflictingGesturesDoubleLabel', ...substitutions);
+      } else if (conflicts.length === 3) {
+        conflictsString = this.i18n(
+            'faceGazeWarningConflictingGesturesTripleLabel', ...substitutions);
+      } else {
+        throw new Error(`Got an unexpected number of conflicting gestures: ${
+            conflicts.length}`);
+      }
+    }
+
+    const alreadyAssignedString =
+        this.i18n('faceGazeWarningGestureAlreadyAssignedLabel');
+
+    // There are three possible warning messages we can show. Note that we've
+    // already handled the case where both `conflicts` and `assigned` are false.
+    if (conflictsString && !alreadyAssigned) {
+      return conflictsString;
+    } else if (!conflictsString && alreadyAssigned) {
+      return alreadyAssignedString;
     } else {
-      throw new Error('Got an unexpected number of conflicting gestures');
+      return this.i18n(
+          'faceGazeWarningCombinedLabel', alreadyAssignedString,
+          conflictsString);
     }
-
-    return this.i18n(label, ...substitutions);
   }
 
   private getGestureIconName_(gesture: FacialGesture|null): string {
@@ -676,7 +736,7 @@ export class FaceGazeAddActionDialogElement extends
         video: {facingMode: 'user'},
       });
       this.streamTrack_ = this.stream_.getVideoTracks()[0];
-      videoElement!.srcObject = this.stream_;
+      videoElement.srcObject = this.stream_;
     }
   }
 

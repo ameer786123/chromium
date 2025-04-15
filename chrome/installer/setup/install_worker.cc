@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/enterprise_util.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -32,6 +31,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/version.h"
+#include "base/version_info/channel.h"
 #include "base/win/registry.h"
 #include "base/win/security_util.h"
 #include "base/win/sid.h"
@@ -320,6 +320,67 @@ void AddElevationServiceWorkItems(const base::FilePath& elevation_service_path,
   list->AddWorkItem(install_service_work_item);
 }
 
+// Adds work items to register or unregister the elevated tracing service.
+void AddTracingServiceWorkItems(const InstallationState& original_state,
+                                const base::FilePath& tracing_service_path,
+                                WorkItemList* list) {
+  DCHECK(::IsUserAnAdmin());
+
+  if (tracing_service_path.empty()) {
+    LOG(DFATAL) << "The path to tracing_service.exe is invalid.";
+    return;
+  }
+
+  const CLSID clsid = install_static::GetTracingServiceClsid();
+  bool install_service = false;
+
+  if (install_static::GetChromeChannel() == version_info::Channel::DEV) {
+    // Install the service if installing/updating a dev channel install.
+    install_service = true;
+  } else if (InstallServiceWorkItem::IsComServiceInstalled(clsid)) {
+    // Update the service if it's already installed and this is not a migration
+    // from dev to another channel. In that case, uninstall the service.
+    const auto* previous_state =
+        original_state.GetProductState(install_static::IsSystemInstall());
+    install_service =
+        previous_state && (previous_state->channel() !=
+                           base::ASCIIToWide(version_info::GetChannelString(
+                               version_info::Channel::DEV)));
+  } else {
+    return;  // The service is not already installed, so there is nothing to do.
+  }
+
+  // Create a work item to install the service. This will be used either to
+  // perform the install/update or to roll back in case deletion fails.
+  auto install_service_work_item = std::make_unique<InstallServiceWorkItem>(
+      install_static::GetTracingServiceName(),
+      install_static::GetTracingServiceDisplayName(),
+      GetLocalizedStringF(IDS_TRACING_SERVICE_DESCRIPTION_BASE,
+                          {install_static::GetBaseAppName()}),
+      SERVICE_DEMAND_START, base::CommandLine(tracing_service_path),
+      base::CommandLine(base::CommandLine::NO_PROGRAM),
+      install_static::GetClientStateKeyPath(), std::vector<GUID>{clsid},
+      std::vector<GUID>{install_static::GetTracingServiceIid()});
+
+  if (install_service) {
+    install_service_work_item->set_best_effort(true);
+    list->AddWorkItem(install_service_work_item.release());
+  } else {
+    list->AddCallbackWorkItem(
+            base::BindOnce([](const CallbackWorkItem&) {
+              return InstallServiceWorkItem::DeleteService(
+                  install_static::GetTracingServiceName(),
+                  install_static::GetClientStateKeyPath(),
+                  {install_static::GetTracingServiceClsid()},
+                  {install_static::GetTracingServiceIid()});
+            }),
+            base::BindOnce([](std::unique_ptr<InstallServiceWorkItem> work_item,
+                              const CallbackWorkItem&) { work_item->Do(); },
+                           std::move(install_service_work_item)))
+        ->set_best_effort(true);
+  }
+}
+
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 // Adds work items to add the "store-dmtoken" command to Chrome's version key.
 // This method is a no-op if this is anything other than system-level Chrome.
@@ -576,11 +637,6 @@ void AddUpdateBrandCodeWorkItem(const InstallerState& installer_state,
   if (!GoogleUpdateSettings::GetBrand(&brand))
     return;
 
-  // Only update if this machine is a managed device, including domain join.
-  if (!base::IsManagedDevice()) {
-    return;
-  }
-
   std::wstring new_brand = GetUpdatedBrandCode(brand);
   // Rewrite the old brand so that the next step can potentially apply both
   // changes at once.
@@ -781,7 +837,8 @@ bool AppendPostInstallTasks(const InstallParams& install_params,
     // with it so that the browser knows which channel to use, otherwise delete
     // whatever value that key holds.
     AddChannelWorkItems(root, clients_key, regular_update_work_items.get());
-    AddFinalizeUpdateWorkItems(new_version, installer_state, installer_path,
+    AddFinalizeUpdateWorkItems(*install_params.installation_state, new_version,
+                               installer_state, installer_path,
                                regular_update_work_items.get());
 
     // Since this was not an in-use-update, delete 'opv', 'cpv',
@@ -864,8 +921,7 @@ void AddInstallWorkItems(const InstallParams& install_params,
       base::BindOnce(
           [](const base::FilePath& target_path, const base::FilePath& temp_path,
              const CallbackWorkItem& work_item) {
-            return ConfigureAppContainerSandbox(
-                std::array<const base::FilePath*, 2>{&target_path, &temp_path});
+            return ConfigureAppContainerSandbox({&target_path, &temp_path});
           },
           target_path, temp_path),
       base::DoNothing());
@@ -1195,7 +1251,8 @@ void AddChannelSelectionWorkItems(const InstallerState& installer_state,
 }
 #endif  // BUILDFLAG(USE_GOOGLE_UPDATE_INTEGRATION)
 
-void AddFinalizeUpdateWorkItems(const base::Version& new_version,
+void AddFinalizeUpdateWorkItems(const InstallationState& original_state,
+                                const base::Version& new_version,
                                 const InstallerState& installer_state,
                                 const base::FilePath& setup_path,
                                 WorkItemList* list) {
@@ -1203,11 +1260,16 @@ void AddFinalizeUpdateWorkItems(const base::Version& new_version,
   // overwriting any of the following post-install tasks.
   AddDowngradeCleanupItems(new_version, list);
 
+  const base::FilePath target_path = installer_state.target_path();
   AddOldWerHelperRegistrationCleanupItems(installer_state.root_key(),
-                                          installer_state.target_path(), list);
-  AddWerHelperRegistration(
-      installer_state.root_key(),
-      GetWerHelperPath(installer_state.target_path(), new_version), list);
+                                          target_path, list);
+  AddWerHelperRegistration(installer_state.root_key(),
+                           GetWerHelperPath(target_path, new_version), list);
+
+  if (installer_state.system_install()) {
+    AddTracingServiceWorkItems(
+        original_state, GetTracingServicePath(target_path, new_version), list);
+  }
 
   const std::wstring client_state_key = install_static::GetClientStateKeyPath();
 

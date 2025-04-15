@@ -18,6 +18,10 @@ namespace credential_provider_extension {
 NSString* kCredentialKey1 = @"key1";
 NSString* kCredentialKey2 = @"key2";
 
+NSString* kAccountInfoEmail1 = @"peter.parker@gmail.com";
+NSString* kAccountInfoEmail2 = @"mary.jane@gmail.com";
+NSString* kAccountInfoGaia1 = @"123456789";
+NSString* kAccountInfoGaia2 = @"987654321";
 NSString* kCredentialPassword1 = @"pa55word1";
 NSString* kCredentialPassword2 = @"p4ssw0rd2";
 
@@ -130,18 +134,4 @@ TEST_F(PasswordUtilKeychainTest, StoreEmptyIdentifier) {
   EXPECT_FALSE(StorePasswordInKeychain(kCredentialPassword1, @""));
 }
 
-// Tests storing and loading a gaia.
-TEST_F(PasswordUtilKeychainTest, StoreGaia) {
-  EXPECT_TRUE(StoreGaiaInKeychain(kCredentialKey1));
-  EXPECT_NSEQ(LoadGaiaFromKeychain(), kCredentialKey1);
-}
-
-// Tests updating an existing gaia.
-TEST_F(PasswordUtilKeychainTest, UpdateGaia) {
-  EXPECT_TRUE(StoreGaiaInKeychain(kCredentialKey1));
-  EXPECT_NSEQ(LoadGaiaFromKeychain(), kCredentialKey1);
-  EXPECT_TRUE(StoreGaiaInKeychain(kCredentialKey2));
-  EXPECT_NSEQ(LoadGaiaFromKeychain(), kCredentialKey2);
-}
-
-}  // credential_provider_extension
+}  // namespace credential_provider_extension

@@ -26,16 +26,19 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/navigation/impression.h"
+#include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/web/web_link_preview_triggerer.h"
+#include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
+#include "third_party/blink/renderer/core/dom/scroll_marker_group_data.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
@@ -54,6 +57,7 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/inspector/inspector_audits_issue.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/loader/anchor_element_interaction_tracker.h"
 #include "third_party/blink/renderer/core/loader/frame_load_request.h"
@@ -179,7 +183,7 @@ FocusableState HTMLAnchorElementBase::IsFocusableState(
   return HTMLElement::IsFocusableState(update_behavior);
 }
 
-bool HTMLAnchorElementBase::IsKeyboardFocusable(
+bool HTMLAnchorElementBase::IsKeyboardFocusableSlow(
     UpdateBehavior update_behavior) const {
   if (!IsFocusableStyle(update_behavior)) {
     return false;
@@ -191,12 +195,12 @@ bool HTMLAnchorElementBase::IsKeyboardFocusable(
   if (Element::SupportsFocus(update_behavior) !=
           FocusableState::kNotFocusable &&
       IsFocusable(update_behavior)) {
-    return HTMLElement::IsKeyboardFocusable(update_behavior);
+    return HTMLElement::IsKeyboardFocusableSlow(update_behavior);
   }
 
   if (IsLink() && !GetDocument().GetPage()->GetChromeClient().TabsToLinks())
     return false;
-  return HTMLElement::IsKeyboardFocusable(update_behavior);
+  return HTMLElement::IsKeyboardFocusableSlow(update_behavior);
 }
 
 static void AppendServerMapMousePosition(StringBuilder& url, Event* event) {
@@ -309,13 +313,7 @@ void HTMLAnchorElementBase::ParseAttribute(
     InvalidateCachedVisitedLinkHash();
     LogUpdateAttributeIfIsolatedWorldAndInDocument("a", params);
   } else if (params.name == html_names::kNameAttr) {
-    if (GetDocument().HasRenderBlockingExpectLinkElements() && isConnected() &&
-        IsFinishedParsingChildren() && !params.new_value.empty()) {
-      DCHECK(GetDocument().GetRenderBlockingResourceManager());
-      GetDocument()
-          .GetRenderBlockingResourceManager()
-          ->RemovePendingParsingElement(params.new_value, this);
-    }
+    ProcessElementRenderBlocking(params.new_value);
   } else if (params.name == html_names::kTitleAttr) {
     // Do nothing.
   } else if (params.name == html_names::kRelAttr) {
@@ -359,7 +357,7 @@ bool HTMLAnchorElementBase::HasLegalLinkAttribute(
 
 void HTMLAnchorElementBase::FinishParsingChildren() {
   Element::FinishParsingChildren();
-  if (GetDocument().HasRenderBlockingExpectLinkElements()) {
+  if (GetDocument().HasPendingExpectLinkElements()) {
     DCHECK(GetDocument().GetRenderBlockingResourceManager());
     GetDocument()
         .GetRenderBlockingResourceManager()
@@ -542,6 +540,25 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
       HasRel(kRelationOpener) && !frame_request.GetWindowFeatures().noopener) {
     frame_request.SetExplicitOpener();
   }
+  if (completed_url.ProtocolIs("blob")) {
+    auto blob_url_site =
+        BlinkSchemefulSite(SecurityOrigin::Create(completed_url));
+    BlinkSchemefulSite top_level_site =
+        window->GetStorageKey().GetTopLevelSite();
+    if (top_level_site != blob_url_site) {
+      if (base::FeatureList::IsEnabled(
+              features::kEnforceNoopenerOnBlobURLNavigation) &&
+          !base::CommandLine::ForCurrentProcess()->HasSwitch(
+              blink::switches::kDisableBlobUrlPartitioning)) {
+        frame_request.SetNoOpener();
+      }
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kCrossTopLevelSiteBlobURLNavigation);
+      AuditsIssue::ReportPartitioningBlobURLIssue(
+          window, completed_url.GetString(),
+          mojom::blink::PartitioningBlobURLInfo::kEnforceNoopenerForNavigation);
+    }
+  }
 
   frame_request.SetTriggeringEventInfo(
       is_trusted ? mojom::blink::TriggeringEventInfo::kFromTrustedEvent
@@ -561,11 +578,16 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
     // Attach the impression regardless, the embedder will be able to drop
     // impressions for subframe navigations.
 
-    frame_request.SetImpression(
+    std::optional<Impression> impression =
         frame->GetAttributionSrcLoader()->RegisterNavigation(
             /*navigation_url=*/completed_url, attribution_src,
             /*element=*/this, request.HasUserGesture(),
-            request.GetReferrerPolicy()));
+            request.GetReferrerPolicy());
+    if (impression.has_value()) {
+      impression->is_empty_attribution_src_tag = attribution_src.empty();
+    }
+
+    frame_request.SetImpression(impression);
   }
 
   Frame* target_frame =
@@ -596,30 +618,19 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
   }
 }
 
-void HTMLAnchorElementBase::SetHovered(bool hovered) {
-  HTMLElement::SetHovered(hovered);
-}
-
-Element* HTMLAnchorElementBase::interestTargetElement() {
-  CHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled());
-
-  if (!IsInTreeScope()) {
+Element* HTMLAnchorElementBase::InterestTargetElement() const {
+  if (!RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          GetDocument().GetExecutionContext())) {
+    return nullptr;
+  }
+  // Anchor elements that don't have the `href` attribute are not interactive,
+  // so they can't support `interesttarget`.
+  if (!IsInTreeScope() || !IsLink()) {
     return nullptr;
   }
 
   return GetElementAttributeResolvingReferenceTarget(
       html_names::kInteresttargetAttr);
-}
-
-AtomicString HTMLAnchorElementBase::interestAction() const {
-  CHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled());
-  const AtomicString& attribute_value =
-      FastGetAttribute(html_names::kInterestactionAttr);
-  if (attribute_value && !attribute_value.IsNull() &&
-      !attribute_value.empty()) {
-    return attribute_value;
-  }
-  return g_empty_atom;
 }
 
 void HTMLAnchorElementBase::HandleClick(MouseEvent& event) {
@@ -786,6 +797,9 @@ Node::InsertionNotificationRequest HTMLAnchorElementBase::InsertedInto(
     }
   }
 
+  if (FastHasAttribute(html_names::kNameAttr)) {
+    ProcessElementRenderBlocking(FastGetAttribute(html_names::kNameAttr));
+  }
   return request;
 }
 
@@ -814,5 +828,46 @@ void HTMLAnchorElementBase::Trace(Visitor* visitor) const {
 
 HTMLAnchorElement::HTMLAnchorElement(Document& document)
     : HTMLAnchorElementBase(html_names::kATag, document) {}
+
+void HTMLAnchorElement::AttachLayoutTree(AttachContext& context) {
+  // It's ok to set the update flag here, since update traversal will only
+  // happen if there are elements with scroll-marker-contain property set, and
+  // if there are some, the update traversal will happen anyway.
+  GetDocument().SetNeedsScrollMarkerGroupRelationsUpdate();
+  HTMLAnchorElementBase::AttachLayoutTree(context);
+}
+
+void HTMLAnchorElement::DetachLayoutTree(bool performing_reattach) {
+  if (ScrollMarkerGroupData* data = GetScrollMarkerGroupContainerData()) {
+    data->RemoveFromFocusGroup(*this);
+  }
+  HTMLAnchorElementBase::DetachLayoutTree(performing_reattach);
+}
+
+Element* HTMLAnchorElement::ScrollTargetElement() const {
+  const KURL& url = Url();
+  if (!url.HasFragmentIdentifier()) {
+    return nullptr;
+  }
+  String fragment = url.FragmentIdentifier().ToString();
+  Node* anchor_node = GetDocument().FindAnchor(fragment);
+  return DynamicTo<Element>(anchor_node);
+}
+
+PaintLayerScrollableArea*
+HTMLAnchorElement::AncestorScrollableAreaOfScrollTargetElement() const {
+  Element* scroll_target = ScrollTargetElement();
+  if (!scroll_target) {
+    return nullptr;
+  }
+  for (Element* parent =
+           LayoutTreeBuilderTraversal::ParentElement(*scroll_target);
+       parent; parent = LayoutTreeBuilderTraversal::ParentElement(*parent)) {
+    if (parent->GetLayoutBox() && parent->GetLayoutBox()->GetScrollableArea()) {
+      return parent->GetLayoutBox()->GetScrollableArea();
+    }
+  }
+  return nullptr;
+}
 
 }  // namespace blink

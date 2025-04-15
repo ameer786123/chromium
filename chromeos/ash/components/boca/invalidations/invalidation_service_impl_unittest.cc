@@ -17,6 +17,7 @@
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
 #include "google_apis/common/request_sender.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -30,7 +31,7 @@ namespace ash::boca {
 
 namespace {
 constexpr char kTestEmail[] = "testemail";
-constexpr char kGaiaId[] = "123";
+constexpr GaiaId::Literal kGaiaId("123");
 constexpr int kTokenValidationPeriodMinutesDefault = 60 * 24;
 
 class MockSessionClientImpl : public SessionClientImpl {
@@ -47,10 +48,11 @@ class MockSessionClientImpl : public SessionClientImpl {
 class MockSessionManager : public BocaSessionManager {
  public:
   explicit MockSessionManager(SessionClientImpl* session_client_impl)
-      : BocaSessionManager(
-            session_client_impl,
-            AccountId::FromUserEmailGaiaId(kTestEmail, kGaiaId)) {}
-  MOCK_METHOD(void, LoadCurrentSession, (), (override));
+      : BocaSessionManager(session_client_impl,
+                           /*pref_service=*/nullptr,
+                           AccountId::FromUserEmailGaiaId(kTestEmail, kGaiaId),
+                           /*is_producer=*/false) {}
+  MOCK_METHOD(void, LoadCurrentSession, (bool), (override));
   ~MockSessionManager() override = default;
 };
 
@@ -139,7 +141,8 @@ class InvalidationServiceImplTest : public testing::Test {
     invalidation_service_impl_ = std::make_unique<InvalidationServiceImpl>(
         &fake_gcm_driver_, mock_instance_id_driver_.get(),
         AccountId::FromUserEmailGaiaId(kTestEmail, kGaiaId),
-        boca_session_manager_.get(), session_client_impl_.get());
+        boca_session_manager_.get(), session_client_impl_.get(),
+        "https://test");
   }
 
   base::test::SingleThreadTaskEnvironment task_environment_{
@@ -153,7 +156,9 @@ class InvalidationServiceImplTest : public testing::Test {
 };
 
 TEST_F(InvalidationServiceImplTest, HandleInvalidation) {
-  EXPECT_CALL(*boca_session_manager_, LoadCurrentSession()).Times(1);
+  EXPECT_CALL(*boca_session_manager_,
+              LoadCurrentSession(/*from_polling=*/false))
+      .Times(1);
   const std::string kPayloadValue = "payload_1";
   gcm::IncomingMessage gcm_message;
   gcm_message.raw_data = kPayloadValue;

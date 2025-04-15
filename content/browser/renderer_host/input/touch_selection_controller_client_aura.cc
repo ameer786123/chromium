@@ -86,7 +86,7 @@ class TouchSelectionControllerClientAura::EnvEventObserver
       }
     }
 
-    selection_controller_->OnSessionEndEvent(event);
+    selection_controller_->HideAndDisallowShowingAutomatically();
   }
 
   raw_ptr<ui::TouchSelectionController> selection_controller_;
@@ -369,16 +369,15 @@ bool TouchSelectionControllerClientAura::SupportsAnimation() const {
 
 bool TouchSelectionControllerClientAura::InternalClient::SupportsAnimation()
     const {
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 void TouchSelectionControllerClientAura::SetNeedsAnimate() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void TouchSelectionControllerClientAura::InternalClient::SetNeedsAnimate() {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void TouchSelectionControllerClientAura::MoveCaret(
@@ -467,7 +466,7 @@ void TouchSelectionControllerClientAura::OnSelectionEvent(
 
 void TouchSelectionControllerClientAura::InternalClient::OnSelectionEvent(
     ui::SelectionEventType event) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void TouchSelectionControllerClientAura::OnDragUpdate(
@@ -477,7 +476,7 @@ void TouchSelectionControllerClientAura::OnDragUpdate(
 void TouchSelectionControllerClientAura::InternalClient::OnDragUpdate(
     const ui::TouchSelectionDraggable::Type type,
     const gfx::PointF& position) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 std::unique_ptr<ui::TouchHandleDrawable>
@@ -493,8 +492,7 @@ void TouchSelectionControllerClientAura::DidScroll() {}
 
 std::unique_ptr<ui::TouchHandleDrawable>
 TouchSelectionControllerClientAura::InternalClient::CreateDrawable() {
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 // Since the top-level client can only ever have its selection position changed
@@ -542,11 +540,10 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
 
 void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
                                                         int event_flags) {
-  const bool should_dismiss_handles =
-      command_id != ui::TouchEditable::kSelectAll &&
-      command_id != ui::TouchEditable::kSelectWord;
-  rwhva_->selection_controller()->OnMenuCommand(should_dismiss_handles);
-
+  if (command_id != ui::TouchEditable::kSelectAll &&
+      command_id != ui::TouchEditable::kSelectWord) {
+    rwhva_->selection_controller()->HideAndDisallowShowingAutomatically();
+  }
   RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (!host_delegate)
     return;
@@ -571,8 +568,7 @@ void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
           /*should_show_context_menu=*/false);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

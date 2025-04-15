@@ -45,8 +45,8 @@ bool IsMatch(const string_matching::TokenizedString& query,
 
 }  // namespace
 
-std::vector<QuickInsertSearchResult> PickerActionSearch(
-    base::span<const PickerCategory> available_categories,
+std::vector<QuickInsertSearchResult> QuickInsertActionSearch(
+    base::span<const QuickInsertCategory> available_categories,
     bool caps_lock_state_to_search,
     bool search_case_transforms,
     std::u16string_view query) {
@@ -55,8 +55,8 @@ std::vector<QuickInsertSearchResult> PickerActionSearch(
 
   // TODO: b/349494170 - Speed this up by pretokenizing the search terms.
   std::vector<QuickInsertSearchResult> matches;
-  for (const PickerCategory category : available_categories) {
-    if (IsMatch(tokenized_query, GetLabelForPickerCategory(category))) {
+  for (const QuickInsertCategory category : available_categories) {
+    if (IsMatch(tokenized_query, GetLabelForQuickInsertCategory(category))) {
       matches.push_back(QuickInsertCategoryResult(category));
     }
   }
@@ -67,7 +67,7 @@ std::vector<QuickInsertSearchResult> PickerActionSearch(
                       ? IDS_PICKER_CAPS_LOCK_ON_MENU_LABEL
                       : IDS_PICKER_CAPS_LOCK_OFF_MENU_LABEL))) {
     matches.push_back(QuickInsertCapsLockResult(
-        caps_lock_state_to_search, GetPickerShortcutForCapsLock()));
+        caps_lock_state_to_search, GetQuickInsertShortcutForCapsLock()));
   }
 
   if (search_case_transforms) {

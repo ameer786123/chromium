@@ -45,10 +45,13 @@ class CookieControlsIconView : public PageActionIconView,
   // PageActionIconView:
   views::BubbleDialogDelegate* GetBubble() const override;
   void UpdateImpl() override;
+  void UpdateTooltipText() override;
 
-  CookieControlsBubbleCoordinator* GetCoordinatorForTesting() const;
-  void SetCoordinatorForTesting(
-      std::unique_ptr<CookieControlsBubbleCoordinator> coordinator);
+  // Button:
+  std::u16string GetAlternativeAccessibleName() const override;
+
+  CookieControlsBubbleCoordinator& GetCoordinatorForTesting() const;
+  void SetCoordinatorForTesting(CookieControlsBubbleCoordinator& coordinator);
 
   void DisableUpdatesForTesting();
 
@@ -77,9 +80,6 @@ class CookieControlsIconView : public PageActionIconView,
   int GetLabelForStatus() const;
   void SetLabelForStatus();
 
-  // Whether to use "Tracking Protection" for label and tooltip.
-  bool ShouldShowTrackingProtectionText();
-
   bool icon_visible_ = false;
   bool protections_on_ = false;
   bool protections_changed_ = true;
@@ -87,6 +87,8 @@ class CookieControlsIconView : public PageActionIconView,
   // Whether we should have a visual indicator highlighting the icon.
   bool should_highlight_ = false;
   GURL last_visited_url_;
+
+  std::u16string custom_tooltip_text_;
 
   // True if calls to UpdateImpl should noop for testing purposes.
   // TODO: 344042974 - Remove this once the issue has been resolved.
@@ -98,8 +100,7 @@ class CookieControlsIconView : public PageActionIconView,
   raw_ptr<Browser> browser_ = nullptr;
 
   std::unique_ptr<content_settings::CookieControlsController> controller_;
-  std::unique_ptr<CookieControlsBubbleCoordinator> bubble_coordinator_ =
-      nullptr;
+  raw_ref<CookieControlsBubbleCoordinator> bubble_coordinator_;
   base::ScopedObservation<content_settings::CookieControlsController,
                           content_settings::CookieControlsObserver>
       controller_observation_{this};

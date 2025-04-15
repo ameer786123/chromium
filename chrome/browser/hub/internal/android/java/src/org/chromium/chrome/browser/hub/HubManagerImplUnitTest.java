@@ -93,6 +93,10 @@ public class HubManagerImplUnitTest {
             new OneshotSupplierImpl<>();
     private final ObservableSupplierImpl<EdgeToEdgeController> mEdgeToEdgeSupplier =
             new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Boolean> mRegularHubSearchEnabledStateSupplier =
+            new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Boolean> mIncognitoHubSearchEnabledStateSupplier =
+            new ObservableSupplierImpl<>();
     private final int mSnackbarOverrideToken = 1;
 
     private Activity mActivity;
@@ -104,16 +108,22 @@ public class HubManagerImplUnitTest {
         mReferenceButtonDataSupplier.set(mReferenceButtonData);
         mProfileProviderSupplier.set(mProfileProvider);
         when(mTabSwitcherPane.getPaneId()).thenReturn(PaneId.TAB_SWITCHER);
+        when(mTabSwitcherPane.getColorScheme()).thenReturn(HubColorScheme.DEFAULT);
         when(mTabSwitcherPane.getReferenceButtonDataSupplier())
                 .thenReturn(mReferenceButtonDataSupplier);
+        when(mTabSwitcherPane.getHubSearchEnabledStateSupplier())
+                .thenReturn(mRegularHubSearchEnabledStateSupplier);
         when(mTabSwitcherPane.getActionButtonDataSupplier()).thenReturn(mActionButtonDataSupplier);
         when(mTabSwitcherPane.getRootView()).thenReturn(mTabSwitcherPaneView);
         when(mTabSwitcherPane.getMenuOrKeyboardActionHandler())
                 .thenReturn(mTabSwitcherMenuOrKeyboardActionHandler);
 
         when(mIncognitoTabSwitcherPane.getPaneId()).thenReturn(PaneId.INCOGNITO_TAB_SWITCHER);
+        when(mIncognitoTabSwitcherPane.getColorScheme()).thenReturn(HubColorScheme.INCOGNITO);
         when(mIncognitoTabSwitcherPane.getReferenceButtonDataSupplier())
                 .thenReturn(mReferenceButtonDataSupplier);
+        when(mIncognitoTabSwitcherPane.getHubSearchEnabledStateSupplier())
+                .thenReturn(mIncognitoHubSearchEnabledStateSupplier);
         when(mIncognitoTabSwitcherPane.getActionButtonDataSupplier())
                 .thenReturn(mActionButtonDataSupplier);
         when(mIncognitoTabSwitcherPane.getRootView()).thenReturn(mIncognitoTabSwitcherPaneView);

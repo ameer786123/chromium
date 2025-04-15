@@ -6,10 +6,13 @@
 #define CHROME_BROWSER_UI_VIEWS_TAB_SEARCH_BUBBLE_HOST_H_
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_observer.h"
 #include "chrome/browser/ui/views/bubble/webui_bubble_manager.h"
 #include "chrome/browser/ui/views/bubble/webui_bubble_manager_observer.h"
+#include "chrome/browser/ui/views/tabs/tab_slot_controller.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search_ui.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -17,16 +20,14 @@
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/widget/widget_utils.h"
 
-namespace tabs {
-class TabDeclutterController;
-}  // namespace tabs
-
 namespace views {
 class Widget;
 }  // namespace views
 
+class BrowserWindowInterface;
 class Profile;
 class TabOrganizationService;
+class TabStrip;
 
 // TabSearchBubbleHost assumes responsibility for configuring its button,
 // showing / hiding the tab search bubble and handling metrics collection.
@@ -34,9 +35,15 @@ class TabSearchBubbleHost : public views::WidgetObserver,
                             public TabOrganizationObserver,
                             public WebUIBubbleManagerObserver {
  public:
+  class Observer : public base::CheckedObserver {
+   public:
+    virtual void OnBubbleInitializing() {}
+    virtual void OnBubbleDestroying() {}
+  };
+
   TabSearchBubbleHost(views::Button* button,
-                      tabs::TabDeclutterController* tab_declutter_controller,
-                      Profile* profile);
+                      BrowserWindowInterface* browser_window_interface,
+                      base::WeakPtr<TabStrip> tab_strip);
   TabSearchBubbleHost(const TabSearchBubbleHost&) = delete;
   TabSearchBubbleHost& operator=(const TabSearchBubbleHost&) = delete;
   ~TabSearchBubbleHost() override;
@@ -52,6 +59,9 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   // WebUIBubbleManagerObserver:
   void BeforeBubbleWidgetShowed(views::Widget* widget) override;
 
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
   // When this is called the bubble may already be showing or be loading in.
   // This returns true if the method call results in the creation of a new Tab
   // Search bubble. Optionally use section to force the bubble to open to the
@@ -59,7 +69,7 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   bool ShowTabSearchBubble(
       bool triggered_by_keyboard_shortcut = false,
       tab_search::mojom::TabSearchSection section =
-          tab_search::mojom::TabSearchSection::kNone,
+          tab_search::mojom::TabSearchSection::kSearch,
       tab_search::mojom::TabOrganizationFeature organization_feature =
           tab_search::mojom::TabOrganizationFeature::kNone);
   void CloseTabSearchBubble();
@@ -71,6 +81,7 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   WebUIBubbleManager* webui_bubble_manager_for_testing() {
     return webui_bubble_manager_.get();
   }
+
   const std::optional<base::TimeTicks>& bubble_created_time_for_testing()
       const {
     return bubble_created_time_;
@@ -82,19 +93,16 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   // The anchor button for the tab search bubble.
   const raw_ptr<views::Button> button_;
 
-  // BrowserWindowFeature of the host Browser.
-  const raw_ptr<tabs::TabDeclutterController> tab_declutter_controller_;
-
   const raw_ptr<Profile> profile_;
 
-  // TODO(b/366254790) : Look into removing this dependency or simplify
-  // interaction.
   std::unique_ptr<WebUIBubbleManager> webui_bubble_manager_;
 
   views::WidgetOpenTimer widget_open_timer_;
 
   // Timestamp for when the current bubble was created.
   std::optional<base::TimeTicks> bubble_created_time_;
+
+  base::ObserverList<Observer> observers_;
 
   raw_ptr<views::MenuButtonController> menu_button_controller_ = nullptr;
 
@@ -110,6 +118,8 @@ class TabSearchBubbleHost : public views::WidgetObserver,
 
   base::ScopedObservation<WebUIBubbleManager, WebUIBubbleManagerObserver>
       webui_bubble_manager_observer_{this};
+
+  base::WeakPtr<TabStrip> tab_strip_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TAB_SEARCH_BUBBLE_HOST_H_

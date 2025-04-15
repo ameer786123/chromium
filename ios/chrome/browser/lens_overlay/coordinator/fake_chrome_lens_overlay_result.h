@@ -9,8 +9,6 @@
 
 #import "ios/public/provider/chrome/browser/lens/lens_overlay_result.h"
 
-class GURL;
-
 /// ChromeLensOverlayResult test object.
 @interface FakeChromeLensOverlayResult : NSObject <ChromeLensOverlayResult>
 
@@ -20,6 +18,8 @@ class GURL;
 @property(nonatomic, strong) UIImage* selectionPreviewImage;
 /// Data containing the suggest signals.
 @property(nonatomic, strong) NSData* suggestSignals;
+/// Whether the result was generated in the translate filter in Lens.
+@property(nonatomic, readonly) BOOL isGeneratedInTranslate;
 /// Query text.
 @property(nonatomic, copy) NSString* queryText;
 /// Whether the result represents a text selection.

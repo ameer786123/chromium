@@ -1104,6 +1104,15 @@ TEST_F(FindBufferTest, FindRubyNested) {
     FindBuffer buffer(WholeDocumentRange(), RubySupport::kEnabledIfNecessary);
     EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"のRAIL"));
   }
+
+  // crbug.com/408309951
+  SetBodyContent(
+      "<p><ruby>科学<rt>かがく</ruby>の"
+      "<ruby><ruby>超電磁砲<rt>レールガン</ruby><rt>railgun</ruby></p>");
+  {
+    FindBuffer buffer(WholeDocumentRange(), RubySupport::kEnabledIfNecessary);
+    EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"rail"));
+  }
 }
 
 TEST_F(FindBufferTest, FindRubyOnAnnotation) {
@@ -1121,6 +1130,34 @@ TEST_F(FindBufferTest, FindRubyOnAnnotation) {
     FindBuffer buffer(WholeDocumentRange(), RubySupport::kEnabledIfNecessary);
     EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"のレールgun"));
   }
+}
+
+// crbug.com/376720481
+TEST_P(FindBufferParamTest, PositionAfterBlock) {
+  SetBodyContent("<div><p><ruby>境界面<rt>インターフェース</ruby></div>cw");
+  FindBuffer buffer(WholeDocumentRange(), GetParam());
+  FindResults results = buffer.FindMatches("cw", kCaseInsensitive);
+  EXPECT_EQ(0u, results.CountForTesting());
+  EXPECT_EQ(PositionInFlatTree::FirstPositionInNode(
+                *GetDocument().body()->lastChild()),
+            buffer.PositionAfterBlock());
+}
+
+// crbug.com/401444931
+TEST_P(FindBufferParamTest, IgnorableElementAtAnnotationLastCrash) {
+  SetBodyContent("<p><ruby><rt><br></rt>\n</ruby></p>");
+  FindBuffer buffer(WholeDocumentRange(), GetParam());
+  FindResults results = buffer.FindMatches("aaa", kCaseInsensitive);
+  // Pass if no crash.
+}
+
+// crbug.com/409358630
+TEST_F(FindBufferTest, OrphanRubyTextCrash) {
+  SetBodyContent("abc<h1 style='display:ruby-text' id='h'>TEXT</h1>def");
+  FindBuffer buffer(EphemeralRangeInFlatTree(PositionFromParentId("h", 0),
+                                             LastPositionInDocument()),
+                    RubySupport::kEnabledForcefully);
+  EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"textd"));
 }
 
 }  // namespace blink

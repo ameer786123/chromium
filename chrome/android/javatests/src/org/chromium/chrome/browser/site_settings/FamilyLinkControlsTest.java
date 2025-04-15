@@ -16,6 +16,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
+import android.os.Build;
+
 import androidx.preference.PreferenceFragmentCompat;
 import androidx.preference.PreferenceScreen;
 import androidx.test.filters.SmallTest;
@@ -27,12 +29,13 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.browser.signin.SigninCheckerProvider;
@@ -44,6 +47,7 @@ import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.site_settings.SiteSettingsCategory;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
+import org.chromium.components.content_settings.ContentSettingSource;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
@@ -52,10 +56,13 @@ import org.chromium.components.signin.identitymanager.ConsentLevel;
 @DoNotBatch(
         reason = "Activity must be destroyed between tests to ensure the child account is removed.")
 @RunWith(ChromeJUnit4ClassRunner.class)
+@DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41488000")
 public class FamilyLinkControlsTest {
 
     public final SigninTestRule mSigninTestRule = new SigninTestRule();
     private CoreAccountInfo mAccountInfo;
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -64,12 +71,10 @@ public class FamilyLinkControlsTest {
     public final RuleChain mRuleChain =
             RuleChain.outerRule(mSigninTestRule).around(mActivityTestRule);
 
-    @Rule public JniMocker mocker = new JniMocker();
     @Mock public WebsitePreferenceBridge.Natives mWebsitePreferenceBridgeJniMock;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
 
         // Initialize the browser.
         SiteSettingsTestUtils.startSiteSettingsMenu("").finish();
@@ -124,10 +129,10 @@ public class FamilyLinkControlsTest {
     @Test
     @SmallTest
     public void testDeletingOnDeviceDataAllowedForSupervisedUsers() throws InterruptedException {
-        mocker.mock(WebsitePreferenceBridgeJni.TEST_HOOKS, mWebsitePreferenceBridgeJniMock);
-        when(mWebsitePreferenceBridgeJniMock.isContentSettingManagedByCustodian(
+        WebsitePreferenceBridgeJni.setInstanceForTesting(mWebsitePreferenceBridgeJniMock);
+        when(mWebsitePreferenceBridgeJniMock.getDefaultContentSettingProviderSource(
                         any(), eq(ContentSettingsType.COOKIES)))
-                .thenReturn(false);
+                .thenReturn(ContentSettingSource.USER);
         when(mWebsitePreferenceBridgeJniMock.isContentSettingEnabled(
                         any(), eq(ContentSettingsType.COOKIES)))
                 .thenReturn(false);

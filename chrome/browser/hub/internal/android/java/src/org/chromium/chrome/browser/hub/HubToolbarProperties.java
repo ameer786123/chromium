@@ -4,10 +4,13 @@
 
 package org.chromium.chrome.browser.hub;
 
+import static org.chromium.chrome.browser.hub.HubColorMixer.COLOR_MIXER;
+
 import android.view.View;
 
 import org.chromium.base.Callback;
 import org.chromium.ui.modelutil.PropertyKey;
+import org.chromium.ui.modelutil.PropertyModel.ReadableObjectPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
@@ -19,16 +22,10 @@ class HubToolbarProperties {
     // When set then an interactable button for the primary pane action should be shown.
     public static final WritableObjectPropertyKey<FullButtonData> ACTION_BUTTON_DATA =
             new WritableObjectPropertyKey();
-    // Could be done by setting ACTION_BUTTON_DATA, but a separate property dedupes nicely.
-    public static final WritableBooleanPropertyKey SHOW_ACTION_BUTTON_TEXT =
-            new WritableBooleanPropertyKey();
 
     public static final WritableObjectPropertyKey<List<FullButtonData>> PANE_SWITCHER_BUTTON_DATA =
             new WritableObjectPropertyKey<>();
     public static final WritableIntPropertyKey PANE_SWITCHER_INDEX = new WritableIntPropertyKey();
-
-    // Hold a value from @HubColorScheme.
-    public static final WritableIntPropertyKey COLOR_SCHEME = new WritableIntPropertyKey();
 
     public static final WritableBooleanPropertyKey MENU_BUTTON_VISIBLE =
             new WritableBooleanPropertyKey();
@@ -36,10 +33,22 @@ class HubToolbarProperties {
     public static final WritableBooleanPropertyKey SEARCH_BOX_VISIBLE =
             new WritableBooleanPropertyKey();
 
-    public static final WritableObjectPropertyKey<Runnable> SEARCH_BOX_LISTENER =
+    public static final WritableBooleanPropertyKey SEARCH_LOUPE_VISIBLE =
+            new WritableBooleanPropertyKey();
+
+    public static final WritableBooleanPropertyKey HUB_SEARCH_ENABLED_STATE =
+            new WritableBooleanPropertyKey();
+
+    public static final WritableObjectPropertyKey<Runnable> SEARCH_LISTENER =
             new WritableObjectPropertyKey<>();
 
     public static final WritableBooleanPropertyKey IS_INCOGNITO = new WritableBooleanPropertyKey();
+
+    public static final WritableBooleanPropertyKey APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION =
+            new WritableBooleanPropertyKey();
+
+    public static final ReadableObjectPropertyKey<Runnable> MENU_BUTTON_ENTER_PRESSED_RUNNABLE =
+            new ReadableObjectPropertyKey<>();
 
     @FunctionalInterface
     public interface PaneButtonLookup {
@@ -51,14 +60,17 @@ class HubToolbarProperties {
 
     static final PropertyKey[] ALL_KEYS = {
         ACTION_BUTTON_DATA,
-        SHOW_ACTION_BUTTON_TEXT,
         PANE_SWITCHER_BUTTON_DATA,
         PANE_SWITCHER_INDEX,
-        COLOR_SCHEME,
+        COLOR_MIXER,
         MENU_BUTTON_VISIBLE,
         PANE_BUTTON_LOOKUP_CALLBACK,
         SEARCH_BOX_VISIBLE,
-        SEARCH_BOX_LISTENER,
+        SEARCH_LOUPE_VISIBLE,
+        SEARCH_LISTENER,
         IS_INCOGNITO,
+        APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION,
+        HUB_SEARCH_ENABLED_STATE,
+        MENU_BUTTON_ENTER_PRESSED_RUNNABLE,
     };
 }

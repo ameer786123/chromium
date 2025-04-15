@@ -16,6 +16,8 @@
 #include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/lazy_instance.h"
+#include "base/memory/raw_ptr_exclusion.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -29,6 +31,17 @@ using std::string;
 
 namespace net {
 
+namespace {
+
+// Overrides the mime type for "get a mime type" functions below, for test
+// purposes. (Empty string by default, indicates no override.)
+std::string& GetOverridingMimeType() {
+  static base::NoDestructor<std::string> overriding_mime_type;
+  return *overriding_mime_type;
+}
+
+}  // namespace
+
 // Singleton utility class for mime types.
 class MimeUtil : public PlatformMimeUtil {
  public:
@@ -40,6 +53,9 @@ class MimeUtil : public PlatformMimeUtil {
 
   bool GetWellKnownMimeTypeFromExtension(const base::FilePath::StringType& ext,
                                          std::string* mime_type) const;
+
+  bool GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                    std::string* mime_type) const;
 
   bool GetPreferredExtensionForMimeType(
       std::string_view mime_type,
@@ -313,12 +329,27 @@ bool MimeUtil::GetMimeTypeFromFile(const base::FilePath& file_path,
   return GetMimeTypeFromExtension(file_name_str.substr(1), result);
 }
 
+bool MimeUtil::GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                            string* result) const {
+  base::FilePath::StringType file_name_str = file_path.Extension();
+  if (file_name_str.empty()) {
+    return false;
+  }
+  return GetWellKnownMimeTypeFromExtension(file_name_str.substr(1), result);
+}
+
 bool MimeUtil::GetMimeTypeFromExtensionHelper(
     const base::FilePath::StringType& ext,
     bool include_platform_types,
     string* result) const {
   DCHECK(ext.empty() || ext[0] != '.')
       << "extension passed in must not include leading dot";
+
+  // Used for tests.
+  if (!GetOverridingMimeType().empty()) {
+    *result = GetOverridingMimeType();
+    return true;
+  }
 
   // Avoids crash when unable to handle a long file path. See crbug.com/48733.
   const unsigned kMaxFilePathSize = 65536;
@@ -629,6 +660,11 @@ bool GetWellKnownMimeTypeFromExtension(const base::FilePath::StringType& ext,
   return g_mime_util.Get().GetWellKnownMimeTypeFromExtension(ext, mime_type);
 }
 
+bool GetWellKnownMimeTypeFromFile(const base::FilePath& file_path,
+                                  std::string* mime_type) {
+  return g_mime_util.Get().GetWellKnownMimeTypeFromFile(file_path, mime_type);
+}
+
 bool GetPreferredExtensionForMimeType(std::string_view mime_type,
                                       base::FilePath::StringType* extension) {
   return g_mime_util.Get().GetPreferredExtensionForMimeType(mime_type,
@@ -659,6 +695,8 @@ static const char* const kStandardImageTypes[] = {"image/avif",
                                                   "image/bmp",
                                                   "image/cis-cod",
                                                   "image/gif",
+                                                  "image/heic",
+                                                  "image/heif",
                                                   "image/ief",
                                                   "image/jpeg",
                                                   "image/webp",
@@ -723,7 +761,8 @@ static const char* const kStandardVideoTypes[] = {
 
 struct StandardType {
   const char* const leading_mime_type;
-  base::span<const char* const> standard_types;
+  // TODO(367764863) Rewrite to base::raw_span.
+  RAW_PTR_EXCLUSION base::span<const char* const> standard_types;
 };
 static const StandardType kStandardTypes[] = {{"image/", kStandardImageTypes},
                                               {"audio/", kStandardAudioTypes},
@@ -943,6 +982,15 @@ std::optional<std::string> ExtractMimeTypeFromMediaType(
     return top_level_type + "/" + subtype;
   }
   return std::nullopt;
+}
+
+ScopedOverrideGetMimeTypeForTesting::ScopedOverrideGetMimeTypeForTesting(
+    std::string_view overriding_mime_type) {
+  GetOverridingMimeType() = overriding_mime_type;
+}
+
+ScopedOverrideGetMimeTypeForTesting::~ScopedOverrideGetMimeTypeForTesting() {
+  GetOverridingMimeType().clear();
 }
 
 }  // namespace net

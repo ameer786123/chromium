@@ -11,6 +11,7 @@
 
 #include "base/functional/bind.h"
 #include "build/build_config.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "net/base/host_port_pair.h"
 #include "net/ssl/client_cert_identity.h"
 #include "ui/gfx/image/image.h"
@@ -87,6 +88,12 @@ bool CanShowEnterpriseBadgingForAvatar(Profile* profile);
 
 bool CanShowEnterpriseBadgingForMenu(Profile* profile);
 
+bool CanShowEnterpriseProfileUI(Profile* profile);
+
+// Sets the enterprise label if an `EnterpriseCustomLabel` has been set which
+// will replace the profile name where it is used.
+void SetEnterpriseProfileLabel(Profile* profile);
+
 // Checks `email_domain` against the list of pre-defined known consumer domains.
 // Use this for optimization purposes when you want to skip some code paths for
 // most non-managed (=consumer) users with domains like gmail.com. Note that it
@@ -100,6 +107,11 @@ bool IsKnownConsumerDomain(const std::string& email_domain);
 void GetManagementIcon(const GURL& url,
                        Profile* profile,
                        base::OnceCallback<void(const gfx::Image&)> callback);
+
+// Returns the default enterprise label "Work"/"School" or the
+// `EnterpriseCustomLabel` set by policy if present.
+// `truncated` indicates whether the label returned needs to be truncated.
+std::u16string GetEnterpriseLabel(Profile* profile, bool truncated = false);
 
 }  // namespace enterprise_util
 

@@ -7,10 +7,13 @@
 #import "base/ios/ios_util.h"
 #import "base/memory/weak_ptr.h"
 #import "base/metrics/histogram_functions.h"
+#import "base/metrics/histogram_macros_local.h"
 #import "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/policy/core/common/policy_pref_names.h"
 #import "components/prefs/pref_service.h"
 #import "components/search_engines/template_url_service.h"
+#import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/context_menu/ui_bundled/context_menu_configuration_provider+Testing.h"
 #import "ios/chrome/browser/context_menu/ui_bundled/context_menu_configuration_provider_delegate.h"
 #import "ios/chrome/browser/context_menu/ui_bundled/context_menu_utils.h"
@@ -19,6 +22,10 @@
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_commands.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_scene_agent.h"
+#import "ios/chrome/browser/lens/ui_bundled/lens_availability.h"
+#import "ios/chrome/browser/lens/ui_bundled/lens_entrypoint.h"
+#import "ios/chrome/browser/menu/ui_bundled/browser_action_factory.h"
+#import "ios/chrome/browser/menu/ui_bundled/menu_histograms.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/photos/model/photos_availability.h"
 #import "ios/chrome/browser/photos/model/photos_metrics.h"
@@ -36,6 +43,7 @@
 #import "ios/chrome/browser/shared/public/commands/activity_service_share_url_command.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/enhanced_calendar_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/mini_map_commands.h"
 #import "ios/chrome/browser/shared/public/commands/reading_list_add_command.h"
@@ -47,10 +55,7 @@
 #import "ios/chrome/browser/shared/ui/util/image/image_saver.h"
 #import "ios/chrome/browser/shared/ui/util/pasteboard_util.h"
 #import "ios/chrome/browser/shared/ui/util/url_with_title.h"
-#import "ios/chrome/browser/ui/lens/lens_availability.h"
-#import "ios/chrome/browser/ui/lens/lens_entrypoint.h"
-#import "ios/chrome/browser/ui/menu/browser_action_factory.h"
-#import "ios/chrome/browser/ui/menu/menu_histograms.h"
+#import "ios/chrome/browser/text_selection/model/text_classifier_util.h"
 #import "ios/chrome/browser/url_loading/model/image_search_param_generator.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
@@ -278,22 +283,30 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
                                                            params:params]];
   }
 
-  // Insert any provided menu items. Do after Link and/or Image to allow
-  // inserting at beginning or adding to end.
-  ElementsToAddToContextMenu* result =
-      ios::provider::GetContextMenuElementsToAdd(
-          webState, params, self.baseViewController,
-          HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                             MiniMapCommands),
-          HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                             UnitConversionCommands));
-  if (result && result.elements) {
-    [menuElements addObjectsFromArray:result.elements];
-    menuTitle = result.title;
-    if (menuTitle.length > kContextMenuMaxTitleLength) {
-      menuTitle = [[menuTitle substringToIndex:kContextMenuMaxTitleLength - 1]
-          stringByAppendingString:kContextMenuEllipsis];
+  // This check skips every internal context menu entry. This may need to be
+  // changed to only affect entity detection entries.
+  if (IsEntitySelectionAllowedForURL(webState)) {
+    // Insert any provided menu items. Do after Link and/or Image to allow
+    // inserting at beginning or adding to end.
+    ElementsToAddToContextMenu* result =
+        ios::provider::GetContextMenuElementsToAdd(
+            webState, params, self.baseViewController,
+            HandlerForProtocol(self.browser->GetCommandDispatcher(),
+                               MiniMapCommands),
+            HandlerForProtocol(self.browser->GetCommandDispatcher(),
+                               UnitConversionCommands),
+            HandlerForProtocol(self.browser->GetCommandDispatcher(),
+                               EnhancedCalendarCommands));
+    if (result && result.elements) {
+      [menuElements addObjectsFromArray:result.elements];
+      menuTitle = result.title;
+      if (menuTitle.length > kContextMenuMaxTitleLength) {
+        menuTitle = [[menuTitle substringToIndex:kContextMenuMaxTitleLength - 1]
+            stringByAppendingString:kContextMenuEllipsis];
+      }
     }
+    LOCAL_HISTOGRAM_BOOLEAN("IOS.Mobile.ContextMenu.EntitySelectionAllowed",
+                            true);
   }
 
   if (menuElements.count == 0) {
@@ -718,6 +731,17 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
             ? SaveToPhotosContextMenuActions::kAvailableDidSaveImageLocally
             : SaveToPhotosContextMenuActions::kUnavailableDidSaveImageLocally);
   }];
+
+  policy::DownloadRestriction download_restriction =
+      static_cast<policy::DownloadRestriction>(
+          self.browser->GetProfile()->GetPrefs()->GetInteger(
+              policy::policy_prefs::kDownloadRestrictions));
+  if (download_restriction == policy::DownloadRestriction::ALL_FILES) {
+    saveImage.subtitle =
+        l10n_util::GetNSString(IDS_POLICY_ACTION_BLOCKED_BY_ORGANIZATION);
+    saveImage.attributes = UIMenuElementAttributesDisabled;
+  }
+
   [imageSavingElements addObject:saveImage];
 
   // Save Image to Photos.
@@ -814,10 +838,16 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
 // on Show Full URL button from the context menu.
 - (void)showFullURLPopUp:(web::ContextMenuParams)params
                URLString:(NSString*)URLString {
-  UIAlertController* alert =
-      [UIAlertController alertControllerWithTitle:@""
-                                          message:URLString
-                                   preferredStyle:UIAlertControllerStyleAlert];
+  // Due to a UIKit bug, UIAlertController that show a URL may truncate their
+  // last line. To avoid masking useful information, add an artificial empty
+  // last line that can be truncated safely.
+  // The "..." will still be visible but no useful information will be lost.
+  // TODO(crbug.com/407565099): remove workaround.
+  UIAlertController* alert = [UIAlertController
+      alertControllerWithTitle:@""
+                       message:[URLString
+                                   stringByAppendingString:@"\u00a0\n\u00a0"]
+                preferredStyle:UIAlertControllerStyleAlert];
 
   UIAlertAction* defaultAction = [UIAlertAction
       actionWithTitle:l10n_util::GetNSString(IDS_IOS_CLOSE_ALERT_BUTTON_LABEL)
@@ -832,7 +862,8 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
                                                               completion:nil];
 }
 
-// Calls the shareURLFromContextMenu with the given command.
+// Calls the `-showShareSheetForURL:` command with the given
+// `ActivityServiceShareURLCommand` command.
 - (void)shareURLFromContextMenu:(const GURL&)URLToShare
                        URLTitle:(NSString*)URLTitle
                          params:(web::ContextMenuParams)params {
@@ -846,7 +877,7 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
                                                     title:URLTitle
                                                sourceView:params.view
                                                sourceRect:sourceRect];
-  [handler shareURLFromContextMenu:command];
+  [handler showShareSheetForURL:command];
 }
 
 // Informs the delegate that a new tab has been opened in the background.

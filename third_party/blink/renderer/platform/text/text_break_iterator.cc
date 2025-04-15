@@ -40,66 +40,6 @@
 
 namespace blink {
 
-unsigned NumGraphemeClusters(const String& string) {
-  unsigned string_length = string.length();
-
-  if (!string_length)
-    return 0;
-
-  // The only Latin-1 Extended Grapheme Cluster is CR LF
-  if (string.Is8Bit() && !string.Contains('\r'))
-    return string_length;
-
-  NonSharedCharacterBreakIterator it(string);
-  if (!it)
-    return string_length;
-
-  unsigned num = 0;
-  while (it.Next() != kTextBreakDone)
-    ++num;
-  return num;
-}
-
-void GraphemesClusterList(const StringView& text, Vector<unsigned>* graphemes) {
-  const unsigned length = text.length();
-  graphemes->resize(length);
-  if (!length)
-    return;
-
-  NonSharedCharacterBreakIterator it(text);
-  int cursor_pos = it.Next();
-  unsigned count = 0;
-  unsigned pos = 0;
-  while (cursor_pos >= 0) {
-    for (; pos < static_cast<unsigned>(cursor_pos) && pos < length; ++pos) {
-      (*graphemes)[pos] = count;
-    }
-    cursor_pos = it.Next();
-    count++;
-  }
-}
-
-unsigned LengthOfGraphemeCluster(const String& string, unsigned offset) {
-  unsigned string_length = string.length();
-
-  if (string_length - offset <= 1)
-    return string_length - offset;
-
-  // The only Latin-1 Extended Grapheme Cluster is CRLF.
-  if (string.Is8Bit()) {
-    auto* characters = string.Characters8();
-    return 1 + (characters[offset] == '\r' && characters[offset + 1] == '\n');
-  }
-
-  NonSharedCharacterBreakIterator it(string);
-  if (!it)
-    return string_length - offset;
-
-  if (it.Following(offset) == kTextBreakDone)
-    return string_length - offset;
-  return it.Current() - offset;
-}
-
 // Pack 8 bits into one byte
 #define B(a, b, c, d, e, f, g, h)                                         \
   ((a) | ((b) << 1) | ((c) << 2) | ((d) << 3) | ((e) << 4) | ((f) << 5) | \
@@ -277,7 +217,7 @@ struct LazyLineBreakIterator::Context {
           return IsASCIIAlphanumeric(last_last_ch) ? FastBreakResult::kCanBreak
                                                    : FastBreakResult::kNoBreak;
         }
-      } else if (RuntimeEnabledFeatures::BreakIteratorHyphenMinusEnabled()) {
+      } else {
         // Defer to the Unicode algorithm to take more context into account.
         return FastBreakResult::kUnknown;
       }
@@ -426,9 +366,7 @@ inline unsigned LazyLineBreakIterator::NextBreakablePosition(
                                    BreakSpaceType::kAfterEverySpace>(pos, str,
                                                                      len);
   }
-  NOTREACHED_IN_MIGRATION();
-  return NextBreakablePosition<CharacterType, lineBreakType,
-                               BreakSpaceType::kAfterSpaceRun>(pos, str, len);
+  NOTREACHED();
 }
 
 template <LineBreakType lineBreakType>
@@ -449,7 +387,7 @@ inline unsigned LazyLineBreakIterator::NextBreakablePosition(
 unsigned LazyLineBreakIterator::NextBreakablePositionBreakCharacter(
     unsigned pos) const {
   DCHECK_LE(start_offset_, string_.length());
-  NonSharedCharacterBreakIterator iterator(StringView(string_, start_offset_));
+  NonSharedCharacterBreakIterator& iterator = GetCharacterBreakIterator();
   DCHECK_GE(pos, start_offset_);
   pos -= start_offset_;
   // `- 1` because the `Following()` returns the next opportunity after the
@@ -472,8 +410,7 @@ unsigned LazyLineBreakIterator::NextBreakablePosition(unsigned pos,
     case LineBreakType::kBreakCharacter:
       return NextBreakablePositionBreakCharacter(pos);
   }
-  NOTREACHED_IN_MIGRATION();
-  return NextBreakablePosition<LineBreakType::kNormal>(pos, len);
+  NOTREACHED();
 }
 
 unsigned LazyLineBreakIterator::NextBreakOpportunity(unsigned offset) const {
@@ -522,8 +459,7 @@ std::ostream& operator<<(std::ostream& ostream, LineBreakType line_break_type) {
     case LineBreakType::kPhrase:
       return ostream << "Phrase";
   }
-  NOTREACHED_IN_MIGRATION();
-  return ostream << "LineBreakType::" << static_cast<int>(line_break_type);
+  NOTREACHED() << "LineBreakType::" << static_cast<int>(line_break_type);
 }
 
 std::ostream& operator<<(std::ostream& ostream, BreakSpaceType break_space) {
@@ -533,8 +469,7 @@ std::ostream& operator<<(std::ostream& ostream, BreakSpaceType break_space) {
     case BreakSpaceType::kAfterEverySpace:
       return ostream << "kAfterEverySpace";
   }
-  NOTREACHED_IN_MIGRATION();
-  return ostream << "BreakSpaceType::" << static_cast<int>(break_space);
+  NOTREACHED() << "BreakSpaceType::" << static_cast<int>(break_space);
 }
 
 }  // namespace blink

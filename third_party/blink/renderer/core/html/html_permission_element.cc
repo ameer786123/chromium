@@ -4,11 +4,14 @@
 
 #include "third_party/blink/renderer/core/html/html_permission_element.h"
 
+#include <stdint.h>
+
 #include <optional>
 
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_split.h"
 #include "third_party/blink/public/common/input/web_pointer_properties.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
@@ -21,6 +24,8 @@
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
+#include "third_party/blink/renderer/core/dom/dom_node_ids.h"
+#include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
@@ -37,7 +42,9 @@
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/html_div_element.h"
+#include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_permission_element_strings_map.h"
+#include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/html/html_span_element.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -57,6 +64,7 @@
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
@@ -93,6 +101,9 @@ constexpr int kMaxHorizontalPaddingToFontSizeRatio = 5;
 // being too close.
 constexpr int kMinMargin = 4;
 constexpr float kIntersectionThreshold = 1.0f;
+
+constexpr float kDefaultSmallFontSize = 13;     // Default 'small' font size.
+constexpr float kDefaultXxxLargeFontSize = 48;  // Default 'xxxlarge' font size.
 
 PermissionDescriptorPtr CreatePermissionDescriptor(PermissionName name) {
   auto descriptor = PermissionDescriptor::New();
@@ -148,31 +159,22 @@ Vector<PermissionDescriptorPtr> ParsePermissionDescriptorsFromString(
   return Vector<PermissionDescriptorPtr>();
 }
 
-int GetTranslatedMessageID(int message_id,
-                           const AtomicString& language_string) {
+uint16_t GetTranslatedMessageID(uint16_t message_id,
+                                const AtomicString& language_string) {
   DCHECK(language_string.IsLowerASCII());
-  DEFINE_STATIC_LOCAL(GeneratedMessagesMap, generated_message_ids, ());
   if (language_string.empty()) {
     return message_id;
   }
 
-  if (generated_message_ids.empty()) {
-    FillInPermissionElementTranslationsMap(generated_message_ids);
+  StringUTF8Adaptor lang_adaptor(language_string);
+  std::string_view lang_utf8 = lang_adaptor.AsStringView();
+  if (auto mapped_id = GetPermissionElementMessageId(lang_utf8, message_id);
+      mapped_id.has_value()) {
+    return *mapped_id;
   }
 
-  const auto language_map_itr = generated_message_ids.find(language_string);
-  if (language_map_itr != generated_message_ids.end()) {
-    const auto& language_map = language_map_itr->value;
-    const auto translated_message_itr = language_map.find(message_id);
-    if (translated_message_itr != language_map.end()) {
-      return translated_message_itr->value;
-    }
-  }
-
-  Vector<String> parts;
-  language_string.GetString().Split('-', parts);
-
-  if (parts.size() == 0) {
+  auto parts = base::SplitStringOnce(lang_utf8, '-');
+  if (!parts) {
     return message_id;
   }
   // This is to support locales with unknown combination of languages and
@@ -181,20 +183,15 @@ int GetTranslatedMessageID(int message_id,
   // locale.
   // Eg: en-au is a unknown combination, in this case we will fall back to
   // en strings.
-  if (generated_message_ids.Contains(parts[0])) {
-    const auto& language_map = generated_message_ids.find(parts[0])->value;
-    if (language_map.Contains(message_id)) {
-      return language_map.find(message_id)->value;
-    }
-  }
-  return message_id;
+  return GetPermissionElementMessageId(parts->first, message_id)
+      .value_or(message_id);
 }
 
 // Helper to get permission text resource ID for the given map which has only
 // one element.
-int GetUntranslatedMessageIDSinglePermission(PermissionName name,
-                                             bool granted,
-                                             bool is_precise_location) {
+uint16_t GetUntranslatedMessageIDSinglePermission(PermissionName name,
+                                                  bool granted,
+                                                  bool is_precise_location) {
   if (name == PermissionName::VIDEO_CAPTURE) {
     return granted ? IDS_PERMISSION_REQUEST_CAMERA_ALLOWED
                    : IDS_PERMISSION_REQUEST_CAMERA;
@@ -221,21 +218,21 @@ int GetUntranslatedMessageIDSinglePermission(PermissionName name,
 // Helper to get permission text resource ID for the given map which has
 // multiple elements. Currently we only support "camera microphone" grouped
 // permissions.
-int GetUntranslatedMessageIDMultiplePermissions(bool granted) {
+uint16_t GetUntranslatedMessageIDMultiplePermissions(bool granted) {
   return granted ? IDS_PERMISSION_REQUEST_CAMERA_MICROPHONE_ALLOWED
                  : IDS_PERMISSION_REQUEST_CAMERA_MICROPHONE;
 }
 
 // Helper to get `PermissionsPolicyFeature` from permission name
-mojom::blink::PermissionsPolicyFeature PermissionNameToPermissionsPolicyFeature(
-    PermissionName permission_name) {
+network::mojom::PermissionsPolicyFeature
+PermissionNameToPermissionsPolicyFeature(PermissionName permission_name) {
   switch (permission_name) {
     case PermissionName::AUDIO_CAPTURE:
-      return mojom::blink::PermissionsPolicyFeature::kMicrophone;
+      return network::mojom::PermissionsPolicyFeature::kMicrophone;
     case PermissionName::VIDEO_CAPTURE:
-      return mojom::blink::PermissionsPolicyFeature::kCamera;
+      return network::mojom::PermissionsPolicyFeature::kCamera;
     case PermissionName::GEOLOCATION:
-      return mojom::blink::PermissionsPolicyFeature::kGeolocation;
+      return network::mojom::PermissionsPolicyFeature::kGeolocation;
     default:
       NOTREACHED() << "Not supported permission " << permission_name;
   }
@@ -395,13 +392,22 @@ scoped_refptr<const CalculationExpressionNode> BuildLengthBoundExpr(
   NOTREACHED();
 }
 
+void RecordUserInteractionAccepted(bool accepted) {
+  base::UmaHistogramBoolean("Blink.PermissionElement.UserInteractionAccepted",
+                            accepted);
+}
+
 }  // namespace
+
+// static
+bool HTMLPermissionElement::isTypeSupported(const AtomicString& type) {
+  return !ParsePermissionDescriptorsFromString(type).empty();
+}
 
 HTMLPermissionElement::HTMLPermissionElement(Document& document)
     : HTMLElement(html_names::kPermissionTag, document),
       ScrollSnapshotClient(GetDocument().GetFrame()),
       permission_service_(document.GetExecutionContext()),
-      permission_observer_receivers_(this, document.GetExecutionContext()),
       embedded_permission_control_receiver_(this,
                                             document.GetExecutionContext()),
       disable_reason_expire_timer_(
@@ -421,6 +427,7 @@ HTMLPermissionElement::HTMLPermissionElement(Document& document)
           .behavior = IntersectionObserver::kDeliverDuringPostLifecycleSteps,
           .delay = base::Milliseconds(100),
           .track_visibility = true,
+          .expose_occluder_id = true,
       });
 
   intersection_observer_->observe(this);
@@ -455,7 +462,6 @@ V8PermissionState HTMLPermissionElement::permissionStatus() const {
 
 void HTMLPermissionElement::Trace(Visitor* visitor) const {
   visitor->Trace(permission_service_);
-  visitor->Trace(permission_observer_receivers_);
   visitor->Trace(embedded_permission_control_receiver_);
   visitor->Trace(permission_text_span_);
   visitor->Trace(intersection_observer_);
@@ -464,66 +470,15 @@ void HTMLPermissionElement::Trace(Visitor* visitor) const {
 }
 
 void HTMLPermissionElement::OnPermissionStatusInitialized(
-    mojom::blink::PermissionName permission,
-    mojom::blink::PermissionStatus status) {
-  permission_status_map_.Set(permission, status);
+    PermissionStatusMap initilized_map) {
+  permission_status_map_ = std::move(initilized_map);
+  UpdatePermissionStatusAndAppearance();
 }
 
 Node::InsertionNotificationRequest HTMLPermissionElement::InsertedInto(
     ContainerNode& insertion_point) {
   HTMLElement::InsertedInto(insertion_point);
-  if (permission_descriptors_.empty()) {
-    return kInsertionDone;
-  }
-
-  if (GetDocument().GetFrame()->IsInFencedFrameTree()) {
-    AddConsoleError(
-        String::Format("The permission '%s' is not allowed in fenced frame",
-                       GetType().Utf8().c_str()));
-    return kInsertionDone;
-  }
-
-  if (GetDocument().GetFrame()->IsCrossOriginToOutermostMainFrame() &&
-      !GetExecutionContext()
-           ->GetContentSecurityPolicy()
-           ->HasEnforceFrameAncestorsDirectives()) {
-    AddConsoleError(
-        String::Format("The permission '%s' is not allowed without the CSP "
-                       "'frame-ancestors' directive present.",
-                       GetType().Utf8().c_str()));
-    return kInsertionDone;
-  }
-
-  for (const PermissionDescriptorPtr& descriptor : permission_descriptors_) {
-    if (!GetExecutionContext()->IsFeatureEnabled(
-            PermissionNameToPermissionsPolicyFeature(descriptor->name))) {
-      AddConsoleError(String::Format(
-          "The permission '%s' is not allowed in the current context due to "
-          "PermissionsPolicy",
-          PermissionNameToString(descriptor->name).Utf8().c_str()));
-      return kInsertionDone;
-    }
-  }
-
-  if (embedded_permission_control_receiver_.is_bound()) {
-    return kInsertionDone;
-  }
-
-  if (LocalDOMWindow* window = GetDocument().domWindow()) {
-    CachedPermissionStatus::From(window)->RegisterClient(
-        this, permission_descriptors_);
-    UpdatePermissionStatusAndAppearance();
-  } else {
-    UpdateText();
-  }
-
-  mojo::PendingRemote<EmbeddedPermissionControlClient> client;
-  embedded_permission_control_receiver_.Bind(
-      client.InitWithNewPipeAndPassReceiver(), GetTaskRunner());
-  GetPermissionService()->RegisterPageEmbeddedPermissionControl(
-      mojo::Clone(permission_descriptors_), std::move(client));
-  CHECK(GetDocument().View());
-  GetDocument().View()->RegisterForLifecycleNotifications(this);
+  MaybeRegisterPageEmbeddedPermissionControl();
   return kInsertionDone;
 }
 
@@ -531,14 +486,19 @@ void HTMLPermissionElement::AttachLayoutTree(AttachContext& context) {
   Element::AttachLayoutTree(context);
   DisableClickingTemporarily(DisableReason::kRecentlyAttachedToLayoutTree,
                              kDefaultDisableTimeout);
+  CHECK(GetDocument().View());
+  GetDocument().View()->RegisterForLifecycleNotifications(this);
+}
+
+void HTMLPermissionElement::DetachLayoutTree(bool performing_reattach) {
+  Element::DetachLayoutTree(performing_reattach);
+  if (auto* view = GetDocument().View()) {
+    view->UnregisterFromLifecycleNotifications(this);
+  }
 }
 
 void HTMLPermissionElement::RemovedFrom(ContainerNode& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
-  embedded_permission_control_receiver_.reset();
-  // We also need to remove all permission observer receivers from the set, to
-  // effectively stop listening the permission status change events.
-  permission_observer_receivers_.Clear();
   permission_status_map_.clear();
   aggregated_permission_status_ = std::nullopt;
   pseudo_state_ = {/*has_invalid_style*/ false, /*is_occluded*/ false};
@@ -546,10 +506,11 @@ void HTMLPermissionElement::RemovedFrom(ContainerNode& insertion_point) {
     disable_reason_expire_timer_.Stop();
   }
   intersection_rect_ = std::nullopt;
-  if (auto* view = GetDocument().View()) {
-    view->UnregisterFromLifecycleNotifications(this);
+  if (embedded_permission_control_receiver_.is_bound()) {
+    embedded_permission_control_receiver_.reset();
   }
 
+  is_registered_in_browser_process_ = false;
   if (LocalDOMWindow* window = GetDocument().domWindow()) {
     CachedPermissionStatus::From(window)->UnregisterClient(
         this, permission_descriptors_);
@@ -567,10 +528,14 @@ void HTMLPermissionElement::Focus(const FocusParams& params) {
   HTMLElement::Focus(params);
 }
 
-FocusableState HTMLPermissionElement::SupportsFocus(UpdateBehavior) const {
+FocusableState HTMLPermissionElement::SupportsFocus(
+    UpdateBehavior update_behavior) const {
   // The permission element is only focusable if it has a valid type.
-  return permission_descriptors_.empty() ? FocusableState::kNotFocusable
-                                         : FocusableState::kFocusable;
+  if (fallback_mode_) {
+    return HTMLElement::SupportsFocus(update_behavior);
+  }
+
+  return FocusableState::kFocusable;
 }
 
 int HTMLPermissionElement::DefaultTabIndex() const {
@@ -588,7 +553,8 @@ bool HTMLPermissionElement::CanGeneratePseudoElement(PseudoId id) const {
   switch (id) {
     case PseudoId::kPseudoIdAfter:
     case PseudoId::kPseudoIdBefore:
-    case PseudoId::kPseudoIdCheck:
+    case PseudoId::kPseudoIdCheckMark:
+    case PseudoId::kPseudoIdPickerIcon:
       return false;
     default:
       return Element::CanGeneratePseudoElement(id);
@@ -617,8 +583,6 @@ String HTMLPermissionElement::DisableReasonToString(DisableReason reason) {
   switch (reason) {
     case DisableReason::kRecentlyAttachedToLayoutTree:
       return "being recently attached to layout tree";
-    case DisableReason::kIntersectionRecentlyFullyVisible:
-      return "being recently fully visible";
     case DisableReason::kIntersectionWithViewportChanged:
       return "intersection with viewport changed";
     case DisableReason::kIntersectionVisibilityOutOfViewPortOrClipped:
@@ -639,8 +603,6 @@ HTMLPermissionElement::DisableReasonToUserInteractionDeniedReason(
   switch (reason) {
     case DisableReason::kRecentlyAttachedToLayoutTree:
       return UserInteractionDeniedReason::kRecentlyAttachedToLayoutTree;
-    case DisableReason::kIntersectionRecentlyFullyVisible:
-      return UserInteractionDeniedReason::kIntersectionRecentlyFullyVisible;
     case DisableReason::kIntersectionWithViewportChanged:
       return UserInteractionDeniedReason::kIntersectionWithViewportChanged;
     case DisableReason::kIntersectionVisibilityOutOfViewPortOrClipped:
@@ -662,8 +624,6 @@ AtomicString HTMLPermissionElement::DisableReasonToInvalidReasonString(
   switch (reason) {
     case DisableReason::kRecentlyAttachedToLayoutTree:
       return AtomicString("recently_attached");
-    case DisableReason::kIntersectionRecentlyFullyVisible:
-      return AtomicString("intersection_visible");
     case DisableReason::kIntersectionWithViewportChanged:
       return AtomicString("intersection_changed");
     case DisableReason::kIntersectionVisibilityOutOfViewPortOrClipped:
@@ -693,6 +653,64 @@ void HTMLPermissionElement::OnPermissionServiceConnectionFailed() {
   permission_service_.reset();
 }
 
+bool HTMLPermissionElement::MaybeRegisterPageEmbeddedPermissionControl() {
+  if (embedded_permission_control_receiver_.is_bound()) {
+    return true;
+  }
+
+  if (permission_descriptors_.empty()) {
+    return false;
+  }
+
+  LocalFrame* frame = GetDocument().GetFrame();
+  if (!frame) {
+    return false;
+  }
+
+  if (frame->IsInFencedFrameTree()) {
+    AddConsoleError(
+        String::Format("The permission '%s' is not allowed in fenced frame",
+                       GetType().Utf8().c_str()));
+    return false;
+  }
+
+  if (frame->IsCrossOriginToOutermostMainFrame() &&
+      !GetExecutionContext()
+           ->GetContentSecurityPolicy()
+           ->HasEnforceFrameAncestorsDirectives()) {
+    AddConsoleError(
+        String::Format("The permission '%s' is not allowed without the CSP "
+                       "'frame-ancestors' directive present.",
+                       GetType().Utf8().c_str()));
+    return false;
+  }
+
+  for (const PermissionDescriptorPtr& descriptor : permission_descriptors_) {
+    if (!GetExecutionContext()->IsFeatureEnabled(
+            PermissionNameToPermissionsPolicyFeature(descriptor->name))) {
+      AddConsoleError(String::Format(
+          "The permission '%s' is not allowed in the current context due to "
+          "PermissionsPolicy",
+          PermissionNameToString(descriptor->name).Utf8().c_str()));
+      return false;
+    }
+  }
+
+  CachedPermissionStatus::From(GetDocument().domWindow())
+      ->RegisterClient(this, permission_descriptors_);
+  mojo::PendingRemote<EmbeddedPermissionControlClient> client;
+  embedded_permission_control_receiver_.Bind(
+      client.InitWithNewPipeAndPassReceiver(), GetTaskRunner());
+  GetPermissionService()->RegisterPageEmbeddedPermissionControl(
+      mojo::Clone(permission_descriptors_), std::move(client));
+  return true;
+}
+
+void HTMLPermissionElement::LangAttributeChanged() {
+  UpdateText();
+  HTMLElement::LangAttributeChanged();
+}
+
 void HTMLPermissionElement::AttributeChanged(
     const AttributeModificationParams& params) {
   if (params.name == html_names::kTypeAttr) {
@@ -710,12 +728,15 @@ void HTMLPermissionElement::AttributeChanged(
       AddConsoleError("The permission type '" + GetType().GetString() +
                       "' is not supported by the "
                       "permission element.");
+      EnableFallbackMode();
       return;
     }
 
     CHECK_LE(permission_descriptors_.size(), 2U)
         << "Unexpected permissions size " << permission_descriptors_.size();
   }
+
+  MaybeRegisterPageEmbeddedPermissionControl();
 
   if (params.name == html_names::kPreciselocationAttr) {
     // This attribute can only be set once, and can not be modified afterwards.
@@ -725,14 +746,6 @@ void HTMLPermissionElement::AttributeChanged(
 
     is_precise_location_ = true;
     UpdateText();
-  }
-
-  if (params.name == html_names::kLangAttr) {
-    UpdateText();
-  }
-
-  if (!permission_status_map_.empty()) {
-    UpdatePermissionStatusAndAppearance();
   }
 
   HTMLElement::AttributeChanged(params);
@@ -747,6 +760,12 @@ void HTMLPermissionElement::DidAddUserAgentShadowRoot(ShadowRoot& root) {
 
 void HTMLPermissionElement::AdjustStyle(ComputedStyleBuilder& builder) {
   Element::AdjustStyle(builder);
+
+  // As the permission element's type is invalid the permission element starts
+  // behaving as an HTMLUnknownElement.
+  if (fallback_mode_) {
+    return;
+  }
 
   builder.SetOutlineOffset(builder.OutlineOffset().ClampNegativeToZero());
 
@@ -838,7 +857,7 @@ void HTMLPermissionElement::AdjustStyle(ComputedStyleBuilder& builder) {
       IsBorderSufficientlyDistinctFromBackgroundColor(builder.CloneStyle());
 
   if (unlimited_width_allowed) {
-    if (builder.PaddingRight().IsSpecified() &&
+    if (builder.PaddingRight().HasOnlyFixedAndPercent() &&
         !builder.PaddingRight().IsZero() &&
         builder.PaddingLeft() != builder.PaddingRight()) {
       AddConsoleError(
@@ -855,9 +874,10 @@ void HTMLPermissionElement::AdjustStyle(ComputedStyleBuilder& builder) {
     // If width is set to auto and there is left padding specified, we will
     // respect the padding (up to a certain maximum), otherwise the padding has
     // no effect. We treat height and top/bottom padding similarly.
-    if (builder.Width().IsAuto() && builder.PaddingLeft().IsSpecified() &&
+    if (builder.Width().IsAuto() &&
+        builder.PaddingLeft().HasOnlyFixedAndPercent() &&
         !builder.PaddingLeft().IsZero()) {
-      if (builder.PaddingRight().IsSpecified() &&
+      if (builder.PaddingRight().HasOnlyFixedAndPercent() &&
           !builder.PaddingRight().IsZero() &&
           builder.PaddingLeft() != builder.PaddingRight()) {
         AddConsoleError(
@@ -872,15 +892,17 @@ void HTMLPermissionElement::AdjustStyle(ComputedStyleBuilder& builder) {
                                     kMaxHorizontalPaddingToFontSizeRatio,
                                 /*should_multiply_by_content_size=*/false));
       builder.SetPaddingRight(builder.PaddingLeft());
+      builder.SetWidth(Length::FitContent());
     } else {
       builder.ResetPaddingLeft();
       builder.ResetPaddingRight();
     }
   }
 
-  if (builder.Height().IsAuto() && builder.PaddingTop().IsSpecified() &&
+  if (builder.Height().IsAuto() &&
+      builder.PaddingTop().HasOnlyFixedAndPercent() &&
       !builder.PaddingTop().IsZero()) {
-    if (builder.PaddingBottom().IsSpecified() &&
+    if (builder.PaddingBottom().HasOnlyFixedAndPercent() &&
         !builder.PaddingBottom().IsZero() &&
         builder.PaddingTop() != builder.PaddingBottom()) {
       AddConsoleError(
@@ -893,14 +915,32 @@ void HTMLPermissionElement::AdjustStyle(ComputedStyleBuilder& builder) {
         /*upper_bound=*/builder.FontSize() * kMaxVerticalPaddingToFontSizeRatio,
         /*should_multiply_by_content_size=*/false));
     builder.SetPaddingBottom(builder.PaddingTop());
+    builder.SetHeight(Length::FitContent());
   } else {
     builder.ResetPaddingTop();
     builder.ResetPaddingBottom();
+  }
+
+  if (builder.BorderBottomWidth() > builder.FontSize()) {
+    builder.SetBorderBottomWidth(builder.FontSize());
+  }
+  if (builder.BorderTopWidth() > builder.FontSize()) {
+    builder.SetBorderTopWidth(builder.FontSize());
+  }
+  if (builder.BorderLeftWidth() > builder.FontSize()) {
+    builder.SetBorderLeftWidth(builder.FontSize());
+  }
+  if (builder.BorderRightWidth() > builder.FontSize()) {
+    builder.SetBorderRightWidth(builder.FontSize());
   }
 }
 
 void HTMLPermissionElement::DidRecalcStyle(const StyleRecalcChange change) {
   HTMLElement::DidRecalcStyle(change);
+
+  if (fallback_mode_) {
+    return;
+  }
 
   if (!IsStyleValid()) {
     DisableClickingIndefinitely(DisableReason::kInvalidStyle);
@@ -919,6 +959,11 @@ void HTMLPermissionElement::DidRecalcStyle(const StyleRecalcChange change) {
 }
 
 void HTMLPermissionElement::DefaultEventHandler(Event& event) {
+  if (fallback_mode_) {
+    HTMLElement::DefaultEventHandler(event);
+    return;
+  }
+
   if (event.type() == event_type_names::kDOMActivate) {
     event.SetDefaultHandled();
     if (event.IsFullyTrusted() ||
@@ -932,10 +977,13 @@ void HTMLPermissionElement::DefaultEventHandler(Event& event) {
               kDefaultDisableTimeout) {
         AddConsoleError(
             "The permission element already has a request in progress.");
+        RecordUserInteractionAccepted(false);
         return;
       }
 
-      if (IsClickingEnabled()) {
+      bool is_user_interaction_enabled = IsClickingEnabled();
+      RecordUserInteractionAccepted(is_user_interaction_enabled);
+      if (is_user_interaction_enabled) {
         RequestPageEmbededPermissions();
       }
     } else {
@@ -945,6 +993,7 @@ void HTMLPermissionElement::DefaultEventHandler(Event& event) {
       AddConsoleError(
           "The permission element can only be activated by actual user "
           "clicks.");
+      RecordUserInteractionAccepted(false);
       base::UmaHistogramEnumeration(
           "Blink.PermissionElement.UserInteractionDeniedReason",
           UserInteractionDeniedReason::kUntrustedEvent);
@@ -955,6 +1004,7 @@ void HTMLPermissionElement::DefaultEventHandler(Event& event) {
   if (HandleKeyboardActivation(event)) {
     return;
   }
+
   HTMLElement::DefaultEventHandler(event);
 }
 
@@ -973,19 +1023,9 @@ void HTMLPermissionElement::RequestPageEmbededPermissions() {
                     WrapWeakPersistent(this)));
 }
 
-void HTMLPermissionElement::RegisterPermissionObserver(
-    const PermissionDescriptorPtr& descriptor,
-    MojoPermissionStatus current_status) {
-  mojo::PendingRemote<PermissionObserver> observer;
-  permission_observer_receivers_.Add(observer.InitWithNewPipeAndPassReceiver(),
-                                     descriptor->name, GetTaskRunner());
-  GetPermissionService()->AddPageEmbeddedPermissionObserver(
-      descriptor.Clone(), current_status, std::move(observer));
-}
-
 void HTMLPermissionElement::OnPermissionStatusChange(
+    PermissionName permission_name,
     MojoPermissionStatus status) {
-  auto permission_name = permission_observer_receivers_.current_context();
   auto it = permission_status_map_.find(permission_name);
   CHECK(it != permission_status_map_.end());
   it->value = status;
@@ -1009,15 +1049,11 @@ void HTMLPermissionElement::OnEmbeddedPermissionControlRegistered(
   CHECK(statuses.has_value());
   CHECK_EQ(statuses->size(), permission_descriptors_.size());
 
-  bool needs_permission_observer_registration =
-      permission_observer_receivers_.empty();
+  is_registered_in_browser_process_ = true;
   for (wtf_size_t i = 0; i < permission_descriptors_.size(); ++i) {
     auto status = (*statuses)[i];
     const auto& descriptor = permission_descriptors_[i];
     permission_status_map_.Set(descriptor->name, status);
-    if (needs_permission_observer_registration) {
-      RegisterPermissionObserver(descriptor, status);
-    }
   }
 
   UpdatePermissionStatusAndAppearance();
@@ -1028,15 +1064,24 @@ void HTMLPermissionElement::OnEmbeddedPermissionsDecided(
     EmbeddedPermissionControlResult result) {
   pending_request_created_ = std::nullopt;
 
+  // The events `kDismiss` and `kResolve` will be deprecated and replaced by
+  // `kPromptaction` and `kPromptdismiss`. We will keep both for backward
+  // compability and will remove the old events in M138.
   switch (result) {
     case EmbeddedPermissionControlResult::kDismissed:
+      DispatchEvent(
+          *Event::CreateCancelableBubble(event_type_names::kPromptdismiss));
       DispatchEvent(*Event::CreateCancelableBubble(event_type_names::kDismiss));
       return;
     case EmbeddedPermissionControlResult::kGranted:
       aggregated_permission_status_ = MojoPermissionStatus::GRANTED;
+      DispatchEvent(
+          *Event::CreateCancelableBubble(event_type_names::kPromptaction));
       DispatchEvent(*Event::CreateCancelableBubble(event_type_names::kResolve));
       return;
     case EmbeddedPermissionControlResult::kDenied:
+      DispatchEvent(
+          *Event::CreateCancelableBubble(event_type_names::kPromptaction));
       DispatchEvent(*Event::CreateCancelableBubble(event_type_names::kResolve));
       return;
     case EmbeddedPermissionControlResult::kNotSupported:
@@ -1048,7 +1093,7 @@ void HTMLPermissionElement::OnEmbeddedPermissionsDecided(
     case EmbeddedPermissionControlResult::kResolvedNoUserGesture:
       return;
   }
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void HTMLPermissionElement::DisableReasonExpireTimerFired(TimerBase* timer) {
@@ -1064,8 +1109,9 @@ void HTMLPermissionElement::MaybeDispatchValidationChangeEvent() {
 
   // Always keep `clicking_enabled_state_` up-to-date
   clicking_enabled_state_ = state;
-  DispatchEvent(*Event::CreateCancelableBubble(
-      event_type_names::kValidationstatuschange));
+  EnqueueEvent(
+      *Event::CreateCancelableBubble(event_type_names::kValidationstatuschange),
+      TaskType::kDOMManipulation);
 }
 
 void HTMLPermissionElement::UpdateSnapshot() {
@@ -1110,7 +1156,7 @@ bool HTMLPermissionElement::IsClickingEnabled() {
     return false;
   }
 
-  if (!IsRegisteredInBrowserProcess()) {
+  if (!is_registered_in_browser_process()) {
     AddConsoleError(String::Format(
         "The permission element '%s' cannot be activated because of security "
         "checks or because the page's quota has been exceeded.",
@@ -1127,25 +1173,27 @@ bool HTMLPermissionElement::IsClickingEnabled() {
     return true;
   }
 
-  // Remove expired reasons. If a non-expired reason is found, then clicking is
-  // disabled.
+  // Remove expired reasons. If the remaining map is not empty, clicking is
+  // disabled. Record and log all the remaining reasons in the map in this case.
   base::TimeTicks now = base::TimeTicks::Now();
-  while (!clicking_disabled_reasons_.empty()) {
-    auto it = clicking_disabled_reasons_.begin();
-    if (it->value >= now) {
-      AddConsoleError(String::Format(
-          "The permission element '%s' cannot be activated due to %s.",
-          GetType().Utf8().c_str(),
-          DisableReasonToString(it->key).Utf8().c_str()));
-      base::UmaHistogramEnumeration(
-          "Blink.PermissionElement.UserInteractionDeniedReason",
-          DisableReasonToUserInteractionDeniedReason(it->key));
-      return false;
+  clicking_disabled_reasons_.erase_if(
+      [&now](const auto& it) { return it.value < now; });
+
+  for (const auto& it : clicking_disabled_reasons_) {
+    AddConsoleError(String::Format(
+        "The permission element '%s' cannot be activated due to %s.",
+        GetType().Utf8().c_str(),
+        DisableReasonToString(it.key).Utf8().c_str()));
+    if (it.key == DisableReason::kIntersectionVisibilityOccludedOrDistorted &&
+        occluder_node_id_ != kInvalidDOMNodeId) {
+      AddOccluderInfoToConsole();
     }
-    clicking_disabled_reasons_.erase(it);
+    base::UmaHistogramEnumeration(
+        "Blink.PermissionElement.UserInteractionDeniedReason",
+        DisableReasonToUserInteractionDeniedReason(it.key));
   }
 
-  return true;
+  return clicking_disabled_reasons_.empty();
 }
 
 void HTMLPermissionElement::DisableClickingIndefinitely(DisableReason reason) {
@@ -1194,7 +1242,7 @@ void HTMLPermissionElement::EnableClickingAfterDelay(
 
 HTMLPermissionElement::ClickingEnabledState
 HTMLPermissionElement::GetClickingEnabledState() const {
-  if (permission_descriptors_.empty()) {
+  if (fallback_mode_) {
     return {false, AtomicString("type_invalid")};
   }
 
@@ -1209,16 +1257,16 @@ HTMLPermissionElement::GetClickingEnabledState() const {
              ->HasEnforceFrameAncestorsDirectives()) {
       return {false, AtomicString("illegal_subframe")};
     }
-  }
 
-  for (const PermissionDescriptorPtr& descriptor : permission_descriptors_) {
-    if (!GetExecutionContext()->IsFeatureEnabled(
-            PermissionNameToPermissionsPolicyFeature(descriptor->name))) {
-      return {false, AtomicString("illegal_subframe")};
+    for (const PermissionDescriptorPtr& descriptor : permission_descriptors_) {
+      if (!GetExecutionContext()->IsFeatureEnabled(
+              PermissionNameToPermissionsPolicyFeature(descriptor->name))) {
+        return {false, AtomicString("illegal_subframe")};
+      }
     }
   }
 
-  if (!IsRegisteredInBrowserProcess()) {
+  if (!is_registered_in_browser_process()) {
     return {false, AtomicString("unsuccessful_registration")};
   }
 
@@ -1279,11 +1327,11 @@ void HTMLPermissionElement::RefreshDisableReasonsAndUpdateTimer() {
 }
 
 void HTMLPermissionElement::UpdatePermissionStatusAndAppearance() {
-  if (base::ranges::any_of(permission_status_map_, [](const auto& status) {
+  if (std::ranges::any_of(permission_status_map_, [](const auto& status) {
         return status.value == MojoPermissionStatus::DENIED;
       })) {
     aggregated_permission_status_ = MojoPermissionStatus::DENIED;
-  } else if (base::ranges::any_of(
+  } else if (std::ranges::any_of(
                  permission_status_map_, [](const auto& status) {
                    return status.value == MojoPermissionStatus::ASK;
                  })) {
@@ -1321,12 +1369,12 @@ void HTMLPermissionElement::UpdateText() {
 
   AtomicString language_string = ComputeInheritedLanguage().LowerASCII();
 
-  int untranslated_message_id =
+  uint16_t untranslated_message_id =
       permission_count == 1
           ? GetUntranslatedMessageIDSinglePermission(
                 permission_name, permission_granted, is_precise_location_)
           : GetUntranslatedMessageIDMultiplePermissions(permission_granted);
-  int translated_message_id =
+  uint16_t translated_message_id =
       GetTranslatedMessageID(untranslated_message_id, language_string);
   CHECK(translated_message_id);
   permission_text_span_->setInnerText(
@@ -1334,11 +1382,13 @@ void HTMLPermissionElement::UpdateText() {
 }
 
 void HTMLPermissionElement::AddConsoleError(String error) {
+  LOG(ERROR) << error;
   AddConsoleMessage(mojom::blink::ConsoleMessageSource::kRendering,
                     mojom::blink::ConsoleMessageLevel::kError, error);
 }
 
 void HTMLPermissionElement::AddConsoleWarning(String warning) {
+  LOG(WARNING) << warning;
   AddConsoleMessage(mojom::blink::ConsoleMessageSource::kRendering,
                     mojom::blink::ConsoleMessageLevel::kWarning, warning);
 }
@@ -1348,7 +1398,7 @@ void HTMLPermissionElement::OnIntersectionChanged(
   CHECK(!entries.empty());
   Member<IntersectionObserverEntry> latest_observation = entries.back();
   CHECK_EQ(this, latest_observation->target());
-  IntersectionVisibility intersection_visibility =
+  IntersectionVisibility new_intersection_visibility =
       IntersectionVisibility::kFullyVisible;
   // `intersectionRatio` >= `kIntersectionThreshold` (1.0f) means the element is
   // fully visible on the viewport (vs `intersectionRatio` < 1.0f means its
@@ -1356,29 +1406,35 @@ void HTMLPermissionElement::OnIntersectionChanged(
   // `isVisible` false means the element is occluded by something else or has
   // distorted visual effect applied.
   if (!latest_observation->isVisible()) {
-    intersection_visibility =
+    new_intersection_visibility =
         latest_observation->intersectionRatio() >= kIntersectionThreshold
             ? IntersectionVisibility::kOccludedOrDistorted
             : IntersectionVisibility::kOutOfViewportOrClipped;
   }
 
-  if (intersection_visibility_ == intersection_visibility) {
+  if (intersection_visibility_ == new_intersection_visibility) {
     return;
   }
-  intersection_visibility_ = intersection_visibility;
+
+  intersection_visibility_ = new_intersection_visibility;
+  occluder_node_id_ = kInvalidDOMNodeId;
   switch (intersection_visibility_) {
     case IntersectionVisibility::kFullyVisible: {
-      std::optional<base::TimeDelta> interval =
+      std::optional<base::TimeDelta> recently_attached_timeout_remaining =
           GetRecentlyAttachedTimeoutRemaining();
-      DisableClickingTemporarily(
-          DisableReason::kIntersectionRecentlyFullyVisible,
-          interval ? interval.value() : kDefaultDisableTimeout);
-      EnableClicking(DisableReason::kIntersectionVisibilityOccludedOrDistorted);
-      EnableClicking(
-          DisableReason::kIntersectionVisibilityOutOfViewPortOrClipped);
+      base::TimeDelta interval =
+          recently_attached_timeout_remaining
+              ? recently_attached_timeout_remaining.value()
+              : kDefaultDisableTimeout;
+      EnableClickingAfterDelay(
+          DisableReason::kIntersectionVisibilityOccludedOrDistorted, interval);
+      EnableClickingAfterDelay(
+          DisableReason::kIntersectionVisibilityOutOfViewPortOrClipped,
+          interval);
       break;
     }
     case IntersectionVisibility::kOccludedOrDistorted:
+      occluder_node_id_ = latest_observation->GetGeometry().occluder_node_id();
       DisableClickingIndefinitely(
           DisableReason::kIntersectionVisibilityOccludedOrDistorted);
       break;
@@ -1441,13 +1497,17 @@ bool HTMLPermissionElement::IsStyleValid() {
       GetComputedStyle()->EffectiveZoom() /
       GetDocument().GetFrame()->LocalFrameRoot().LayoutZoomFactor();
 
+  bool is_font_monospace =
+      GetComputedStyle()->GetFontDescription().IsMonospace();
+
   // The min size is what `font-size:small` looks like when rendered in the
   // document element of the local root frame, without any intervening CSS
   // zoom factors applied.
   float min_font_size_dip = FontSizeFunctions::FontSizeForKeyword(
       &GetDocument(), FontSizeFunctions::KeywordSize(CSSValueID::kSmall),
-      GetComputedStyle()->GetFontDescription().IsMonospace());
-  if (font_size_dip < min_font_size_dip / css_zoom_factor) {
+      is_font_monospace);
+  if (font_size_dip <
+      std::min(min_font_size_dip, kDefaultSmallFontSize) / css_zoom_factor) {
     AddConsoleWarning(
         String::Format("Font size of the permission element '%s' is too small",
                        GetType().Utf8().c_str()));
@@ -1461,8 +1521,9 @@ bool HTMLPermissionElement::IsStyleValid() {
   // zoom factors applied.
   float max_font_size_dip = FontSizeFunctions::FontSizeForKeyword(
       &GetDocument(), FontSizeFunctions::KeywordSize(CSSValueID::kXxxLarge),
-      GetComputedStyle()->GetFontDescription().IsMonospace());
-  if (font_size_dip > max_font_size_dip / css_zoom_factor) {
+      is_font_monospace);
+  if (font_size_dip >
+      std::max(max_font_size_dip, kDefaultXxxLargeFontSize) / css_zoom_factor) {
     AddConsoleWarning(
         String::Format("Font size of the permission element '%s' is too large",
                        GetType().Utf8().c_str()));
@@ -1610,6 +1671,42 @@ HTMLPermissionElement::GetRecentlyAttachedTimeoutRemaining() const {
   }
 
   return it->value - now;
+}
+
+void HTMLPermissionElement::EnableFallbackMode() {
+  CHECK(!fallback_mode_);
+  fallback_mode_ = true;
+  intersection_observer_->unobserve(this);
+
+  // Adding this slot element will make all children of the permission element
+  // render, the permission element's built-in elements are removed at the same
+  // time.
+  UserAgentShadowRoot()->AppendChild(
+      MakeGarbageCollected<HTMLSlotElement>(GetDocument()));
+  UserAgentShadowRoot()->RemoveChild(permission_text_span_);
+
+  MaybeDispatchValidationChangeEvent();
+}
+
+void HTMLPermissionElement::AddOccluderInfoToConsole() {
+  Node* node = DOMNodeIds::NodeForId(occluder_node_id_);
+  if (!node) {
+    return;
+  }
+  AddConsoleError(
+      String::Format("The permission element is occluded by node %s",
+                     node->ToString().Utf8().c_str()));
+
+  auto* element = DynamicTo<Element>(node);
+  if (element && (element->HasID() || element->HasClass())) {
+    return;
+  }
+  // Printing parent node might give some useful information if there's no id or
+  // class attr.
+  if (Node* parent = node->parentNode()) {
+    AddConsoleError(String::Format("The occluder's parent node is %s",
+                                   parent->ToString().Utf8().c_str()));
+  }
 }
 
 }  // namespace blink

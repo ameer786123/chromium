@@ -16,7 +16,7 @@
 #include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "chrome/updater/constants.h"
+#include "chrome/updater/branded_constants.h"
 #include "chrome/updater/tag.h"
 #include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_branding.h"
@@ -139,8 +139,7 @@ bool CrashClient::InitializeCrashReporting(UpdaterScope updater_scope) {
       (base::Environment::Create()->GetVar(kUsageStatsEnabled,
                                            &env_usage_stats) &&
        env_usage_stats == kUsageStatsEnabledValueEnabled) ||
-      (OtherAppUsageStatsAllowed({UPDATER_APPID, LEGACY_GOOGLE_UPDATE_APPID},
-                                 updater_scope))) {
+      UsageStatsProvider::Create(updater_scope)->AnyAppEnablesUsageStats()) {
     crashpad::Settings* crashpad_settings = database_->GetSettings();
     CHECK(crashpad_settings);
     crashpad_settings->SetUploadsEnabled(true);

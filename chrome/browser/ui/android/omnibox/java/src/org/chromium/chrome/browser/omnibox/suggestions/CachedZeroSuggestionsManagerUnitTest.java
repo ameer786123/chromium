@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.omnibox.suggestions;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import static org.chromium.chrome.browser.omnibox.suggestions.CachedZeroSuggestionsManager.KEY_JUMP_START_PAGE_CLASS;
@@ -19,6 +21,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.omnibox.suggestions.CachedZeroSuggestionsManager.SearchEngineMetadata;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
@@ -35,6 +38,7 @@ import java.util.List;
 @RunWith(BaseRobolectricTestRunner.class)
 public class CachedZeroSuggestionsManagerUnitTest {
     private static final int PAGE_CLASS = 0;
+    private static final AutocompleteResult EMPTY_RESULT = AutocompleteResult.fromCache(null, null);
 
     /**
      * Compare two instances of CachedZeroSuggestionsManager to see if they are same, asserting if
@@ -132,6 +136,40 @@ public class CachedZeroSuggestionsManagerUnitTest {
     }
 
     @Test
+    public void eraseCachedSuggestionsByPageClass() {
+        var dataToCache1 =
+                AutocompleteResult.fromCache(buildSimpleSuggestionsList("test1", 2), null);
+        var dataToCache2 =
+                AutocompleteResult.fromCache(buildSimpleSuggestionsList("test2", 5), null);
+
+        CachedZeroSuggestionsManager.saveToCache(PAGE_CLASS, dataToCache1);
+        CachedZeroSuggestionsManager.saveToCache(PAGE_CLASS + 1, dataToCache2);
+
+        { // Confirmation check: no data lost.
+            var dataFromCache1 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
+            var dataFromCache2 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS + 1);
+            assertAutocompleteResultEquals(dataToCache1, dataFromCache1);
+            assertAutocompleteResultEquals(dataToCache2, dataFromCache2);
+        }
+
+        { // Erase first page class. Confirm first result is empty.
+            CachedZeroSuggestionsManager.eraseCachedSuggestionsByPageClass(PAGE_CLASS);
+            var dataFromCache1 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
+            var dataFromCache2 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS + 1);
+            assertAutocompleteResultEquals(EMPTY_RESULT, dataFromCache1);
+            assertAutocompleteResultEquals(dataToCache2, dataFromCache2);
+        }
+
+        { // Erase second page class. Confirm both results are empty.
+            CachedZeroSuggestionsManager.eraseCachedSuggestionsByPageClass(PAGE_CLASS + 1);
+            var dataFromCache1 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
+            var dataFromCache2 = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS + 1);
+            assertAutocompleteResultEquals(EMPTY_RESULT, dataFromCache1);
+            assertAutocompleteResultEquals(EMPTY_RESULT, dataFromCache2);
+        }
+    }
+
+    @Test
     public void eraseCachedData_removesAllCachedEntries() {
         var dataToCache = AutocompleteResult.fromCache(buildSimpleSuggestionsList("test", 3), null);
 
@@ -180,16 +218,15 @@ public class CachedZeroSuggestionsManagerUnitTest {
         CachedZeroSuggestionsManager.eraseCachedData();
 
         var dataFromCache = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
-        assertAutocompleteResultEquals(AutocompleteResult.fromCache(null, null), dataFromCache);
+        assertAutocompleteResultEquals(EMPTY_RESULT, dataFromCache);
     }
 
     @Test
     public void readFromCache_restoreDetailsFromEmptyResult() {
-        var dataToCache = AutocompleteResult.fromCache(null, null);
-        CachedZeroSuggestionsManager.saveToCache(PAGE_CLASS, dataToCache);
+        CachedZeroSuggestionsManager.saveToCache(PAGE_CLASS, EMPTY_RESULT);
 
         var dataFromCache = CachedZeroSuggestionsManager.readFromCache(PAGE_CLASS);
-        assertAutocompleteResultEquals(dataToCache, dataFromCache);
+        assertAutocompleteResultEquals(EMPTY_RESULT, dataFromCache);
     }
 
     @Test
@@ -281,5 +318,34 @@ public class CachedZeroSuggestionsManagerUnitTest {
         CachedZeroSuggestionsManager.eraseCachedData();
         assertFalse(prefs.contains(KEY_JUMP_START_URL));
         assertFalse(prefs.contains(KEY_JUMP_START_PAGE_CLASS));
+    }
+
+    @Test
+    public void dseMetadata_restoreFromEmptyCache() {
+        var prefs = ContextUtils.getAppSharedPreferences();
+        // Start with empty prefs.
+        prefs.edit().clear().apply();
+        assertNull(CachedZeroSuggestionsManager.readSearchEngineMetadata());
+    }
+
+    @Test
+    public void dseMetadata_restoreFromEmptyKeyword() {
+        var prefs = ContextUtils.getAppSharedPreferences();
+
+        CachedZeroSuggestionsManager.saveSearchEngineMetadata(new SearchEngineMetadata(null));
+        assertNull(CachedZeroSuggestionsManager.readSearchEngineMetadata());
+
+        CachedZeroSuggestionsManager.saveSearchEngineMetadata(new SearchEngineMetadata(""));
+        assertNull(CachedZeroSuggestionsManager.readSearchEngineMetadata());
+    }
+
+    @Test
+    public void dseMetadata_restoreValidMetadata() {
+        var prefs = ContextUtils.getAppSharedPreferences();
+
+        CachedZeroSuggestionsManager.saveSearchEngineMetadata(new SearchEngineMetadata("keyword"));
+        var persisted = CachedZeroSuggestionsManager.readSearchEngineMetadata();
+        assertNotNull(persisted);
+        assertEquals("keyword", persisted.keyword);
     }
 }

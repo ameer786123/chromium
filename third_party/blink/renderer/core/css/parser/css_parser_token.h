@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_PARSER_TOKEN_H_
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/parser/at_rule_descriptors.h"
@@ -73,8 +74,6 @@ enum HashTokenType {
 };
 
 class CORE_EXPORT CSSParserToken {
-  USING_FAST_MALLOC(CSSParserToken);
-
  public:
   enum BlockType {
     kNotBlock,
@@ -132,17 +131,7 @@ class CORE_EXPORT CSSParserToken {
     return static_cast<CSSParserTokenType>(type_);
   }
   StringView Value() const {
-    if (value_is_inline_) {
-      DCHECK(value_is_8bit_);
-      return StringView(reinterpret_cast<const LChar*>(value_data_char_inline_),
-                        value_length_);
-    }
-    if (value_is_8bit_) {
-      return StringView(reinterpret_cast<const LChar*>(value_data_char_raw_),
-                        value_length_);
-    }
-    return StringView(reinterpret_cast<const UChar*>(value_data_char_raw_),
-                      value_length_);
+    return value_is_8bit_ ? StringView(Span8()) : StringView(Span16());
   }
 
   bool IsEOF() const { return type_ == static_cast<unsigned>(kEOFToken); }
@@ -205,8 +194,7 @@ class CORE_EXPORT CSSParserToken {
       case kLeftBraceToken:
         return kRightBraceToken;
       default:
-        NOTREACHED_IN_MIGRATION();
-        return kEOFToken;
+        NOTREACHED();
     }
   }
 
@@ -229,7 +217,8 @@ class CORE_EXPORT CSSParserToken {
     value_length_ = string.length();
     value_is_8bit_ = string.Is8Bit();
     if (value_is_8bit_ && value_length_ <= sizeof(value_data_char_inline_)) {
-      memcpy(value_data_char_inline_, string.Bytes(), value_length_);
+      UNSAFE_TODO(
+          memcpy(value_data_char_inline_, string.Bytes(), value_length_));
       value_is_inline_ = true;
     } else {
       value_data_char_raw_ = string.Bytes();
@@ -243,6 +232,19 @@ class CORE_EXPORT CSSParserToken {
     } else {
       return value_data_char_raw_;
     }
+  }
+  base::span<const LChar> Span8() const {
+    DCHECK(value_is_8bit_);
+    // SAFETY: InitValueFromStringView() ensures the expression is safe.
+    return UNSAFE_BUFFERS(
+        {static_cast<const LChar*>(ValueDataCharRaw()), value_length_});
+  }
+  base::span<const UChar> Span16() const {
+    DCHECK(!value_is_8bit_);
+    DCHECK(!value_is_inline_);
+    // SAFETY: InitValueFromStringView() ensures the expression is safe.
+    return UNSAFE_BUFFERS(
+        {static_cast<const UChar*>(value_data_char_raw_), value_length_});
   }
 
   // Bitfields are all declared as type `unsigned` based on observation that
@@ -270,7 +272,7 @@ class CORE_EXPORT CSSParserToken {
   unsigned value_is_8bit_ : 1;
 
   // These are free bits. You may take from them if you need.
-  unsigned padding_ : 12;
+  [[maybe_unused]] unsigned padding_ : 12;
 
   unsigned value_length_;
   union {

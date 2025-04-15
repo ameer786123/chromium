@@ -5,14 +5,16 @@
 #include "chrome/browser/ai/ai_on_device_model_component_observer.h"
 
 #include "base/types/pass_key.h"
-#include "chrome/browser/ai/ai_manager_keyed_service.h"
+#include "chrome/browser/ai/ai_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/component_updater/optimization_guide_on_device_model_installer.h"
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/update_client.h"
 
+using update_client::ComponentState;
+
 AIOnDeviceModelComponentObserver::AIOnDeviceModelComponentObserver(
-    AIManagerKeyedService* ai_manager)
+    AIManager* ai_manager)
     : ai_manager_(ai_manager) {
   if (g_browser_process->component_updater()) {
     component_updater_observation_.Observe(
@@ -32,13 +34,13 @@ void AIOnDeviceModelComponentObserver::OnEvent(
     return;
   }
 
-  if (item.state == update_client::ComponentState::kDownloading ||
-      item.state == update_client::ComponentState::kDownloadingDiff ||
-      item.state == update_client::ComponentState::kUpToDate) {
-    if (item.downloaded_bytes >= 0 && item.total_bytes >= 0) {
-      ai_manager_->OnTextModelDownloadProgressChange(
-          base::PassKey<AIOnDeviceModelComponentObserver>(),
-          item.downloaded_bytes, item.total_bytes);
-    }
+  is_downloading_ = item.state == ComponentState::kDownloading ||
+                    item.state == ComponentState::kDownloadingDiff ||
+                    item.state == ComponentState::kUpdating ||
+                    item.state == ComponentState::kUpdatingDiff;
+  if (is_downloading_ && item.downloaded_bytes >= 0 && item.total_bytes >= 0) {
+    ai_manager_->OnTextModelDownloadProgressChange(
+        base::PassKey<AIOnDeviceModelComponentObserver>(),
+        item.downloaded_bytes, item.total_bytes);
   }
 }

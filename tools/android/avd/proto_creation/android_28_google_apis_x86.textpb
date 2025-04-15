@@ -30,6 +30,12 @@ avd_settings {
     key: "GLESDynamicVersion"
     value: "on"
   }
+  # Incrase ram to 2048MB, and vm heap size to 512MB to avoid low memory issue.
+  ram_size: 2048
+  avd_properties {
+    key: "vm.heapSize"
+    value: "512"
+  }
 }
 avd_variants {
   key: "swarming"
@@ -53,5 +59,5 @@ avd_variants {
 min_sdk: 28
 additional_apk {
   package_name: "chrome_internal/third_party/google3/apks/gmscore/x86"
-  version: "-rCzVFgS21dIKhLDnLwcldFij4xnnS0scaKnB44WlfoC" # 24.26.32
+  version: "OYrEFrkwaK-a1rf2CSiqXp1ZugsWxQj3wS6LxjoEywMC" # 25.07.33
 }

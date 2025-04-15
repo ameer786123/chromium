@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
@@ -42,19 +44,6 @@
 
 namespace {
 
-class InProcessBrowserTestP
-    : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<const char*> {
-};
-
-IN_PROC_BROWSER_TEST_P(InProcessBrowserTestP, TestP) {
-  EXPECT_EQ(0, strcmp("foo", GetParam()));
-}
-
-INSTANTIATE_TEST_SUITE_P(IPBTP,
-                         InProcessBrowserTestP,
-                         ::testing::Values("foo"));
-
 // WebContents observer that can detect provisional load failures.
 class LoadFailObserver : public content::WebContentsObserver {
  public:
@@ -88,6 +77,20 @@ class LoadFailObserver : public content::WebContentsObserver {
   GURL validated_url_;
 };
 
+}  // namespace
+
+class InProcessBrowserTestP
+    : public InProcessBrowserTest,
+      public ::testing::WithParamInterface<const char*> {};
+
+IN_PROC_BROWSER_TEST_P(InProcessBrowserTestP, TestP) {
+  EXPECT_EQ(0, strcmp("foo", GetParam()));
+}
+
+INSTANTIATE_TEST_SUITE_P(IPBTP,
+                         InProcessBrowserTestP,
+                         ::testing::Values("foo"));
+
 // Tests that InProcessBrowserTest cannot resolve external host, in this case
 // "google.com" and "cnn.com". Using external resources is disabled by default
 // in InProcessBrowserTest because it causes flakiness.
@@ -95,10 +98,8 @@ IN_PROC_BROWSER_TEST_F(InProcessBrowserTest, ExternalConnectionFail) {
   content::WebContents* contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  const char* const kURLs[] = {
-    "http://www.google.com/",
-    "http://www.cnn.com/"
-  };
+  const auto kURLs = std::to_array<const char*>(
+      {"https://www.google.com/", "https://www.cnn.com/"});
   for (size_t i = 0; i < std::size(kURLs); ++i) {
     GURL url(kURLs[i]);
     LoadFailObserver observer(contents);
@@ -176,8 +177,9 @@ IN_PROC_BROWSER_TEST_F(InProcessBrowserTest,
 
   // Temporarily owned.
   views::BubbleDialogDelegateView* const bubble =
-      new views::BubbleDialogDelegateView(anchor_view,
-                                          views::BubbleBorder::TOP_RIGHT);
+      new views::BubbleDialogDelegateView(
+          views::BubbleDialogDelegateView::CreatePassKey(), anchor_view,
+          views::BubbleBorder::TOP_RIGHT);
   LayoutTrackingView* layout_tracker =
       bubble->AddChildView(std::make_unique<LayoutTrackingView>());
 
@@ -195,5 +197,3 @@ IN_PROC_BROWSER_TEST_F(InProcessBrowserTest,
 }
 
 #endif  // defined(TOOLKIT_VIEWS)
-
-}  // namespace

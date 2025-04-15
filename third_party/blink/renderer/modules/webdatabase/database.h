@@ -38,7 +38,6 @@
 #include "third_party/blink/renderer/modules/webdatabase/sql_transaction_backend.h"
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sqlite_database.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -117,7 +116,6 @@ class Database final : public ScriptWrappable {
   bool HadDeletes();
   void ResetAuthorizer();
 
-  Vector<String> TableNames();
   void ScheduleTransactionCallback(SQLTransaction*);
   void CloseImmediately();
   void CloseDatabase();
@@ -159,11 +157,9 @@ class Database final : public ScriptWrappable {
                       SQLTransaction::OnSuccessCallback*,
                       bool read_only,
                       const ChangeVersionData* = nullptr);
-  Vector<String> PerformGetTableNames();
 
   void ReportSqliteError(int sqlite_error_code);
   void LogErrorMessage(const String&);
-  static const char* DatabaseInfoTableName();
   String DatabaseDebugName() const {
     return context_thread_security_origin_->ToString() + "::" + name_;
   }
@@ -201,11 +197,6 @@ class Database final : public ScriptWrappable {
 
   // Gates UKM counters to execute once per database instance.
   bool did_try_to_count_transaction_;
-
-  // Disable BackForwardCache when using WebDatabase feature, because we do not
-  // handle the state inside the portal after putting the page in cache.
-  FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle
-      feature_handle_for_scheduler_;
 
   friend class ChangeVersionWrapper;
   friend class DatabaseManager;

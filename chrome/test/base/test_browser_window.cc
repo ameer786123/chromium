@@ -126,8 +126,8 @@ int TestBrowserWindow::GetTopControlsHeight() const {
 void TestBrowserWindow::SetTopControlsGestureScrollInProgress(
     bool in_progress) {}
 
-StatusBubble* TestBrowserWindow::GetStatusBubble() {
-  return nullptr;
+std::vector<StatusBubble*> TestBrowserWindow::GetStatusBubbles() {
+  return {};
 }
 
 gfx::Rect TestBrowserWindow::GetRestoredBounds() const {
@@ -198,6 +198,10 @@ autofill::AutofillBubbleHandler* TestBrowserWindow::GetAutofillBubbleHandler() {
 
 ExtensionsContainer* TestBrowserWindow::GetExtensionsContainer() {
   return nullptr;
+}
+
+bool TestBrowserWindow::PreHandleMouseEvent(const blink::WebMouseEvent& event) {
+  return false;
 }
 
 content::KeyboardEventProcessingResult
@@ -287,10 +291,6 @@ TestBrowserWindow::ShowScreenshotCapturedBubble(content::WebContents* contents,
 }
 #endif
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-void TestBrowserWindow::VerifyUserEligibilityIOSPasswordPromoBubble() {}
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-
 send_tab_to_self::SendTabToSelfBubbleView*
 TestBrowserWindow::ShowSendTabToSelfDevicePickerBubble(
     content::WebContents* contents) {
@@ -325,6 +325,10 @@ DownloadShelf* TestBrowserWindow::GetDownloadShelf() {
   return &download_shelf_;
 }
 views::View* TestBrowserWindow::GetTopContainer() {
+  return nullptr;
+}
+
+views::View* TestBrowserWindow::GetLensOverlayView() {
   return nullptr;
 }
 
@@ -372,6 +376,13 @@ TestBrowserWindow::GetFeaturePromoControllerImpl() {
   return feature_promo_controller_.get();
 }
 
+bool TestBrowserWindow::IsFeaturePromoQueued(
+    const base::Feature& iph_feature) const {
+  return feature_promo_controller_ &&
+         feature_promo_controller_->GetPromoStatus(iph_feature) ==
+             user_education::FeaturePromoStatus::kQueued;
+}
+
 bool TestBrowserWindow::IsFeaturePromoActive(
     const base::Feature& iph_feature) const {
   return feature_promo_controller_ &&
@@ -399,11 +410,11 @@ void TestBrowserWindow::MaybeShowFeaturePromo(
   feature_promo_controller_->MaybeShowPromo(std::move(params));
 }
 
-bool TestBrowserWindow::MaybeShowStartupFeaturePromo(
+void TestBrowserWindow::MaybeShowStartupFeaturePromo(
     user_education::FeaturePromoParams params) {
-  if (!feature_promo_controller_)
-    return false;
-  return feature_promo_controller_->MaybeShowStartupPromo(std::move(params));
+  if (feature_promo_controller_) {
+    feature_promo_controller_->MaybeShowStartupPromo(std::move(params));
+  }
 }
 
 bool TestBrowserWindow::AbortFeaturePromo(const base::Feature& iph_feature) {
@@ -442,6 +453,14 @@ user_education::DisplayNewBadge TestBrowserWindow::MaybeShowNewBadgeFor(
 
 void TestBrowserWindow::NotifyNewBadgeFeatureUsed(
     const base::Feature& feature) {}
+
+bool TestBrowserWindow::IsTabModalPopup() const {
+  return is_tab_modal_popup_;
+}
+
+void TestBrowserWindow::SetIsTabModalPopup(bool is_tab_modal_popup) {
+  is_tab_modal_popup_ = is_tab_modal_popup;
+}
 
 user_education::FeaturePromoController*
 TestBrowserWindow::SetFeaturePromoController(

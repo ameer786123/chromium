@@ -45,6 +45,7 @@
 #include "chrome/browser/web_applications/web_app_pref_guardrails.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_uninstall_dialog_user_options.h"
 #include "components/feature_engagement/public/feature_constants.h"
@@ -62,6 +63,7 @@
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-shared.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/native_window_tracker.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -267,24 +269,22 @@ bool WebAppUiManagerImpl::IsAppInQuickLaunchBar(
   return false;
 }
 
-bool WebAppUiManagerImpl::IsInAppWindow(
-    content::WebContents* web_contents) const {
-  Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  return AppBrowserController::IsWebApp(browser);
-}
-
-const webapps::AppId* WebAppUiManagerImpl::GetAppIdForWindow(
-    const content::WebContents* web_contents) const {
-  Browser* browser = chrome::FindBrowserWithTab(web_contents);
-  if (AppBrowserController::IsWebApp(browser)) {
-    return &browser->app_controller()->app_id();
-  }
-  return nullptr;
-}
-
 bool WebAppUiManagerImpl::CanReparentAppTabToWindow(
     const webapps::AppId& app_id,
-    bool shortcut_created) const {
+    bool shortcut_created,
+    content::WebContents* web_contents) const {
+  CHECK(web_contents);
+  const WebAppTabHelper* tab_helper =
+      WebAppTabHelper::FromWebContents(web_contents);
+  bool is_in_app_window = false;
+  if (tab_helper) {
+    // The tab helper doesn't exist in unit tests.
+    is_in_app_window = tab_helper->is_in_app_window();
+  }
+  // App-to-app reparenting is not currently supported.
+  if (is_in_app_window) {
+    return false;
+  }
 #if BUILDFLAG(IS_MAC)
   // On macOS it is only possible to reparent the window when the shortcut (app
   // shim) was created. See https://crbug.com/915571.
@@ -298,7 +298,7 @@ Browser* WebAppUiManagerImpl::ReparentAppTabToWindow(
     content::WebContents* contents,
     const webapps::AppId& app_id,
     bool shortcut_created) {
-  DCHECK(CanReparentAppTabToWindow(app_id, shortcut_created));
+  DCHECK(CanReparentAppTabToWindow(app_id, shortcut_created, contents));
   // Reparent the tab into an app window immediately.
   return ReparentWebContentsIntoAppBrowser(contents, app_id);
 }
@@ -418,12 +418,10 @@ bool WebAppUiManagerImpl::IsWebContentsActiveTabInBrowser(
 }
 
 void WebAppUiManagerImpl::TriggerInstallDialog(
-    content::WebContents* web_contents) {
-  web_app::CreateWebAppFromManifest(
-      web_contents,
-      // TODO(issuetracker.google.com/283034487): Consider passing in the
-      // install source from the caller.
-      webapps::WebappInstallSource::OMNIBOX_INSTALL_ICON, base::DoNothing());
+    content::WebContents* web_contents,
+    webapps::WebappInstallSource source,
+    InstallCallback callback) {
+  web_app::CreateWebAppFromManifest(web_contents, source, std::move(callback));
 }
 
 void WebAppUiManagerImpl::PresentUserUninstallDialog(
@@ -433,7 +431,7 @@ void WebAppUiManagerImpl::PresentUserUninstallDialog(
     UninstallCompleteCallback callback) {
   PresentUserUninstallDialog(
       app_id, uninstall_source,
-      parent_window ? parent_window->GetNativeWindow() : nullptr,
+      parent_window ? parent_window->GetNativeWindow() : gfx::NativeWindow(),
       std::move(callback), base::DoNothing());
 }
 
@@ -612,13 +610,16 @@ void WebAppUiManagerImpl::OnBrowserRemoved(Browser* browser) {
 #if BUILDFLAG(IS_CHROMEOS)
 void WebAppUiManagerImpl::TabCloseCancelled(
     const content::WebContents* contents) {
-  const webapps::AppId* app_id = GetAppIdForWindow(contents);
-  if (!app_id) {
+  CHECK(contents);
+  const WebAppTabHelper* tab_helper =
+      WebAppTabHelper::FromWebContents(contents);
+  if (!tab_helper || !tab_helper->window_app_id()) {
     return;
   }
 
   ShowNonclosableAppToast(
-      WebAppProvider::GetForWebApps(profile_)->registrar_unsafe(), *app_id);
+      WebAppProvider::GetForWebApps(profile_)->registrar_unsafe(),
+      *tab_helper->window_app_id());
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -748,6 +749,14 @@ void WebAppUiManagerImpl::ClearWebAppSiteDataIfNeeded(
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+const base::Feature& GetPromoFeatureEngagementFromBrowser(
+    const Browser* browser) {
+  return browser->app_controller() != nullptr
+             ? feature_engagement::kIPHDesktopPWAsLinkCapturingLaunch
+             : feature_engagement::kIPHDesktopPWAsLinkCapturingLaunchAppInTab;
+}
+
 void WebAppUiManagerImpl::ShowIPHPromoForAppsLaunchedViaLinkCapturing(
     const Browser* browser,
     const webapps::AppId& app_id,
@@ -756,8 +765,8 @@ void WebAppUiManagerImpl::ShowIPHPromoForAppsLaunchedViaLinkCapturing(
     return;
   }
 
-  user_education::FeaturePromoParams promo_params(
-      feature_engagement::kIPHDesktopPWAsLinkCapturingLaunch, app_id);
+  const auto& feature = GetPromoFeatureEngagementFromBrowser(browser);
+  user_education::FeaturePromoParams promo_params(feature, app_id);
   promo_params.close_callback =
       base::BindOnce(&WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing,
                      weak_ptr_factory_.GetWeakPtr(), browser, app_id);
@@ -770,6 +779,20 @@ void WebAppUiManagerImpl::ShowIPHPromoForAppsLaunchedViaLinkCapturing(
       });
 
   browser->window()->MaybeShowFeaturePromo(std::move(promo_params));
+
+  // This is only needed for IPH bubbles that are anchored to a tab in a
+  // browser. App browsers don't require this logic since tab switching and
+  // navigating to another page isn't something to worry about in an app
+  // window.
+  if (&feature ==
+      &feature_engagement::kIPHDesktopPWAsLinkCapturingLaunchAppInTab) {
+    WebAppTabHelper* const tab_helper = WebAppTabHelper::FromWebContents(
+        browser->tab_strip_model()->GetActiveWebContents());
+    CHECK(tab_helper);
+    tab_helper->SetCallbackToRunOnTabChanges(base::BindOnce(
+        &WebAppUiManagerImpl::OnTabChangedDuringIph,
+        weak_ptr_factory_.GetWeakPtr(), base::Unretained(browser)));
+  }
 }
 
 void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
@@ -788,8 +811,7 @@ void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
 
   user_education::FeaturePromoClosedReason close_reason;
   feature_promo_controller->HasPromoBeenDismissed(
-      {feature_engagement::kIPHDesktopPWAsLinkCapturingLaunch, app_id},
-      &close_reason);
+      {GetPromoFeatureEngagementFromBrowser(browser), app_id}, &close_reason);
   switch (close_reason) {
     case user_education::FeaturePromoClosedReason::kAction:
       base::RecordAction(
@@ -800,6 +822,9 @@ void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
       break;
     case user_education::FeaturePromoClosedReason::kDismiss:
     case user_education::FeaturePromoClosedReason::kCancel:
+    // This is needed if the promo is cancelled automatically by the
+    // `WebAppTabHelper`.
+    case user_education::FeaturePromoClosedReason::kFeatureEngaged:
       base::RecordAction(
           base::UserMetricsAction("LinkCapturingIPHAppBubbleNotAccepted"));
       WebAppPrefGuardrails::GetForNavigationCapturingIph(
@@ -808,6 +833,17 @@ void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
       break;
     default:
       break;
+  }
+}
+
+void WebAppUiManagerImpl::OnTabChangedDuringIph(const Browser* browser) {
+  const auto& feature =
+      feature_engagement::kIPHDesktopPWAsLinkCapturingLaunchAppInTab;
+  if (browser->window()->IsFeaturePromoQueued(feature)) {
+    browser->window()->AbortFeaturePromo(feature);
+  } else if (browser->window()->IsFeaturePromoActive(feature)) {
+    browser->window()->NotifyFeaturePromoFeatureUsed(
+        feature, FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   }
 }
 

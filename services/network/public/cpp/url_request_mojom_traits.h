@@ -25,13 +25,16 @@
 #include "services/network/public/cpp/cookie_manager_shared_mojom_traits.h"
 #include "services/network/public/cpp/data_element.h"
 #include "services/network/public/cpp/network_isolation_key_mojom_traits.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_mojom_traits.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/cpp/source_type_mojom_traits.h"
 #include "services/network/public/mojom/attribution.mojom-forward.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom.h"
 #include "services/network/public/mojom/client_security_state.mojom-forward.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom-forward.h"
 #include "services/network/public/mojom/data_pipe_getter.mojom.h"
+#include "services/network/public/mojom/device_bound_sessions.mojom-forward.h"
 #include "services/network/public/mojom/devtools_observer.mojom-forward.h"
 #include "services/network/public/mojom/ip_address_space.mojom-forward.h"
 #include "services/network/public/mojom/trust_token_access_observer.mojom-forward.h"
@@ -43,14 +46,6 @@
 #include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
-
-template <>
-struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
-    EnumTraits<network::mojom::SourceType, net::SourceStream::SourceType> {
-  static network::mojom::SourceType ToMojom(net::SourceStream::SourceType type);
-  static bool FromMojom(network::mojom::SourceType in,
-                        net::SourceStream::SourceType* out);
-};
 
 template <>
 struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
@@ -115,6 +110,16 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
     return std::move(
         const_cast<network::ResourceRequest::TrustedParams&>(trusted_params)
             .devtools_observer);
+  }
+  static mojo::PendingRemote<network::mojom::DeviceBoundSessionAccessObserver>
+  device_bound_session_observer(
+      const network::ResourceRequest::TrustedParams& trusted_params) {
+    if (!trusted_params.device_bound_session_observer) {
+      return mojo::NullRemote();
+    }
+    return std::move(
+        const_cast<network::ResourceRequest::TrustedParams&>(trusted_params)
+            .device_bound_session_observer);
   }
   static const network::mojom::ClientSecurityStatePtr& client_security_state(
       const network::ResourceRequest::TrustedParams& trusted_params) {
@@ -259,6 +264,10 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.fetch_integrity;
   }
+  static const std::vector<std::string>& expected_public_keys(
+      const network::ResourceRequest& request) {
+    return request.expected_public_keys;
+  }
   static network::mojom::RequestDestination destination(
       const network::ResourceRequest& request) {
     return request.destination;
@@ -311,14 +320,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.throttling_profile_id;
   }
-  static const net::HttpRequestHeaders& custom_proxy_pre_cache_headers(
-      const network::ResourceRequest& request) {
-    return request.custom_proxy_pre_cache_headers;
-  }
-  static const net::HttpRequestHeaders& custom_proxy_post_cache_headers(
-      const network::ResourceRequest& request) {
-    return request.custom_proxy_post_cache_headers;
-  }
   static const std::optional<base::UnguessableToken>& fetch_window_id(
       const network::ResourceRequest& request) {
     return request.fetch_window_id;
@@ -344,7 +345,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.original_destination;
   }
-  static const std::optional<std::vector<net::SourceStream::SourceType>>&
+  static const std::optional<std::vector<net::SourceStreamType>>&
   devtools_accepted_stream_types(const network::ResourceRequest& request) {
     return request.devtools_accepted_stream_types;
   }
@@ -392,6 +393,10 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
   attribution_reporting_src_token(const network::ResourceRequest& request) {
     return request.attribution_reporting_src_token;
   }
+  static const std::optional<base::UnguessableToken>& keepalive_token(
+      const network::ResourceRequest& request) {
+    return request.keepalive_token;
+  }
   static bool is_ad_tagged(const network::ResourceRequest& request) {
     return request.is_ad_tagged;
   }
@@ -399,9 +404,25 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
       const network::ResourceRequest& request) {
     return request.shared_dictionary_writer_enabled;
   }
+  static bool client_side_content_decoding_enabled(
+      const network::ResourceRequest& request) {
+    return request.client_side_content_decoding_enabled;
+  }
   static network::mojom::IPAddressSpace required_ip_address_space(
       const network::ResourceRequest& request) {
     return request.required_ip_address_space;
+  }
+  static const net::SocketTag& socket_tag(
+      const network::ResourceRequest& request) {
+    return request.socket_tag;
+  }
+  static bool allows_device_bound_sessions(
+      const network::ResourceRequest& request) {
+    return request.allows_device_bound_sessions;
+  }
+  static const std::optional<network::PermissionsPolicy>& permissions_policy(
+      const network::ResourceRequest& request) {
+    return request.permissions_policy;
   }
 
   static bool Read(network::mojom::URLRequestDataView data,
@@ -535,6 +556,18 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
 
   static bool Read(network::mojom::DataElementDataView data,
                    network::DataElement* out);
+};
+
+template <>
+struct COMPONENT_EXPORT(NETWORK_CPP_BASE)
+    StructTraits<network::mojom::SocketTagDataView, net::SocketTag> {
+#if BUILDFLAG(IS_ANDROID)
+  static int32_t tag(const net::SocketTag& params) {
+    return params.traffic_stats_tag();
+  }
+  static uid_t uid(const net::SocketTag& params) { return params.uid(); }
+#endif  // BUILDFLAG(IS_ANDROID)
+  static bool Read(network::mojom::SocketTagDataView data, net::SocketTag* out);
 };
 
 }  // namespace mojo

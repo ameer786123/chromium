@@ -30,6 +30,7 @@ import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntent
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.CustomTabsUiType;
 import org.chromium.chrome.browser.browserservices.ui.controller.Verifier;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.readaloud.ReadAloudController;
 import org.chromium.chrome.browser.readaloud.ReadAloudFeatures;
@@ -41,6 +42,8 @@ import org.chromium.chrome.browser.ui.appmenu.AppMenuPropertiesDelegate;
 import org.chromium.chrome.browser.ui.appmenu.CustomViewBinder;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.webapps.WebappsUtils;
+import org.chromium.content_public.browser.ContentFeatureList;
+import org.chromium.content_public.browser.ContentFeatureMap;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
@@ -196,6 +199,17 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                 downloadItemVisible = false;
                 addToHomeScreenVisible = false;
                 tryAddingReadAloud = false;
+            } else if (mUiType == CustomTabsUiType.NETWORK_BOUND_TAB) {
+                openInChromeItemVisible = false;
+                addToHomeScreenVisible = false;
+                requestDesktopSiteVisible = true;
+            } else if (mUiType == CustomTabsUiType.POPUP) {
+                openInChromeItemVisible = false;
+                bookmarkItemVisible = false;
+                downloadItemVisible = false;
+                addToHomeScreenVisible = false;
+                requestDesktopSiteVisible = false;
+                tryAddingReadAloud = false;
             }
 
             if (!FirstRunStatus.getFirstRunFlowComplete()) {
@@ -218,6 +232,15 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
                             || currentTab.isNativePage();
             boolean isFileScheme = url.getScheme().equals(UrlConstants.FILE_SCHEME);
             boolean isContentScheme = url.getScheme().equals(UrlConstants.CONTENT_SCHEME);
+            // TODO(crbug.com/384992232): Hide open in Chrome for blob and data url until such view
+            //  intent can be handled.
+            if ((ContentFeatureMap.isEnabled(ContentFeatureList.ANDROID_OPEN_PDF_INLINE)
+                            || ChromeFeatureList.isEnabled(
+                                    ChromeFeatureList.ANDROID_OPEN_PDF_INLINE_BACKPORT))
+                    && (url.getScheme().equals(UrlConstants.BLOB_SCHEME)
+                            || url.getScheme().equals(UrlConstants.DATA_SCHEME))) {
+                openInChromeItemVisible = false;
+            }
             if (isNativePage || isFileScheme || isContentScheme || url.isEmpty()) {
                 addToHomeScreenVisible = false;
             }
@@ -253,6 +276,9 @@ public class CustomTabAppMenuPropertiesDelegate extends AppMenuPropertiesDelegat
             } else {
                 menu.findItem(R.id.readaloud_menu_id).setVisible(false);
             }
+
+            boolean showOpenWith = currentTab.isNativePage() && currentTab.getNativePage().isPdf();
+            menu.findItem(R.id.open_with_id).setVisible(showOpenWith);
 
             MenuItem openInChromeItem = menu.findItem(R.id.open_in_browser_id);
             if (openInChromeItemVisible) {

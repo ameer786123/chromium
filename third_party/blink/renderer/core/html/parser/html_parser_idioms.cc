@@ -22,11 +22,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 
 #include "third_party/blink/renderer/core/html_names.h"
@@ -275,8 +270,7 @@ bool ParseHTMLClampedNonNegativeInteger(const String& input,
     case WTF::NumberParsingResult::kError:
       return false;
     case WTF::NumberParsingResult::kOverflowMin:
-      NOTREACHED_IN_MIGRATION() << input;
-      return false;
+      NOTREACHED() << input;
     case WTF::NumberParsingResult::kOverflowMax:
       value = max;
       return true;
@@ -464,7 +458,7 @@ inline StringImpl* FindStringIfStatic(base::span<const CharType> characters) {
   // identifiers (e.g. "bvvfg" collides with "script"). However ASSERTs in
   // StringImpl::createStatic guard against there ever being collisions between
   // static strings.
-  if (!Equal(it->value, characters.data(), characters.size())) {
+  if (!Equal(it->value, characters)) {
     return nullptr;
   }
   return it->value;

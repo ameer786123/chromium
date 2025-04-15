@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/containers/flat_map.h"
@@ -123,7 +124,6 @@ TextureDrawQuad* CreateCandidateQuadAt(
     gfx::ProtectedVideoType protected_video_type) {
   bool needs_blending = false;
   bool premultiplied_alpha = false;
-  bool flipped = false;
   bool nearest_neighbor = false;
   gfx::Size resource_size_in_pixels = rect.size();
   bool is_overlay_candidate = true;
@@ -134,10 +134,8 @@ TextureDrawQuad* CreateCandidateQuadAt(
   auto* overlay_quad = render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
   overlay_quad->SetNew(shared_quad_state, rect, rect, needs_blending,
                        resource_id, premultiplied_alpha, kUVTopLeft,
-                       kUVBottomRight, SkColors::kTransparent, flipped,
-                       nearest_neighbor, /*secure_output_only=*/false,
-                       protected_video_type);
-  overlay_quad->set_resource_size_in_pixels(resource_size_in_pixels);
+                       kUVBottomRight, SkColors::kTransparent, nearest_neighbor,
+                       /*secure_output_only=*/false, protected_video_type);
 
   return overlay_quad;
 }
@@ -249,7 +247,7 @@ TEST_F(CALayerOverlayTest, ThreeDTransform) {
   gfx::Transform expected_transform;
   expected_transform.RotateAboutXAxis(45.f);
   gfx::Transform actual_transform(
-      absl::get<gfx::Transform>(ca_layer_list.back().transform));
+      std::get<gfx::Transform>(ca_layer_list.back().transform));
   EXPECT_EQ(expected_transform.ToString(), actual_transform.ToString());
 }
 
@@ -363,7 +361,7 @@ TEST_F(CALayerOverlayTest, TextureDrawQuadVideoOverlay) {
                                /*needs_blending=*/false, resource_id,
                                /*premultiplied_alpha=*/false, kUVTopLeft,
                                kUVBottomRight, SkColors::kTransparent,
-                               /*flipped=*/false, /*nearest_neighbor=*/false,
+                               /*nearest_neighbor=*/false,
                                /*secure_output_only=*/false,
                                /*video_type=*/gfx::ProtectedVideoType::kClear);
     texture_video_quad->is_video_frame = true;

@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.customtabs;
 
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_NETWORK;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -11,13 +13,19 @@ import android.text.TextUtils;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.browser.customtabs.CustomTabsSessionToken;
+import androidx.browser.customtabs.TrustedWebUtils;
+import androidx.browser.trusted.TrustedWebActivityIntentBuilder;
 
 import org.chromium.base.Callback;
+import org.chromium.base.IntentUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.WarmupManager;
+import org.chromium.chrome.browser.browserservices.intents.SessionHolder;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabController;
 import org.chromium.chrome.browser.customtabs.content.TabObserverRegistrar;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.preloading.PreloadingDataBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.RedirectHandlerTabHelper;
@@ -43,12 +51,12 @@ public class HiddenTabHolder {
     /** Holds the parameters for the current hidden tab speculation. */
     @VisibleForTesting
     static final class SpeculationParams {
-        public final CustomTabsSessionToken session;
+        public final SessionHolder<?> session;
         public final HiddenTab hiddenTab;
         public final String referrer;
 
         private SpeculationParams(
-                CustomTabsSessionToken session,
+                SessionHolder<?> session,
                 String url,
                 Tab tab,
                 String referrer,
@@ -119,7 +127,7 @@ public class HiddenTabHolder {
      */
     void launchUrlInHiddenTab(
             Callback<Tab> tabCreatedCallback,
-            CustomTabsSessionToken session,
+            SessionHolder<?> session,
             Profile profile,
             ClientManager clientManager,
             String url,
@@ -133,15 +141,22 @@ public class HiddenTabHolder {
         if (IntentHandler.getExtraHeadersFromIntent(extrasIntent) != null) return;
 
         WarmupManager warmupManager = WarmupManager.getInstance();
-        if (warmupManager.hasSpareTab(profile) && webContents != null) {
+        // launchUrlInHiddenTab is called only during speculative loads/as a side effect of
+        // mayLaunchUrl being called. Hence, it's safe to always pass targetsNetwork = false because
+        // multi-network CCT does not support that. Or, more correctly, currently multi-network CCT
+        // ignores these performance improvements, as it's not considered performance critical and
+        // supporting this would increase its complexity by a lot.
+        if (warmupManager.hasSpareTab(profile, /* targetsNetwork= */ false)
+                && webContents != null) {
             warmupManager.destroySpareTab();
         }
         warmupManager.createRegularSpareTab(profile, webContents);
         // In case creating the tab fails for some reason.
-        if (!warmupManager.hasSpareTab(profile)) return;
+        // See above as to why we can always pass targetsNetwork = false.
+        if (!warmupManager.hasSpareTab(profile, /* targetsNetwork= */ false)) return;
         Tab tab =
                 warmupManager.takeSpareTab(
-                        profile, TabLaunchType.FROM_SPECULATIVE_BACKGROUND_CREATION);
+                        profile, true, TabLaunchType.FROM_SPECULATIVE_BACKGROUND_CREATION);
 
         tabCreatedCallback.onResult(tab);
 
@@ -168,7 +183,7 @@ public class HiddenTabHolder {
 
         TabObserverRegistrar registrar = new TabObserverRegistrar();
         CustomTabObserver customTabObserver =
-                new CustomTabObserver(/* openedByChrome= */ false, session, /* isHidden= */ true);
+                new CustomTabObserver(/* openedByChrome= */ false, session);
         CustomTabNavigationEventObserver customTabNavigationEventObserver =
                 new CustomTabNavigationEventObserver(session, /* forPrerender= */ true);
         CustomTabActivityTabController.addTabNavigationObservers(
@@ -198,7 +213,7 @@ public class HiddenTabHolder {
      */
     @Nullable
     HiddenTab takeHiddenTab(
-            @Nullable CustomTabsSessionToken session,
+            @Nullable SessionHolder<?> session,
             boolean ignoreFragments,
             String url,
             @Nullable String referrer) {
@@ -229,7 +244,7 @@ public class HiddenTabHolder {
     }
 
     /** Cancels the speculation for a given session, or any session if null. */
-    void destroyHiddenTab(@Nullable CustomTabsSessionToken session) {
+    void destroyHiddenTab(@Nullable SessionHolder<?> session) {
         if (mSpeculation == null) return;
         if (session != null && !session.equals(mSpeculation.session)) return;
 
@@ -240,6 +255,88 @@ public class HiddenTabHolder {
     /** Returns whether there currently is a hidden tab. */
     boolean hasHiddenTab() {
         return mSpeculation != null;
+    }
+
+    public boolean startEarlynavigation(Profile profile, Intent intent) {
+        // Don't clobber an existing speculation.
+        if (mSpeculation != null) return false;
+
+        // CCT Multi-network isn't supported here.
+        if (IntentUtils.safeGetParcelableExtra(intent, EXTRA_NETWORK) != null) {
+            return false;
+        }
+
+        WarmupManager manager = WarmupManager.getInstance();
+        if (!manager.hasSpareTab(profile, /* targetsNetwork= */ false)) return false;
+
+        boolean isTrustedWebActivity =
+                IntentUtils.safeGetBooleanExtra(
+                        intent, TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false);
+
+        Tab tab =
+                WarmupManager.getInstance()
+                        .takeSpareTab(profile, false, TabLaunchType.FROM_EXTERNAL_APP);
+
+        String url = IntentHandler.getUrlFromIntent(intent);
+        LoadUrlParams params = new LoadUrlParams(url);
+        IntentHandler.addReferrerAndHeaders(params, intent);
+        int transitionType =
+                isTrustedWebActivity
+                        ? PageTransition.AUTO_TOPLEVEL | PageTransition.FROM_API
+                        : PageTransition.LINK | PageTransition.FROM_API;
+        params.setTransitionType(IntentHandler.getTransitionTypeFromIntent(intent, transitionType));
+        params.setInitiatorOrigin(Origin.createOpaqueOrigin());
+        RedirectHandlerTabHelper.updateIntentInTab(tab, intent);
+
+        String referrer = IntentHandler.getReferrerUrlIncludingExtraHeaders(intent);
+        if (referrer == null) referrer = "";
+
+        TabObserverRegistrar registrar = new TabObserverRegistrar();
+        SessionHolder<?> token = SessionHolder.getSessionHolderFromIntent(intent);
+        CustomTabObserver customTabObserver =
+                new CustomTabObserver(/* openedByChrome= */ false, token);
+        CustomTabNavigationEventObserver customTabNavigationEventObserver =
+                new CustomTabNavigationEventObserver(token, /* forPrerender= */ false);
+        CustomTabActivityTabController.addTabNavigationObservers(
+                registrar, customTabObserver, customTabNavigationEventObserver, tab, token);
+
+        // Unlike a prerender, this isn't a speculative load, so we can record metrics for it
+        // unconditionally.
+        customTabObserver.trackNextPageLoadForLaunch(tab, intent);
+
+        if (isTrustedWebActivity) {
+            TwaOfflineDataProvider.createFor(
+                    tab,
+                    url,
+                    IntentUtils.safeGetStringArrayListExtra(
+                            intent,
+                            TrustedWebActivityIntentBuilder.EXTRA_ADDITIONAL_TRUSTED_ORIGINS),
+                    CustomTabsConnection.getInstance().getClientPackageNameForSession(token));
+        }
+
+        mSpeculation =
+                new SpeculationParams(
+                        token,
+                        url,
+                        tab,
+                        referrer,
+                        registrar,
+                        customTabObserver,
+                        customTabNavigationEventObserver);
+
+        // Notifies PreloadingImpl that a navigation to CCT is happening. This is used to calculate
+        // the recall of CCT prefetch's attempt. Please see
+        // PreloadingData::setIsNavigationInDomainCallback for more details.
+        if (ChromeFeatureList.sPrefetchBrowserInitiatedTriggers.isEnabled()
+                && ChromeFeatureList.sCctNavigationalPrefetch.isEnabled()) {
+            WebContents webContents = tab.getWebContents();
+            if (webContents != null) {
+                PreloadingDataBridge.setIsNavigationInDomainCallbackForCct(webContents);
+            }
+        }
+
+        tab.loadUrl(params);
+        return true;
     }
 
     public Tab getHiddenTabForTesting() {

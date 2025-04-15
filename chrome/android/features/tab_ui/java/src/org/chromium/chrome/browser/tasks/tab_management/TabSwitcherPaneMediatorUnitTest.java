@@ -26,8 +26,6 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabListContainerP
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.test.filters.SmallTest;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -45,8 +43,6 @@ import org.chromium.base.supplier.LazyOneshotSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
@@ -109,6 +105,7 @@ public class TabSwitcherPaneMediatorUnitTest {
     private Tab mUngroupedTab;
     private Tab mGroupedTab1;
     private Tab mGroupedTab2;
+    private List<Tab> mTabList;
     private TabSwitcherPaneMediator mMediator;
 
     @Before
@@ -129,6 +126,8 @@ public class TabSwitcherPaneMediatorUnitTest {
         mUngroupedTab.setRootId(UNGROUPED_TAB_ID);
         mGroupedTab1.setRootId(GROUPED_TAB_1_ID);
         mGroupedTab2.setRootId(GROUPED_TAB_1_ID);
+        mTabList = List.of(mUngroupedTab, mGroupedTab1);
+        when(mTabGroupModelFilter.getRepresentativeTabList()).thenReturn(mTabList);
         when(mTabGroupModelFilter.getRelatedTabList(UNGROUPED_TAB_ID))
                 .thenReturn(List.of(mUngroupedTab));
         when(mTabGroupModelFilter.getRelatedTabList(GROUPED_TAB_1_ID))
@@ -137,9 +136,9 @@ public class TabSwitcherPaneMediatorUnitTest {
         when(mTabGroupModelFilter.isTabInTabGroup(mGroupedTab1)).thenReturn(true);
         when(mTabGroupModelFilter.isTabInTabGroup(mGroupedTab2)).thenReturn(true);
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
-        when(mTabGroupModelFilter.indexOf(mUngroupedTab)).thenReturn(0);
-        when(mTabGroupModelFilter.indexOf(mGroupedTab1)).thenReturn(1);
-        when(mTabGroupModelFilter.indexOf(mGroupedTab2)).thenReturn(2);
+        when(mTabGroupModelFilter.representativeIndexOf(mUngroupedTab)).thenReturn(0);
+        when(mTabGroupModelFilter.representativeIndexOf(mGroupedTab1)).thenReturn(1);
+        when(mTabGroupModelFilter.representativeIndexOf(mGroupedTab2)).thenReturn(1);
 
         when(mTabGridDialogController.getHandleBackPressChangedSupplier())
                 .thenReturn(mDialogBackPressChangedSupplier);
@@ -208,7 +207,6 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testTabModelObserver() {
         // This observer is only used to update the back press state.
         TabModelObserver observer = mTabModelObserverCaptor.getValue();
@@ -241,7 +239,6 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testLateTabGroupModelFilterWhileVisible() {
         when(mTabListEditorController.isVisible()).thenReturn(true);
         // Reset to simulate the UI is shown with no tab model filter set.
@@ -273,20 +270,18 @@ public class TabSwitcherPaneMediatorUnitTest {
         // When the filter is set we need to show tabs when visible if the restore already finished.
         mTabGroupModelFilterSupplier.set(mTabGroupModelFilter);
         verify(mTabGroupModelFilter, times(2)).addObserver(mTabModelObserverCaptor.capture());
-        verify(mResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mResetHandler).resetWithListOfTabs(mTabList);
     }
 
     @Test
-    @SmallTest
     public void testTabModelObserverOnRestore() {
         TabModelObserver observer = mTabModelObserverCaptor.getValue();
 
         observer.restoreCompleted();
-        verify(mResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mResetHandler).resetWithListOfTabs(mTabList);
     }
 
     @Test
-    @SmallTest
     public void testIsDialogVisibleSupplier() {
         ObservableSupplier<Boolean> dialogVisibilitySupplier =
                 mMediator.getIsDialogVisibleSupplier();
@@ -310,18 +305,15 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testRequestAccessibilityFocusOnCurrentTab() {
         int index = 5;
-        when(mTabGroupModelFilter.index()).thenReturn(index);
+        when(mTabGroupModelFilter.getCurrentRepresentativeTabIndex()).thenReturn(index);
         mMediator.requestAccessibilityFocusOnCurrentTab();
 
         assertEquals(index, mModel.get(FOCUS_TAB_INDEX_FOR_ACCESSIBILITY).intValue());
     }
 
     @Test
-    @SmallTest
-    @DisableFeatures(ChromeFeatureList.BACK_GESTURE_REFACTOR)
     public void testBackPress() {
         assertFalse(mMediator.getHandleBackPressChangedSupplier().get());
         assertEquals(BackPressResult.FAILURE, mMediator.handleBackPress());
@@ -354,19 +346,9 @@ public class TabSwitcherPaneMediatorUnitTest {
         when(mTabGridDialogController.handleBackPressed()).thenReturn(false);
         mDialogBackPressChangedSupplier.set(false);
         assertFalse(mMediator.getHandleBackPressChangedSupplier().get());
-
-        // Remove this section when removing the BACK_GESTURE_REFACTOR_ANDROID annotation. This is
-        // here to assert in a legacy edgecase where back could be called without checking if it is
-        // supported.
-        mIsVisibleSupplier.set(false);
-        assertFalse(mMediator.getHandleBackPressChangedSupplier().get());
-        assertEquals(BackPressResult.FAILURE, mMediator.handleBackPress());
-        mIsVisibleSupplier.set(true);
-        assertFalse(mMediator.getHandleBackPressChangedSupplier().get());
     }
 
     @Test
-    @SmallTest
     public void testOpenTabGridDialog() {
         TabActionListener listener = mMediator.openTabGridDialog(mGroupedTab1);
         assertNotNull(listener);
@@ -376,13 +358,11 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testOpenTabGridDialog_SingleTab() {
         assertNull(mMediator.openTabGridDialog(mUngroupedTab));
     }
 
     @Test
-    @SmallTest
     public void testOpenTabGridDialog_SingleTabGroup() {
         when(mTabGroupModelFilter.isTabInTabGroup(mUngroupedTab)).thenReturn(true);
 
@@ -393,17 +373,15 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testOnTabSelecting() {
         mMediator.onTabSelecting(mUngroupedTab.getId(), /* fromActionButton= */ true);
         verify(mOnTabClickedCallback).onResult(UNGROUPED_TAB_ID);
     }
 
     @Test
-    @SmallTest
     public void testScrollToTab() {
         int index = 5;
-        when(mTabGroupModelFilter.index()).thenReturn(index);
+        when(mTabGroupModelFilter.getCurrentRepresentativeTabIndex()).thenReturn(index);
 
         mMediator.setInitialScrollIndexOffset();
         assertEquals(index, mModel.get(INITIAL_SCROLL_INDEX).intValue());
@@ -429,13 +407,12 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testCustomViewWithClearTabList() {
         when(mTabListEditorController.isVisible()).thenReturn(true);
 
         mMediator.addCustomView(
                 mCustomView, mCustomViewBackPressRunnable, /* clearTabList= */ true);
-        verify(mResetHandler).resetWithTabList(null, false);
+        verify(mResetHandler).resetWithListOfTabs(null);
         verify(mContainerView).addView(mCustomView);
         verify(mTabListEditorController).hide();
         when(mTabListEditorController.isVisible()).thenReturn(false);
@@ -450,13 +427,12 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testCustomViewWithoutClearTabList() {
         when(mTabGridDialogController.isVisible()).thenReturn(true);
 
         mMediator.addCustomView(
                 mCustomView, mCustomViewBackPressRunnable, /* clearTabList= */ false);
-        verify(mResetHandler, never()).resetWithTabList(null, false);
+        verify(mResetHandler, never()).resetWithListOfTabs(null);
         verify(mContainerView).addView(mCustomView);
         verify(mTabGridDialogController).hideDialog(false);
         when(mTabGridDialogController.isVisible()).thenReturn(false);
@@ -471,7 +447,6 @@ public class TabSwitcherPaneMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testBlockTouchInput() {
         assertFalse(mModel.get(BLOCK_TOUCH_INPUT));
         mShowingOrAnimationSupplier.set(true);

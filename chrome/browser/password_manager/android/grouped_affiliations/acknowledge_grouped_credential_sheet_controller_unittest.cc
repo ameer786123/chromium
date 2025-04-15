@@ -9,15 +9,18 @@
 #include "base/android/jni_android.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_bridge.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/android/window_android.h"
 
+using DismissReson = AcknowledgeGroupedCredentialSheetBridge::DismissReason;
+
 namespace {
-const char kCurrentOrigin[] = "current.com";
-const char kCredentialOrigin[] = "credential.com";
+const char kCurrentHostname[] = "current.com";
+const char kCredentialHostname[] = "credential.com";
 
 class MockJniDelegate
     : public AcknowledgeGroupedCredentialSheetBridge::JniDelegate {
@@ -32,7 +35,8 @@ class MockJniDelegate
               (override));
   MOCK_METHOD((void),
               Show,
-              (std::string current_origin, std::string credential_origin),
+              (const std::string& current_hostname,
+               const std::string& credential_hostname),
               (override));
   MOCK_METHOD((void), Dismiss, (), (override));
 };
@@ -41,13 +45,15 @@ class MockJniDelegate
 class AcknowledgeGroupedCredentialSheetControllerTest : public testing::Test {
  public:
   AcknowledgeGroupedCredentialSheetControllerTest() {
+    window_android_ = ui::WindowAndroid::CreateForTesting();
     auto mock_jni_bridge = std::make_unique<MockJniDelegate>();
     mock_jni_bridge_ = mock_jni_bridge.get();
     auto bridge = std::make_unique<AcknowledgeGroupedCredentialSheetBridge>(
         base::PassKey<class AcknowledgeGroupedCredentialSheetControllerTest>(),
-        std::move(mock_jni_bridge), window_android_.get()->get());
+        std::move(mock_jni_bridge));
     bridge_ = bridge.get();
     controller_ = std::make_unique<AcknowledgeGroupedCredentialSheetController>(
+        base::PassKey<class AcknowledgeGroupedCredentialSheetControllerTest>(),
         std::move(bridge));
   }
 
@@ -57,34 +63,53 @@ class AcknowledgeGroupedCredentialSheetControllerTest : public testing::Test {
 
   std::unique_ptr<AcknowledgeGroupedCredentialSheetController> controller_;
 
+  std::unique_ptr<ui::WindowAndroid::ScopedWindowAndroidForTesting>
+      window_android_;
+
  private:
   raw_ptr<MockJniDelegate> mock_jni_bridge_;
   raw_ptr<AcknowledgeGroupedCredentialSheetBridge> bridge_;
-  std::unique_ptr<ui::WindowAndroid::ScopedWindowAndroidForTesting>
-      window_android_ = ui::WindowAndroid::CreateForTesting();
 };
 
 TEST_F(AcknowledgeGroupedCredentialSheetControllerTest,
        ShowAndDismissAcknowledgeSheet) {
-  // TODO(crbug.com/372635361): After implementing the bridge, expect the call
-  // to show the actual sheet. Now only checks that the callback is called.
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
-  EXPECT_CALL(*mock_jni_bridge(), Show(kCurrentOrigin, kCredentialOrigin));
-  controller_->ShowAcknowledgeSheet(kCurrentOrigin, kCredentialOrigin,
+  base::HistogramTester histogram_tester;
+  base::MockCallback<base::OnceCallback<void(DismissReson)>> mock_reply;
+  EXPECT_CALL(*mock_jni_bridge(), Show(kCurrentHostname, kCredentialHostname));
+  controller_->ShowAcknowledgeSheet(kCurrentHostname, kCredentialHostname,
+                                    window_android_.get()->get(),
                                     mock_reply.Get());
 
-  EXPECT_CALL(mock_reply, Run(false));
+  EXPECT_CALL(mock_reply, Run(DismissReson::kBack));
   bridge()->OnDismissed(jni_zero::AttachCurrentThread(),
-                        /*accepted=*/false);
+                        /*accepted=*/static_cast<int>(DismissReson::kBack));
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.AcknowledgeGroupedAffiliationsWarning."
+      "ConfirmationResult",
+      DismissReson::kBack, 1);
+}
+
+TEST_F(AcknowledgeGroupedCredentialSheetControllerTest,
+       ShowAndAcceptAcknowledgeSheet) {
+  base::HistogramTester histogram_tester;
+  controller_->ShowAcknowledgeSheet(kCurrentHostname, kCredentialHostname,
+                                    window_android_.get()->get(),
+                                    base::DoNothing());
+
+  bridge()->OnDismissed(jni_zero::AttachCurrentThread(),
+                        /*accepted=*/static_cast<int>(DismissReson::kAccept));
+  histogram_tester.ExpectUniqueSample(
+      "PasswordManager.AcknowledgeGroupedAffiliationsWarning."
+      "ConfirmationResult",
+      DismissReson::kAccept, 1);
 }
 
 TEST_F(AcknowledgeGroupedCredentialSheetControllerTest,
        SheetDismissesWhenControllerIsDestroyed) {
-  // TODO(crbug.com/372635361): After implementing the bridge, expect the call
-  // to show the actual sheet. Now only checks that the callback is called.
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  base::MockCallback<base::OnceCallback<void(DismissReson)>> mock_reply;
   EXPECT_CALL(*mock_jni_bridge(), Show);
-  controller_->ShowAcknowledgeSheet(kCurrentOrigin, kCurrentOrigin,
+  controller_->ShowAcknowledgeSheet(kCurrentHostname, kCredentialHostname,
+                                    window_android_.get()->get(),
                                     mock_reply.Get());
 
   EXPECT_CALL(mock_reply, Run).Times(0);

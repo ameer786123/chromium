@@ -347,8 +347,8 @@ IN_PROC_BROWSER_TEST_F(WebBluetoothTest, NavigateWithChooserCrossOrigin) {
   waiter->WaitForChange();
   EXPECT_TRUE(waiter->has_shown());
 
-  EXPECT_TRUE(content::ExecJs(web_contents_.get(),
-                              "document.location.href = 'https://google.com'"));
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("https://google.com")));
 
   observer.Wait();
   waiter->WaitForChange();
@@ -419,8 +419,8 @@ IN_PROC_BROWSER_TEST_F(WebBluetoothTest, NotificationStartValueChangeRead) {
       return Promise.all([readPromise, notifyPromise]);
     })())");
 
-  const base::Value promise_values = js_values.ExtractList();
-  EXPECT_EQ(2U, promise_values.GetList().size());
+  const base::Value::List promise_values = js_values.ExtractList();
+  EXPECT_EQ(2U, promise_values.size());
   EXPECT_EQ(content::ListValueOf(1, 1), js_values);
 }
 
@@ -1061,10 +1061,10 @@ class TestWebContentsObserver : public content::WebContentsObserver {
   ~TestWebContentsObserver() override = default;
 
   void OnCapabilityTypesChanged(
-      content::WebContents::CapabilityType capability_type,
+      content::WebContentsCapabilityType capability_type,
       bool used) override {
     EXPECT_EQ(capability_type,
-              content::WebContents::CapabilityType::kBluetoothConnected);
+              content::WebContentsCapabilityType::kBluetoothConnected);
     ++num_capability_types_changed_;
     last_device_used_ = used;
     if (quit_closure_ &&

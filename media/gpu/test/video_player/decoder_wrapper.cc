@@ -19,6 +19,7 @@
 #include "media/base/media_util.h"
 #include "media/base/waiting.h"
 #include "media/gpu/macros.h"
+#include "media/gpu/chromeos/default_video_frame_converter.h"
 #include "media/gpu/test/video_bitstream.h"
 #include "media/gpu/test/video_frame_helpers.h"
 #include "media/gpu/test/video_player/frame_renderer_dummy.h"
@@ -165,6 +166,7 @@ void DecoderWrapper::CreateDecoderTask(base::WaitableEvent* done) {
 #if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
       decoder_ = VideoDecoderPipeline::CreateForTesting(
           base::SingleThreadTaskRunner::GetCurrentDefault(),
+          DefaultFrameConverter::Create(),
           std::make_unique<NullMediaLog>(),
           decoder_wrapper_config_.ignore_resolution_changes_to_smaller_vp9);
 #endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
@@ -290,8 +292,10 @@ void DecoderWrapper::DecodeNextFragmentTask() {
   bool has_config_info = false;
   if (input_video_codec_ == media::VideoCodec::kH264 ||
       input_video_codec_ == media::VideoCodec::kHEVC) {
+    auto bitstream_buffer_span = base::span(*bitstream_buffer);
     has_config_info = media::test::EncodedDataHelper::HasConfigInfo(
-        bitstream_buffer->data(), bitstream_buffer->size(), input_video_codec_);
+        bitstream_buffer_span.data(), bitstream_buffer_span.size(),
+        input_video_codec_);
   }
 
   VideoDecoder::DecodeCB decode_cb = base::BindOnce(

@@ -61,8 +61,15 @@ export class RecordingTitle extends ReactiveLitElement {
       position-anchor: --title-textfield;
       position-area: bottom span-right;
       margin-top: 4.5px;
-      max-width: 402px;
+
+      /* Prevents overflow and excessive resizing beyond content size. */
+      max-width: calc-size(
+        fit-content,
+        /* Excludes page margins, icon-button size, and header padding. */
+        min(size, 100vw - 16px * 2 - 44px - var(--header-padding))
+      );
       min-width: 360px;
+      width: fit-content;
     }
 
     #title {
@@ -131,9 +138,9 @@ export class RecordingTitle extends ReactiveLitElement {
   });
 
   private readonly shouldShowTitleSuggestion = computed(() => {
-    const modelState = this.platformHandler.titleSuggestionModelLoader.state;
+    const modelState = this.platformHandler.getGenAiModelState();
     return (
-      modelState.value.kind === 'installed' &&
+      modelState.kind === 'installed' &&
       settings.value.summaryEnabled === SummaryEnableState.ENABLED &&
       this.transcription.value !== null && !this.transcription.value.isEmpty()
     );
@@ -152,14 +159,15 @@ export class RecordingTitle extends ReactiveLitElement {
     // TODO(pihsun): Have a specific format for transcription to be used as
     // model input.
     const text = this.transcription.value.toPlainText();
-
+    const language = this.transcription.value.language;
     this.platformHandler.perfLogger.start({
       kind: 'titleSuggestion',
-      wordCount: this.transcription.value.wordCount,
+      wordCount: this.transcription.value.getWordCount(),
     });
 
     const {titleSuggestionModelLoader} = this.platformHandler;
-    const suggestions = await titleSuggestionModelLoader.loadAndExecute(text);
+    const suggestions =
+      await titleSuggestionModelLoader.loadAndExecute(text, language);
     this.platformHandler.perfLogger.finish('titleSuggestion');
 
     return suggestions;
@@ -266,7 +274,8 @@ export class RecordingTitle extends ReactiveLitElement {
       @close=${this.closeSuggestionDialog}
       @change=${this.onSuggestTitle}
       .suggestedTitles=${this.suggestedTitles}
-      .wordCount=${this.transcription.value?.wordCount ?? 0}
+      .wordCount=${this.transcription.value?.getWordCount() ?? 0}
+      .transcription=${this.transcription.value?.toPlainText() ?? ''}
       ${ref(this.recordingTitleSuggestion)}
     ></recording-title-suggestion>`;
   }
@@ -309,7 +318,7 @@ export class RecordingTitle extends ReactiveLitElement {
         @focus=${this.startEditTitle}
         @click=${this.startEditTitle}
         ${ref(this.renameContainer)}
-        ${withTooltip(i18n.titleRenameTooltip)}
+        ${withTooltip(i18n.titleEditTooltip)}
       >
         ${this.recordingMetadata?.title ?? ''}
       </div>
@@ -319,7 +328,7 @@ export class RecordingTitle extends ReactiveLitElement {
   override render(): RenderResult {
     return html`
       <cros-snackbar
-        message=${i18n.titleRenameSnackbarMessage}
+        message=${i18n.titleEditSnackbarMessage}
         timeoutMs="4000"
         ${ref(this.snackBar)}
       ></cros-snackbar>

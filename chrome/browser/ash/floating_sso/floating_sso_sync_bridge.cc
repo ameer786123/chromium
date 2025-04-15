@@ -82,8 +82,6 @@ std::optional<syncer::ModelError> FloatingSsoSyncBridge::MergeFullSyncData(
                     if (result == syncer::ConflictResolution::kUseLocal) {
                       return true;
                     } else {
-                      // TODO: b/354202235 - revisit this CHECK once we have a
-                      // non-default implementation of `ResolveConflict`.
                       CHECK_EQ(result, syncer::ConflictResolution::kUseRemote);
                       local_keys_to_upload.erase(it);
                       return false;
@@ -100,8 +98,10 @@ std::optional<syncer::ModelError> FloatingSsoSyncBridge::MergeFullSyncData(
   }
 
   // Add remote entities to local data.
-  return ApplyIncrementalSyncChanges(std::move(metadata_change_list),
-                                     std::move(remote_entities));
+  std::optional<syncer::ModelError> result = ApplyIncrementalSyncChanges(
+      std::move(metadata_change_list), std::move(remote_entities));
+  OnMergeFullSyncDataFinished();
+  return result;
 }
 
 std::optional<syncer::ModelError>
@@ -202,8 +202,9 @@ FloatingSsoSyncBridge::GetAllDataForDebugging() {
 syncer::ConflictResolution FloatingSsoSyncBridge::ResolveConflict(
     const std::string& storage_key,
     const syncer::EntityData& remote_data) const {
-  // TODO: b/353222478 - prefer local SAML cookies if they were acquired
-  // during the most recent ChromeOS sign-in.
+  if (keep_local_cookie_keys_.contains(storage_key)) {
+    return syncer::ConflictResolution::kUseLocal;
+  }
   return syncer::DataTypeSyncBridge::ResolveConflict(storage_key, remote_data);
 }
 
@@ -325,6 +326,27 @@ void FloatingSsoSyncBridge::AddObserver(Observer* observer) {
 
 void FloatingSsoSyncBridge::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
+}
+
+void FloatingSsoSyncBridge::AddToLocallyPreferredCookies(
+    const std::string& storage_key) {
+  keep_local_cookie_keys_.insert(storage_key);
+}
+
+void FloatingSsoSyncBridge::SetOnMergeFullSyncDataCallback(
+    base::OnceClosure callback) {
+  if (merge_full_sync_data_finished_) {
+    std::move(callback).Run();
+    return;
+  }
+  on_merge_full_sync_data_callback_ = std::move(callback);
+}
+
+void FloatingSsoSyncBridge::OnMergeFullSyncDataFinished() {
+  if (on_merge_full_sync_data_callback_) {
+    std::move(on_merge_full_sync_data_callback_).Run();
+  }
+  merge_full_sync_data_finished_ = true;
 }
 
 }  // namespace ash::floating_sso

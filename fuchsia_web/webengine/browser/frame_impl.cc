@@ -37,12 +37,14 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/message_port_provider.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -318,7 +320,6 @@ class AudioStreamBrokerFactory final
       const std::string& device_id,
       const media::AudioParameters& params,
       uint32_t shared_memory_count,
-      media::UserInputMonitorBase* user_input_monitor,
       bool enable_agc,
       media::mojom::AudioProcessingConfigPtr processing_config,
       content::AudioStreamBroker::DeleterCallback deleter,
@@ -326,9 +327,8 @@ class AudioStreamBrokerFactory final
           renderer_factory_client) final {
     return base_factory_->CreateAudioInputStreamBroker(
         render_process_id, render_frame_id, device_id, params,
-        shared_memory_count, user_input_monitor, enable_agc,
-        std::move(processing_config), std::move(deleter),
-        std::move(renderer_factory_client));
+        shared_memory_count, enable_agc, std::move(processing_config),
+        std::move(deleter), std::move(renderer_factory_client));
   }
 
   std::unique_ptr<content::AudioStreamBroker> CreateAudioLoopbackStreamBroker(
@@ -349,6 +349,7 @@ class AudioStreamBrokerFactory final
   std::unique_ptr<content::AudioStreamBroker> CreateAudioOutputStreamBroker(
       int render_process_id,
       int render_frame_id,
+      const content::GlobalRenderFrameHostToken& main_frame_token,
       int stream_id,
       const std::string& output_device_id,
       const media::AudioParameters& params,
@@ -364,8 +365,9 @@ class AudioStreamBrokerFactory final
           GetEffectFlagsForRenderUsage(output_usage_.value()));
     }
     return base_factory_->CreateAudioOutputStreamBroker(
-        render_process_id, render_frame_id, stream_id, output_device_id,
-        params_with_effects, group_id, std::move(deleter), std::move(client));
+        render_process_id, render_frame_id, main_frame_token, stream_id,
+        output_device_id, params_with_effects, group_id, std::move(deleter),
+        std::move(client));
   }
 
  private:
@@ -1468,11 +1470,13 @@ void FrameImpl::RequestMediaAccessPermission(
     content::MediaResponseCallback callback) {
   DCHECK_EQ(web_contents_.get(), web_contents);
 
-  std::vector<blink::PermissionType> permissions;
+  std::vector<blink::mojom::PermissionDescriptorPtr> permissions;
 
   if (request.audio_type ==
       blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE) {
-    permissions.push_back(blink::PermissionType::AUDIO_CAPTURE);
+    permissions.push_back(content::PermissionDescriptorUtil::
+                              CreatePermissionDescriptorForPermissionType(
+                                  blink::PermissionType::AUDIO_CAPTURE));
   } else if (request.audio_type != blink::mojom::MediaStreamType::NO_SERVICE) {
     std::move(callback).Run(
         blink::mojom::StreamDevicesSet(),
@@ -1482,7 +1486,9 @@ void FrameImpl::RequestMediaAccessPermission(
 
   if (request.video_type ==
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE) {
-    permissions.push_back(blink::PermissionType::VIDEO_CAPTURE);
+    permissions.push_back(content::PermissionDescriptorUtil::
+                              CreatePermissionDescriptorForPermissionType(
+                                  blink::PermissionType::VIDEO_CAPTURE));
   } else if (request.video_type != blink::mojom::MediaStreamType::NO_SERVICE) {
     std::move(callback).Run(
         blink::mojom::StreamDevicesSet(),
@@ -1511,10 +1517,10 @@ void FrameImpl::RequestMediaAccessPermission(
   content::PermissionController* permission_controller =
       web_contents_->GetBrowserContext()->GetPermissionController();
   DCHECK(permission_controller);
-
   permission_controller->RequestPermissionsFromCurrentDocument(
       render_frame_host,
-      content::PermissionRequestDescription(permissions, request.user_gesture),
+      content::PermissionRequestDescription(std::move(permissions),
+                                            request.user_gesture),
       base::BindOnce(&HandleMediaPermissionsRequestResult, request,
                      std::move(callback)));
 }
@@ -1545,8 +1551,9 @@ bool FrameImpl::CheckMediaAccessPermission(
   DCHECK(permission_controller);
 
   return permission_controller->GetPermissionStatusForCurrentDocument(
-             permission, render_frame_host) ==
-         blink::mojom::PermissionStatus::GRANTED;
+             content::PermissionDescriptorUtil::
+                 CreatePermissionDescriptorForPermissionType(permission),
+             render_frame_host) == blink::mojom::PermissionStatus::GRANTED;
 }
 
 std::unique_ptr<content::AudioStreamBrokerFactory>

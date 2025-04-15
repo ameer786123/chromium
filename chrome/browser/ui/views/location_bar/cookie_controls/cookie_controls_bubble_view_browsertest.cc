@@ -8,6 +8,7 @@
 #include "chrome/browser/privacy_sandbox/tracking_protection_settings_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/location_bar/cookie_controls/cookie_controls_bubble_coordinator.h"
@@ -66,9 +67,20 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
     controller_ = std::make_unique<content_settings::CookieControlsController>(
         CookieSettingsFactory::GetForProfile(browser()->profile()), nullptr,
         HostContentSettingsMapFactory::GetForProfile(browser()->profile()),
-        TrackingProtectionSettingsFactory::GetForProfile(browser()->profile()));
+        TrackingProtectionSettingsFactory::GetForProfile(browser()->profile()),
+        /*is_incognito_profile=*/false);
 
-    coordinator_ = std::make_unique<CookieControlsBubbleCoordinator>();
+    incognito_controller_ =
+        std::make_unique<content_settings::CookieControlsController>(
+            CookieSettingsFactory::GetForProfile(incognito_profile()),
+            CookieSettingsFactory::GetForProfile(browser()->profile()),
+            HostContentSettingsMapFactory::GetForProfile(incognito_profile()),
+            TrackingProtectionSettingsFactory::GetForProfile(
+                incognito_profile()),
+            /*is_incognito_profile=*/true);
+
+    coordinator_ =
+        browser()->GetFeatures().cookie_controls_bubble_coordinator();
   }
 
   void TearDownOnMainThread() override {
@@ -79,12 +91,21 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
 
     coordinator_ = nullptr;
     controller_ = nullptr;
+    incognito_controller_ = nullptr;
     InProcessBrowserTest::TearDownOnMainThread();
   }
 
  protected:
   void ShowBubble() {
-    coordinator_->ShowBubble(active_web_contents(), controller_.get());
+    coordinator_->ShowBubble(
+        browser()->GetBrowserView().toolbar_button_provider(),
+        active_web_contents(), controller_.get());
+  }
+
+  void ShowIncognitoBubble() {
+    coordinator_->ShowBubble(
+        browser()->GetBrowserView().toolbar_button_provider(),
+        active_web_contents(), incognito_controller_.get());
   }
 
   void WaitForBubbleClose() {
@@ -135,11 +156,17 @@ class CookieControlsBubbleViewBrowserTest : public InProcessBrowserTest {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
+  Profile* incognito_profile() {
+    return browser()->profile()->GetPrimaryOTRProfile(true);
+  }
+
  private:
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
-  std::unique_ptr<CookieControlsBubbleCoordinator> coordinator_;
+  raw_ptr<CookieControlsBubbleCoordinator> coordinator_;
   std::unique_ptr<content_settings::CookieControlsController> controller_;
+  std::unique_ptr<content_settings::CookieControlsController>
+      incognito_controller_;
 };
 
 IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,
@@ -162,13 +189,10 @@ class TrackingProtectionBubbleViewBrowserTest
         net::EmbeddedTestServer::TYPE_HTTPS);
     // Enable FPP to display UB UX with ACT features
     feature_list_.InitWithFeatures(
-        {privacy_sandbox::kFingerprintingProtectionUserBypass}, {});
-  }
-
-  ContentSetting GetTrackingProtectionSetting() {
-    return host_content_settings_map()->GetContentSetting(
-        GURL(), third_party_cookie_page_url(),
-        ContentSettingsType::TRACKING_PROTECTION);
+        {privacy_sandbox::kTrackingProtectionContentSettingUbControl,
+         privacy_sandbox::kActUserBypassUx,
+         privacy_sandbox::kFingerprintingProtectionUx},
+        {});
   }
 
  private:
@@ -178,12 +202,22 @@ class TrackingProtectionBubbleViewBrowserTest
 
 IN_PROC_BROWSER_TEST_F(TrackingProtectionBubbleViewBrowserTest,
                        ToggleCreatesTrackingProtectionException) {
-  ShowBubble();
-  EXPECT_EQ(GetTrackingProtectionSetting(), CONTENT_SETTING_BLOCK);
+  // Set FPP pref to display UB UX with ACT feature.
+  // Note: this value is set in the incognito profile for testing, in reality
+  // this will be set on the regular profile.
+  incognito_profile()->GetPrefs()->SetBoolean(
+      prefs::kFingerprintingProtectionEnabled, true);
+  auto* tracking_protection_settings =
+      TrackingProtectionSettingsFactory::GetForProfile(incognito_profile());
+  ShowIncognitoBubble();
+  EXPECT_FALSE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
   SimulateTogglePress(false);
-  EXPECT_EQ(GetTrackingProtectionSetting(), CONTENT_SETTING_ALLOW);
+  EXPECT_TRUE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
   SimulateTogglePress(true);
-  EXPECT_EQ(GetTrackingProtectionSetting(), CONTENT_SETTING_BLOCK);
+  EXPECT_FALSE(tracking_protection_settings->HasTrackingProtectionException(
+      third_party_cookie_page_url()));
 }
 
 IN_PROC_BROWSER_TEST_F(CookieControlsBubbleViewBrowserTest,

@@ -93,7 +93,8 @@ AggregatableReportRequest CreateExampleRequest(
         blink::mojom::AggregationServiceMode::kDefault,
     int failed_send_attempts = 0,
     std::optional<url::Origin> aggregation_coordinator_origin = std::nullopt,
-    std::optional<AggregatableReportRequest::DelayType> = std::nullopt);
+    std::optional<AggregatableReportRequest::DelayType> =
+        AggregatableReportRequest::DelayType::ScheduledWithFullDelay);
 
 AggregatableReportRequest CreateExampleRequestWithReportTime(
     base::Time report_time,
@@ -160,7 +161,7 @@ class MockAggregationService : public AggregationService {
 
   MOCK_METHOD(void,
               SendReport,
-              (const GURL& url,
+              (GURL url,
                const AggregatableReport& report,
                std::optional<AggregatableReportRequest::DelayType> delay_type,
                AggregationService::SendCallback callback),
@@ -168,7 +169,7 @@ class MockAggregationService : public AggregationService {
 
   MOCK_METHOD(void,
               SendReport,
-              (const GURL& url,
+              (GURL url,
                const base::Value& value,
                std::optional<AggregatableReportRequest::DelayType> delay_type,
                AggregationService::SendCallback callback),

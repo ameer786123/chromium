@@ -20,6 +20,8 @@ const char kAutofillItemState[] = "set_up_list.autofill_item.state";
 const char kFollowItemState[] = "set_up_list.follow_item.state";
 const char kNotificationsItemState[] =
     "set_up_list.content_notification_item.state";
+const char kDockingItemState[] = "set_up_list.docking_item.state";
+const char kAddressBarItemState[] = "set_up_list.address_bar_item.state";
 const char kAllItemsComplete[] = "set_up_list.all_items_complete";
 const char kDisabled[] = "set_up_list.disabled";
 const char kLastInteraction[] = "set_up_list.last_interaction";
@@ -31,6 +33,8 @@ void RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kAutofillItemState, unknown);
   registry->RegisterIntegerPref(kFollowItemState, unknown);
   registry->RegisterIntegerPref(kNotificationsItemState, unknown);
+  registry->RegisterIntegerPref(kDockingItemState, unknown);
+  registry->RegisterIntegerPref(kAddressBarItemState, unknown);
   registry->RegisterBooleanPref(kAllItemsComplete, false);
   registry->RegisterBooleanPref(kDisabled, false);
   registry->RegisterTimePref(kLastInteraction, base::Time());
@@ -48,6 +52,10 @@ const char* PrefNameForItem(SetUpListItemType type) {
       return kFollowItemState;
     case SetUpListItemType::kNotifications:
       return kNotificationsItemState;
+    case SetUpListItemType::kDocking:
+      return kDockingItemState;
+    case SetUpListItemType::kAddressBar:
+      return kAddressBarItemState;
     case SetUpListItemType::kAllSet:
       NOTREACHED();
   }
@@ -94,16 +102,12 @@ bool AllItemsComplete(PrefService* prefs) {
 }
 
 bool IsSetUpListDisabled(PrefService* prefs) {
-  return prefs->GetBoolean(kDisabled);
+  return !prefs->GetBoolean(
+      prefs::kHomeCustomizationMagicStackSetUpListEnabled);
 }
 
 void DisableSetUpList(PrefService* prefs) {
-  if (IsHomeCustomizationEnabled()) {
-    prefs->SetBoolean(prefs::kHomeCustomizationMagicStackSetUpListEnabled,
-                      false);
-  } else {
-    prefs->SetBoolean(kDisabled, true);
-  }
+  prefs->SetBoolean(prefs::kHomeCustomizationMagicStackSetUpListEnabled, false);
 }
 
 void RecordInteraction(PrefService* prefs) {

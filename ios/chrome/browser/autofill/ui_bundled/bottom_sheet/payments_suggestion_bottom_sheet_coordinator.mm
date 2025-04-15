@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/payments_suggestion_bottom_sheet_coordinator.h"
 
-#import "base/feature_list.h"
-#import "components/autofill/ios/common/features.h"
 #import "components/autofill/ios/form_util/form_activity_params.h"
 #import "ios/chrome/browser/autofill/model/personal_data_manager_factory.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/payments_suggestion_bottom_sheet_exit_reason.h"
@@ -138,7 +136,6 @@ using PaymentsSuggestionBottomSheetExitReason::kUsePaymentsSuggestion;
       dismissViewControllerAnimated:NO
                          completion:^{
                            [weakSelf.settingsHandler showCreditCardSettings];
-                           [weakSelf reattachListenersIfNeeded];
                            [weakSelf.browserCoordinatorCommandsHandler
                                    dismissPaymentSuggestions];
                          }];
@@ -157,7 +154,6 @@ using PaymentsSuggestionBottomSheetExitReason::kUsePaymentsSuggestion;
         [](__weak __typeof(self) weak_self, autofill::CreditCard credit_card) {
           [weak_self.settingsHandler showCreditCardDetails:credit_card
                                                 inEditMode:NO];
-          [weak_self reattachListenersIfNeeded];
           [weak_self
                   .browserCoordinatorCommandsHandler dismissPaymentSuggestions];
         },
@@ -171,12 +167,24 @@ using PaymentsSuggestionBottomSheetExitReason::kUsePaymentsSuggestion;
 
 - (void)primaryButtonTappedForCard:(CreditCardData*)creditCardData
                            atIndex:(NSInteger)index {
+  if (_dismissing) {
+    // Do not handle an action if the view controller is already being
+    // dismissed. Only one action is allowed on the sheet.
+    return;
+  }
+  // Disable user interactions on the root view of the view controller so any
+  // further user action isn't allowed. Only one action is allowed on the sheet.
+  self.viewController.view.userInteractionEnabled = NO;
+
   _dismissing = YES;
   [self.mediator logExitReason:kUsePaymentsSuggestion];
   __weak __typeof(self) weakSelf = self;
   [self.viewController
-      dismissViewControllerAnimated:NO
+      dismissViewControllerAnimated:YES
                          completion:^{
+                           // Dismiss the soft keyboard when done with the
+                           // animation so it doesn't flicker.
+                           [weakSelf dismissSoftKeyboard];
                            [weakSelf didSelectCreditCard:creditCardData
                                                  atIndex:index];
                            [weakSelf.browserCoordinatorCommandsHandler
@@ -213,10 +221,14 @@ using PaymentsSuggestionBottomSheetExitReason::kUsePaymentsSuggestion;
                                   self.viewController.image);
 }
 
-// Reattaches the listeners for the latest focused form if deemed needed.
-- (void)reattachListenersIfNeeded {
-  if (base::FeatureList::IsEnabled(kAutofillPaymentsSheetV2Ios)) {
-    [self.mediator reattachListeners];
+// Dismisses the soft keyboard. Make sure to only call this when there is an
+// active webstate.
+- (void)dismissSoftKeyboard {
+  web::WebState* activeWebState =
+      self.browser->GetWebStateList()->GetActiveWebState();
+  CHECK(activeWebState, base::NotFatalUntil::M135);
+  if (activeWebState) {
+    [activeWebState->GetView() endEditing:NO];
   }
 }
 

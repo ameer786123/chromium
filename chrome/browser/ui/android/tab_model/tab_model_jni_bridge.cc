@@ -148,19 +148,25 @@ void TabModelJniBridge::SetActiveIndex(int index) {
   Java_TabModelJniBridge_setIndex(env, java_object_.get(env), index);
 }
 
+void TabModelJniBridge::ForceCloseAllTabs() {
+  JNIEnv* env = AttachCurrentThread();
+  Java_TabModelJniBridge_forceCloseAllTabs(env, java_object_.get(env));
+}
+
 void TabModelJniBridge::CloseTabAt(int index) {
   JNIEnv* env = AttachCurrentThread();
   Java_TabModelJniBridge_closeTabAt(env, java_object_.get(env), index);
 }
 
-WebContents* TabModelJniBridge::CreateNewTabForDevTools(const GURL& url) {
+WebContents* TabModelJniBridge::CreateNewTabForDevTools(const GURL& url,
+                                                        bool new_window) {
   // TODO(dfalcantara): Change the Java side so that it creates and returns the
   //                    WebContents, which we can load the URL on and return.
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj =
       Java_TabModelJniBridge_createNewTabForDevTools(
           env, java_object_.get(env),
-          url::GURLAndroid::FromNativeGURL(env, url));
+          url::GURLAndroid::FromNativeGURL(env, url), new_window);
   if (obj.is_null()) {
     VLOG(0) << "Failed to create java tab";
     return NULL;
@@ -185,13 +191,24 @@ bool TabModelJniBridge::IsActiveModel() const {
 }
 
 // static
+bool TabModelJniBridge::IsTabInTabGroupLegacy(TabAndroid* tab) {
+  // Terminate early if tab is in the process of being destroyed.
+  if (!tab || !tab->web_contents() || !tab->web_contents()->GetDelegate()) {
+    return false;
+  }
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_TabModelJniBridge_isTabInTabGroupLegacy(env,
+                                                      tab->GetJavaObject());
+}
+
 bool TabModelJniBridge::IsTabInTabGroup(TabAndroid* tab) {
   // Terminate early if tab is in the process of being destroyed.
   if (!tab || !tab->web_contents() || !tab->web_contents()->GetDelegate()) {
     return false;
   }
   JNIEnv* env = base::android::AttachCurrentThread();
-  return Java_TabModelJniBridge_isTabInTabGroup(env, tab->GetJavaObject());
+  return Java_TabModelJniBridge_isTabInTabGroup(env, java_object_.get(env),
+                                                tab->GetJavaObject());
 }
 
 void TabModelJniBridge::AddObserver(TabModelObserver* observer) {
@@ -247,7 +264,9 @@ jclass TabModelJniBridge::GetClazz(JNIEnv* env) {
 }
 
 TabModelJniBridge::~TabModelJniBridge() {
-  if (!is_archived_tab_model_) {
+  if (is_archived_tab_model_) {
+    TabModelList::SetArchivedTabModel(nullptr);
+  } else {
     TabModelList::RemoveTabModel(this);
   }
 }

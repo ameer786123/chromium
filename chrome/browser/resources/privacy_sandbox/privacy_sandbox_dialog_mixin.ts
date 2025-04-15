@@ -3,9 +3,13 @@
 // found in the LICENSE file.
 
 // clang-format off
+
+import '/strings.m.js';
+
 import type { PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 
 import {PrivacySandboxDialogBrowserProxy, PrivacySandboxPromptAction} from './privacy_sandbox_dialog_browser_proxy.js';
 // clang-format on
@@ -16,19 +20,42 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
     <T extends Constructor<PolymerElement>>(superClass: T): T&
     Constructor<PrivacySandboxDialogMixinInterface> => {
       class PrivacySandboxDialogMixin extends superClass {
-        wasScrolledToBottom: boolean = true;
-
-        private didStartWithScrollbar_: boolean = false;
-        private wasScrolledToBottomResolver_: PromiseResolver<void>;
-        private moreButtonInitialized_: PromiseResolver<void>;
-
         static get properties() {
           return {
             wasScrolledToBottom: {
               type: Boolean,
               observer: 'onWasScrolledToBottomChange_',
+              value: true,
+            },
+
+            /**
+             * If true, the Ads API UX Enhancement should be shown.
+             */
+            shouldShowV2_: {
+              type: Boolean,
+              value: () => {
+                return loadTimeData.getBoolean(
+                    'isPrivacySandboxAdsApiUxEnhancementsEnabled');
+              },
             },
           };
+        }
+
+        declare wasScrolledToBottom: boolean;
+        private didStartWithScrollbar_: boolean = false;
+        private wasScrolledToBottomResolver_: PromiseResolver<void>;
+        private moreButtonInitialized_: PromiseResolver<void>;
+        declare private shouldShowV2_: boolean;
+
+        /**
+         * Contains true if the dialog dismissal buttons should be the same
+         * styling.
+         */
+        private equalizedButtons_: boolean;
+
+
+        shouldShowV2(): boolean {
+          return this.shouldShowV2_;
         }
 
         onConsentLearnMoreExpandedChanged(
@@ -59,6 +86,38 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
             this.onContentSizeChanging_(/*expanding=*/ false);
             this.promptActionOccurred(
                 PrivacySandboxPromptAction.NOTICE_MORE_INFO_CLOSED);
+          }
+        }
+
+        onNoticeSiteSuggestedAdsLearnMoreExpandedChanged(
+            newValue: boolean, oldValue: boolean) {
+          if (newValue && !oldValue) {
+            this.onContentSizeChanging_(/*expanding=*/ true);
+            this.promptActionOccurred(
+                PrivacySandboxPromptAction
+                    .NOTICE_SITE_SUGGESTED_ADS_MORE_INFO_OPENED);
+          }
+          if (!newValue && oldValue) {
+            this.onContentSizeChanging_(/*expanding=*/ false);
+            this.promptActionOccurred(
+                PrivacySandboxPromptAction
+                    .NOTICE_SITE_SUGGESTED_ADS_MORE_INFO_CLOSED);
+          }
+        }
+
+        onNoticeAdsMeasurementLearnMoreExpandedChanged(
+            newValue: boolean, oldValue: boolean) {
+          if (newValue && !oldValue) {
+            this.onContentSizeChanging_(/*expanding=*/ true);
+            this.promptActionOccurred(
+                PrivacySandboxPromptAction
+                    .NOTICE_ADS_MEASUREMENT_MORE_INFO_OPENED);
+          }
+          if (!newValue && oldValue) {
+            this.onContentSizeChanging_(/*expanding=*/ false);
+            this.promptActionOccurred(
+                PrivacySandboxPromptAction
+                    .NOTICE_ADS_MEASUREMENT_MORE_INFO_CLOSED);
           }
         }
 
@@ -156,8 +215,13 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
             this.wasScrolledToBottom = false;
 
             const buttonRowHeight = 64;
+            let lastTextElementId = '#lastTextElement';
+            if (this.shouldShowV2() &&
+                scrollable.querySelector('#lastTextElementV2')) {
+              lastTextElementId = '#lastTextElementV2';
+            }
             const lastTextElement =
-                scrollable.querySelector('#lastTextElement')!;
+                scrollable.querySelector(lastTextElementId)!;
 
             const options = {
               root: scrollable,
@@ -229,8 +293,15 @@ export const PrivacySandboxDialogMixin = dedupingMixin(
 export interface PrivacySandboxDialogMixinInterface {
   wasScrolledToBottom: boolean;
 
+  // Returns true if the Ads API UX Enhancement should be shown.
+  shouldShowV2(): boolean;
+
   onConsentLearnMoreExpandedChanged(newValue: boolean, oldValue: boolean): void;
   onNoticeLearnMoreExpandedChanged(newValue: boolean, oldValue: boolean): void;
+  onNoticeSiteSuggestedAdsLearnMoreExpandedChanged(
+      newValue: boolean, oldValue: boolean): void;
+  onNoticeAdsMeasurementLearnMoreExpandedChanged(
+      newValue: boolean, oldValue: boolean): void;
   onNoticeOpenSettings(): void;
   onNoticeAcknowledge(): void;
   maybeShowMoreButton(): Promise<void>;

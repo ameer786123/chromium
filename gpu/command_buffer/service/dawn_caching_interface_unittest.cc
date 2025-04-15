@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "gpu/command_buffer/service/dawn_caching_interface.h"
 
 #include <string>
@@ -120,7 +125,8 @@ TEST_F(DawnCachingInterfaceTest, UnableToCreateBackend) {
 TEST_F(DawnCachingInterfaceTest, StoreTriggersHostSide) {
   auto dawn_caching_interface = factory_.CreateInstance(
       handle_, base::BindRepeating(&MockDecoderClient::CacheBlob,
-                                   base::Unretained(&decoder_client_mock_)));
+                                   base::Unretained(&decoder_client_mock_),
+                                   gpu::GpuDiskCacheType::kDawnWebGPU));
 
   EXPECT_CALL(decoder_client_mock_,
               CacheBlob(gpu::GpuDiskCacheType::kDawnWebGPU, std::string(kKey),

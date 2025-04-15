@@ -27,6 +27,7 @@
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/test_signin_client_builder.h"
 #include "chrome/browser/sync/user_event_service_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -50,6 +51,7 @@
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/utils.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/model/data_type_controller_delegate.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -57,6 +59,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_navigation_handle.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/http/http_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -87,6 +90,7 @@ using PasswordReuseDialogInteraction =
 using PasswordReuseEvent =
     safe_browsing::LoginReputationClientRequest::PasswordReuseEvent;
 using PasswordReuseLookup = GaiaPasswordReuse::PasswordReuseLookup;
+using signin::constants::kNoHostedDomainFound;
 using ::testing::_;
 using ::testing::Return;
 using ::testing::WithArg;
@@ -245,9 +249,9 @@ class MockChromePasswordProtectionService
   void SetAccountInfo(const std::string& username,
                       const std::string& hosted_domain) {
     AccountInfo account_info;
-    account_info.account_id = CoreAccountId::FromGaiaId("gaia");
+    account_info.gaia = GaiaId("gaia");
+    account_info.account_id = CoreAccountId::FromGaiaId(account_info.gaia);
     account_info.email = username;
-    account_info.gaia = "gaia";
     account_info.hosted_domain = hosted_domain;
     account_info_ = account_info;
   }
@@ -737,7 +741,8 @@ TEST_F(ChromePasswordProtectionServiceTest, VerifyCanSendSamplePing) {
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-// prefs::kEnterpriseCustomLabel is only registered on Windows, Mac, and Linux.
+// prefs::kEnterpriseCustomLabelForProfile is only registered on Windows, Mac,
+// and Linux.
 TEST_F(ChromePasswordProtectionServiceTest, VerifyGetOrganizationPrefEmpty) {
   feature_list_.InitWithFeatures(
       {safe_browsing::kEnterprisePasswordReuseUiRefresh}, {});
@@ -748,7 +753,7 @@ TEST_F(ChromePasswordProtectionServiceTest, VerifyGetOrganizationPrefEmpty) {
 TEST_F(ChromePasswordProtectionServiceTest, VerifyGetOrganizationPrefNonEmpty) {
   feature_list_.InitWithFeatures(
       {safe_browsing::kEnterprisePasswordReuseUiRefresh}, {});
-  profile()->GetPrefs()->SetString(prefs::kEnterpriseCustomLabel,
+  profile()->GetPrefs()->SetString(prefs::kEnterpriseCustomLabelForProfile,
                                    "Mini Corp Ltd");
   ReusedPasswordAccountType reused_password_type;
   EXPECT_EQ("Mini Corp Ltd",
@@ -764,7 +769,7 @@ TEST_F(ChromePasswordProtectionServiceTest, VerifyGetOrganizationTypeGmail) {
 }
 
 TEST_F(ChromePasswordProtectionServiceTest, VerifyGetOrganizationTypeGSuite) {
-  profile()->GetPrefs()->SetString(prefs::kEnterpriseCustomLabel,
+  profile()->GetPrefs()->SetString(prefs::kEnterpriseCustomLabelForProfile,
                                    "example.com");
   CoreAccountInfo account_info = SetPrimaryAccount(kTestEmail);
   SetUpSyncAccount("example.com", account_info);
@@ -1504,8 +1509,17 @@ TEST_F(ChromePasswordProtectionServiceTest,
   reused_password_type.set_is_account_syncing(true);
   CoreAccountInfo core_account_info = SetPrimaryAccount(kTestEmail);
   SetUpSyncAccount(std::string("example.com"), core_account_info);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  // prefs::kEnterpriseCustomLabelForProfile is only registered on Windows, Mac,
+  // and Linux.
+  profile()->GetPrefs()->SetString(prefs::kEnterpriseCustomLabelForProfile,
+                                   "example.com");
   EXPECT_EQ(warning_text_with_org_name,
             service_->GetWarningDetailText(reused_password_type));
+#else
+  EXPECT_EQ(generic_enterprise_warning_text,
+            service_->GetWarningDetailText(reused_password_type));
+#endif
   reused_password_type.set_account_type(
       ReusedPasswordAccountType::NON_GAIA_ENTERPRISE);
   EXPECT_EQ(generic_enterprise_warning_text,
@@ -1850,6 +1864,9 @@ TEST_F(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
 
 TEST_F(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
        VerifyPhishGuardDialogOpensSafetyCheckMenuForBothStoresSyncing) {
+  feature_list_.InitWithFeatures(
+      {}, {/*disabled_features=*/features::kSafetyHubLocalPasswordsModule});
+
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
   std::vector<password_manager::MatchingReusedCredential> credentials;
@@ -1866,6 +1883,31 @@ TEST_F(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
 
   EXPECT_CALL(*mock_checkup_launcher_,
               LaunchSafetyCheck(_, web_contents()->GetTopLevelNativeWindow()));
+
+  SimulateChangePasswordDialogAction(/*is_syncing=*/true);
+}
+
+TEST_F(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+       VerifyPhishGuardDialogOpensSafetyHubMenuForBothStoresSyncing) {
+  feature_list_.InitWithFeatures(
+      /*enabled_features=*/{features::kSafetyHubLocalPasswordsModule}, {});
+
+  service_->ConfigService(/*is_incognito=*/false,
+                          /*is_extended_reporting=*/true);
+  std::vector<password_manager::MatchingReusedCredential> credentials;
+  credentials.emplace_back(
+      "http://example.test", GURL("http://example.test/"), u"user",
+      password_manager::PasswordForm::Store::kAccountStore);
+  credentials.emplace_back(
+      "http://2.example.test", GURL("http://example.test/"), u"user",
+      password_manager::PasswordForm::Store::kProfileStore);
+
+  service_->set_saved_passwords_matching_reused_credentials(credentials);
+
+  SetUpSyncService(/*is_syncing_passwords=*/true);
+
+  EXPECT_CALL(*mock_checkup_launcher_,
+              LaunchSafetyHub(_, web_contents()->GetTopLevelNativeWindow()));
 
   SimulateChangePasswordDialogAction(/*is_syncing=*/true);
 }

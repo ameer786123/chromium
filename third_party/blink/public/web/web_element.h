@@ -34,7 +34,6 @@
 #include <vector>
 
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "v8/include/v8-forward.h"
@@ -83,6 +82,8 @@ class BLINK_EXPORT WebElement : public WebNode {
   WebString TextContentAbridged(unsigned int max_length) const;
   WebString InnerHTML() const;
 
+  void Focus();
+
   // Returns true if the element's computed writing suggestions value is true.
   // https://html.spec.whatwg.org/#writing-suggestions:computed-writing-suggestions-value
   bool WritingSuggestions() const;
@@ -116,7 +117,7 @@ class BLINK_EXPORT WebElement : public WebNode {
   void PasteText(const WebString& text, bool replace_all);
 
   // Returns all <label> elements associated to this element.
-  WebVector<WebLabelElement> Labels() const;
+  std::vector<WebLabelElement> Labels() const;
 
   // Returns true if this is an autonomous custom element.
   bool IsAutonomousCustomElement() const;

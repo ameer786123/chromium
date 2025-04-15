@@ -26,7 +26,6 @@ All changes to this list should go through Blink's feature review process: http:
     -webkit-mask-position-y
     -webkit-perspective-origin-x
     -webkit-perspective-origin-y
-    -webkit-print-color-adjust
     -webkit-rtl-ordering
     -webkit-ruby-position
     -webkit-tap-highlight-color
@@ -165,6 +164,7 @@ All changes to this list should go through Blink's feature review process: http:
     direction
     display
     dominant-baseline
+    dynamic-range-limit
     empty-cells
     field-sizing
     fill
@@ -223,6 +223,7 @@ All changes to this list should go through Blink's feature review process: http:
     inset-block-start
     inset-inline-end
     inset-inline-start
+    interactivity
     interpolate-size
     isolation
     justify-content
@@ -283,7 +284,9 @@ All changes to this list should go through Blink's feature review process: http:
     outline-style
     outline-width
     overflow-anchor
+    overflow-block
     overflow-clip-margin
+    overflow-inline
     overflow-wrap
     overflow-x
     overflow-y
@@ -312,8 +315,11 @@ All changes to this list should go through Blink's feature review process: http:
     position-try-fallbacks
     position-try-order
     position-visibility
+    print-color-adjust
     quotes
     r
+    reading-flow
+    reading-order
     resize
     right
     rotate
@@ -324,6 +330,7 @@ All changes to this list should go through Blink's feature review process: http:
     ry
     scale
     scroll-behavior
+    scroll-initial-target
     scroll-margin-block-end
     scroll-margin-block-start
     scroll-margin-bottom
@@ -332,6 +339,7 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-margin-left
     scroll-margin-right
     scroll-margin-top
+    scroll-marker-group
     scroll-padding-block-end
     scroll-padding-block-start
     scroll-padding-bottom
@@ -369,6 +377,8 @@ All changes to this list should go through Blink's feature review process: http:
     text-align
     text-align-last
     text-anchor
+    text-box-edge
+    text-box-trim
     text-combine-upright
     text-decoration-color
     text-decoration-line
@@ -769,6 +779,9 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-timeline
         scroll-timeline-axis
         scroll-timeline-name
+    text-box
+        text-box-edge
+        text-box-trim
     text-decoration
         text-decoration-color
         text-decoration-line
@@ -989,6 +1002,8 @@ All changes to this list should go through Blink's feature review process: http:
         perspective
     -webkit-perspective-origin
         perspective-origin
+    -webkit-print-color-adjust
+        print-color-adjust
     -webkit-shape-image-threshold
         shape-image-threshold
     -webkit-shape-margin

@@ -13,19 +13,20 @@
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/field_trial.h"
 #include "base/time/time.h"
 #include "base/version_info/channel.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/variations/entropy_provider.h"
 #include "components/variations/metrics.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "components/variations/seed_reader_writer.h"
 #include "components/variations/seed_response.h"
 #include "components/variations/variations_safe_seed_store.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/dbus/featured/featured.pb.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class PrefService;
 class PrefRegistrySimple;
@@ -43,6 +44,9 @@ struct ValidatedSeed {
   // Move-only to avoid expensive copies of seed data.
   ValidatedSeed(ValidatedSeed&& other);
   ValidatedSeed& operator=(ValidatedSeed&& other);
+
+  // Returns whether a seed matches an already stored seed.
+  bool MatchesStoredSeed(const StoredSeed& stored_seed) const;
 
   // Gzipped and base-64 encoded serialized VariationsSeed.
   std::string base64_seed_data;
@@ -68,6 +72,8 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   // |channel| describes the release channel of the browser.
   // |seed_file_dir| is the file path to the seed file directory. If empty, the
   // seed is not stored in a separate seed file, only in |local_state_|.
+  // |entropy_providers| used to provide entropy when setting up the seed file
+  // field trial. If null, the client will not participate in the experiment.
   // |use_first_run_prefs|, if true (default), facilitates modifying Java
   // SharedPreferences ("first run prefs") on Android. If false,
   // SharedPreferences are not accessed.
@@ -77,6 +83,7 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
                       std::unique_ptr<VariationsSafeSeedStore> safe_seed_store,
                       version_info::Channel channel,
                       const base::FilePath& seed_file_dir,
+                      const EntropyProviders* entropy_providers = nullptr,
                       bool use_first_run_prefs = true);
 
   VariationsSeedStore(const VariationsSeedStore&) = delete;
@@ -217,11 +224,19 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   static std::optional<std::string> SeedBytesToCompressedBase64Seed(
       const std::string& seed_bytes);
 
+  // Gets |seed_reader_writer_| for testing.
+  SeedReaderWriter* GetSeedReaderWriterForTesting();
+
   // Sets |seed_reader_writer_| to the given SeedReaderWriter for testing.
   void SetSeedReaderWriterForTesting(
-      std::unique_ptr<SeedReaderWriter> seed_reader_writer) {
-    seed_reader_writer_ = std::move(seed_reader_writer);
-  }
+      std::unique_ptr<SeedReaderWriter> seed_reader_writer);
+
+  // Gets |safe_seed_store_| SeedReaderWriter for testing.
+  SeedReaderWriter* GetSafeSeedReaderWriterForTesting();
+
+  // Sets |safe_seed_store_| SeedReaderWriter to the given one for testing.
+  void SetSafeSeedReaderWriterForTesting(
+      std::unique_ptr<SeedReaderWriter> seed_reader_writer);
 
  protected:
   // Verify an already-loaded |seed_data| along with its |base64_seed_signature|
@@ -387,7 +402,7 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   // Handles reads and writes to seed files.
   std::unique_ptr<SeedReaderWriter> seed_reader_writer_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Gets the combined server and client state used for early boot variations
   // platform disaster recovery.
   featured::SeedDetails GetSafeSeedStateForPlatform(
@@ -407,7 +422,7 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   // A counter that keeps track of how many times the current safe seed is sent
   // to platform.
   size_t send_seed_to_platform_attempts_ = 0;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

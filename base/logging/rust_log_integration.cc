@@ -4,52 +4,33 @@
 
 #include "base/logging/rust_log_integration.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
+#include "base/logging/log_severity.h"
+#include "base/logging/rust_logger.rs.h"
+#include "third_party/rust/cxx/v1/cxx.h"
 
-// TODO: https://crbug.com/372907698 - This can go away when we remove
-// RustLogSeverity and use the base severity constants.
-#ifdef ERROR
-#undef ERROR
-#endif
+namespace logging::internal {
 
-namespace logging {
-namespace internal {
+LogMessageRustWrapper::LogMessageRustWrapper(const char* file,
+                                             int line,
+                                             ::logging::LogSeverity severity)
+    : log_message(file, line, severity) {}
 
-BASE_EXPORT void print_rust_log(const char* msg,
-                                const char* file,
-                                int line,
-                                enum RustLogSeverity severity) {
-  // Drop debug and trace logs when DCHECK_IS_ON() is false. Otherwise, log them
-  // as info, since the C++ implementation lacks support for debug and trace
-  // logs.
-#if !DCHECK_IS_ON()
-  if (severity == RustLogSeverity::DEBUG ||
-      severity == RustLogSeverity::TRACE) {
-    return;
-  }
-#endif
-
-  logging::LogSeverity log_severity;
-  switch (severity) {
-    case RustLogSeverity::DEBUG:
-      log_severity = logging::LOGGING_INFO;
-      break;
-    case RustLogSeverity::TRACE:
-      log_severity = logging::LOGGING_INFO;
-      break;
-    case RustLogSeverity::INFO:
-      log_severity = logging::LOGGING_INFO;
-      break;
-    case RustLogSeverity::WARNING:
-      log_severity = logging::LOGGING_WARNING;
-      break;
-    case RustLogSeverity::ERROR:
-      log_severity = logging::LOGGING_ERROR;
-      break;
-  }
-  logging::LogMessage log_message(file, line, log_severity);
-  log_message.stream() << msg;
+void LogMessageRustWrapper::write_to_stream(rust::Str str) {
+  log_message.stream().write(str.data(),
+                             static_cast<std::streamsize>(str.size()));
 }
 
-}  // namespace internal
-}  // namespace logging
+void print_rust_log(const RustFmtArguments& msg,
+                    const char* file,
+                    int32_t line,
+                    int32_t severity,
+                    bool verbose) {
+  // TODO(danakj): If `verbose` make the log equivalent to VLOG instead of LOG.
+  LogMessageRustWrapper wrapper(file, line, severity);
+  msg.format(wrapper);
+}
+
+}  // namespace logging::internal

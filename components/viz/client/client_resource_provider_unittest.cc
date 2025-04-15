@@ -3,13 +3,14 @@
 // found in the LICENSE file.
 
 #ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
 #endif
 
 #include "components/viz/client/client_resource_provider.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -53,7 +54,7 @@ class ClientResourceProviderTest : public testing::TestWithParam<bool> {
 
   // Some tests want to override feature flags that are checked at construction
   // time. Allow them to recreate the provider.
-  void InitProvider() {
+  void InitProvider(bool use_imported_resource_id = false) {
     // VizTestSuite::task_environment is set for us. We use the default
     // TaskRunner for the Main thread. We then create a second TaskRunner which
     // is built on a separate thread for the Compositor thread.
@@ -61,7 +62,8 @@ class ClientResourceProviderTest : public testing::TestWithParam<bool> {
         base::SingleThreadTaskRunner::GetCurrentDefault(),
         base::ThreadPool::CreateSequencedTaskRunner({}),
         base::BindRepeating(&MockFlushCallback::FlushCallback,
-                            base::Unretained(&mock_flush_callback_)));
+                            base::Unretained(&mock_flush_callback_)),
+        use_imported_resource_id);
   }
 
   void SetUp() override { InitProvider(); }
@@ -189,8 +191,9 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParent) {
 }
 
 TEST_P(ClientResourceProviderTest, TransferableResourceSendTwoToParent) {
-  TransferableResource tran[] = {MakeTransferableResource(use_gpu(), 'a', 15),
-                                 MakeTransferableResource(use_gpu(), 'b', 16)};
+  auto tran = std::to_array<TransferableResource>(
+      {MakeTransferableResource(use_gpu(), 'a', 15),
+       MakeTransferableResource(use_gpu(), 'b', 16)});
   ResourceId id1 = provider().ImportResource(tran[0], base::DoNothing());
   ResourceId id2 = provider().ImportResource(tran[1], base::DoNothing());
 
@@ -281,7 +284,8 @@ TEST_P(ClientResourceProviderTest, TransferableResourceSendToParentManyUnsent) {
   struct Data {
     TransferableResource tran;
     ResourceId id;
-  } data[5];
+  };
+  std::array<Data, 5> data;
   for (int i = 0; i < 5; ++i) {
     data[i].tran = MakeTransferableResource(use_gpu(), 'a', 15);
     data[i].id = provider().ImportResource(
@@ -693,7 +697,7 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResources) {
   MockReleaseCallback release;
 
   // Make 5 resources, put them in a non-sorted order.
-  ResourceId resources[5];
+  std::array<ResourceId, 5> resources;
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
@@ -739,7 +743,7 @@ TEST_P(ClientResourceProviderTest, ReleaseMultipleResourcesBeforeReturn) {
   MockReleaseCallback release;
 
   // Make 5 resources, put them in a non-sorted order.
-  ResourceId resources[5];
+  std::array<ResourceId, 5> resources;
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
@@ -786,7 +790,7 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceBeforeRemove) {
   MockReleaseCallback release;
 
   // Make 5 resources, put them in a non-sorted order.
-  ResourceId resources[5];
+  std::array<ResourceId, 5> resources;
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
@@ -830,7 +834,7 @@ TEST_P(ClientResourceProviderTest, ReturnDuplicateResourceAfterRemove) {
   MockReleaseCallback release;
 
   // Make 5 resources, put them in a non-sorted order.
-  ResourceId resources[5];
+  std::array<ResourceId, 5> resources;
   for (int i = 0; i < 5; ++i) {
     TransferableResource tran = MakeTransferableResource(use_gpu(), 'a', 1 + i);
     resources[i] = provider().ImportResource(
@@ -1171,6 +1175,31 @@ TEST_P(ClientResourceProviderTest,
   DestroyProvider();
   ExpectFlush();
   VizTestSuite::RunUntilIdle();
+}
+
+// Tests that ImportResource generates a new ResourceId when
+// use_imported_resource_id is false (the default behavior).
+TEST_P(ClientResourceProviderTest, ImportResourceGeneratesNewIdByDefault) {
+  MockReleaseCallback release;
+  TransferableResource resource = MakeTransferableResource(use_gpu(), 'a', 15);
+  ResourceId imported_id = provider().ImportResource(
+      resource, base::BindOnce(&MockReleaseCallback::Released,
+                               base::Unretained(&release)));
+  EXPECT_NE(imported_id, resource.id);
+  provider().RemoveImportedResource(imported_id);
+}
+
+// Tests that ImportResource uses the provided ResourceId when
+// use_imported_resource_id is true.
+TEST_P(ClientResourceProviderTest, ImportResourceUsesImportedIdWhenEnabled) {
+  InitProvider(/*use_imported_resource_id=*/true);
+  MockReleaseCallback release;
+  TransferableResource resource = MakeTransferableResource(use_gpu(), 'a', 15);
+  ResourceId imported_id = provider().ImportResource(
+      resource, base::BindOnce(&MockReleaseCallback::Released,
+                               base::Unretained(&release)));
+  EXPECT_EQ(imported_id, resource.id);
+  provider().RemoveImportedResource(imported_id);
 }
 
 }  // namespace

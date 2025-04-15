@@ -8,7 +8,6 @@
 #include "third_party/blink/public/mojom/clipboard/clipboard.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
-#include "third_party/blink/renderer/core/clipboard/clipboard_mime_types.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
@@ -43,7 +42,8 @@ class UnionToBlobResolverFunction final
 
 // static
 ClipboardItem* ClipboardItem::Create(
-    const HeapVector<std::pair<String, ScriptPromise<V8UnionBlobOrString>>>&
+    const HeapVector<
+        std::pair<String, MemberScriptPromise<V8UnionBlobOrString>>>&
         representations,
     ExceptionState& exception_state) {
   // Check that incoming dictionary isn't empty. If it is, it's possible that
@@ -57,7 +57,8 @@ ClipboardItem* ClipboardItem::Create(
 }
 
 ClipboardItem::ClipboardItem(
-    const HeapVector<std::pair<String, ScriptPromise<V8UnionBlobOrString>>>&
+    const HeapVector<
+        std::pair<String, MemberScriptPromise<V8UnionBlobOrString>>>&
         representations) {
   for (const auto& representation : representations) {
     String web_custom_format =
@@ -104,7 +105,7 @@ ScriptPromise<Blob> ClipboardItem::getType(
     ExceptionState& exception_state) const {
   for (const auto& item : representations_) {
     if (type == item.first) {
-      return item.second.ThenTyped(
+      return item.second.Unwrap().Then(
           script_state,
           MakeGarbageCollected<UnionToBlobResolverFunction>(type));
     }
@@ -126,8 +127,8 @@ bool ClipboardItem::supports(const String& type) {
   }
 
   // TODO(https://crbug.com/1029857): Add support for other types.
-  return type == kMimeTypeImagePng || type == kMimeTypeTextPlain ||
-         type == kMimeTypeTextHTML || type == kMimeTypeImageSvg;
+  return type == ui::kMimeTypePng || type == ui::kMimeTypePlainText ||
+         type == ui::kMimeTypeHtml || type == ui::kMimeTypeSvg;
 }
 
 void ClipboardItem::Trace(Visitor* visitor) const {

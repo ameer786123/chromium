@@ -150,10 +150,6 @@ class ChromePasswordProtectionService
   AccountInfo GetAccountInfoForUsername(
       const std::string& username) const override;
 
-  safe_browsing::LoginReputationClientRequest::PasswordReuseEvent::
-      SyncAccountType
-      GetSyncAccountType() const override;
-
   bool CanShowInterstitial(
       safe_browsing::ReusedPasswordAccountType password_type,
       const GURL& main_frame_url) override;
@@ -177,7 +173,7 @@ class ChromePasswordProtectionService
 
   bool IsPrimaryAccountSignedIn() const override;
 
-  bool IsAccountGmail(const std::string& username) const override;
+  bool IsAccountConsumer(const std::string& username) const override;
 
   bool IsInExcludedCountry() override;
 
@@ -255,7 +251,7 @@ class ChromePasswordProtectionService
 
   // Returns the GAIA-account-scoped PasswordStore associated with this
   // instance. The account password store contains passwords stored in the
-  // account and is accessible only when the user is signed in and non syncing.
+  // account and is accessible only when the user is signed in.
   password_manager::PasswordStoreInterface* GetAccountPasswordStore() const;
 
   // Gets prefs associated with `profile_`.

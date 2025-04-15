@@ -83,8 +83,7 @@ uint32_t BytesPerTexel(viz::SharedImageFormat format) {
     return 8;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return 0;
+  NOTREACHED();
 }
 
 }  // namespace
@@ -391,7 +390,7 @@ TEST_P(WebGPUMailboxTextureTest, AssociateMailboxCmd) {
           packed_data.push_back(
               static_cast<uint32_t>(WGPUTextureFormat_BGRA8Unorm));
         } else {
-          NOTREACHED_IN_MIGRATION();
+          NOTREACHED();
         }
 
         // Error case: packed data empty.
@@ -637,12 +636,12 @@ TEST_P(WebGPUMailboxTextureTest, WriteToMailboxThenReadFromIt) {
     buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
     wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-    wgpu::ImageCopyTexture copy_src = {};
+    wgpu::TexelCopyTextureInfo copy_src = {};
     copy_src.texture = texture;
     copy_src.mipLevel = 0;
     copy_src.origin = {0, 0, 0};
 
-    wgpu::ImageCopyBuffer copy_dst = {};
+    wgpu::TexelCopyBufferInfo copy_dst = {};
     copy_dst.buffer = readback_buffer;
     copy_dst.layout.offset = 0;
     copy_dst.layout.bytesPerRow = 256;
@@ -674,7 +673,7 @@ TEST_P(WebGPUMailboxTextureTest, WriteToMailboxThenReadFromIt) {
     } else if (GetParam().format == viz::SinglePlaneFormat::kBGRA_8888) {
       EXPECT_EQ(0xFF0000FFu, *static_cast<const uint32_t*>(data));
     } else {
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
     }
   }
 }
@@ -713,12 +712,12 @@ TEST_P(WebGPUMailboxTextureTest,
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -767,12 +766,12 @@ TEST_P(WebGPUMailboxTextureTest,
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -820,12 +819,12 @@ TEST_P(WebGPUMailboxTextureTest, PassDiscardWhenAssociatingReadOnlyMailbox) {
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -874,12 +873,12 @@ TEST_P(WebGPUMailboxTextureTest,
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -931,12 +930,12 @@ TEST_P(WebGPUMailboxTextureTest,
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -1054,12 +1053,12 @@ TEST_P(WebGPUMailboxTextureTest,
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -1131,12 +1130,12 @@ TEST_P(
   buffer_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
   wgpu::Buffer readback_buffer = device_.CreateBuffer(&buffer_desc);
 
-  wgpu::ImageCopyTexture copy_src = {};
+  wgpu::TexelCopyTextureInfo copy_src = {};
   copy_src.texture = texture;
   copy_src.mipLevel = 0;
   copy_src.origin = {0, 0, 0};
 
-  wgpu::ImageCopyBuffer copy_dst = {};
+  wgpu::TexelCopyBufferInfo copy_dst = {};
   copy_dst.buffer = readback_buffer;
   copy_dst.layout.offset = 0;
   copy_dst.layout.bytesPerRow = 256;
@@ -1211,10 +1210,10 @@ TEST_P(WebGPUMailboxTextureTest, ErrorWhenUsingTextureAfterDissociate) {
          GetParam().format == viz::SinglePlaneFormat::kRGBA_F16);
   dst_desc.format = ToDawnFormat(GetParam().format);
 
-  wgpu::ImageCopyTexture src_image = {};
+  wgpu::TexelCopyTextureInfo src_image = {};
   src_image.texture = texture;
 
-  wgpu::ImageCopyTexture dst_image = {};
+  wgpu::TexelCopyTextureInfo dst_image = {};
   dst_image.texture = device_.CreateTexture(&dst_desc);
 
   wgpu::Extent3D extent = {1, 1};
@@ -1415,6 +1414,47 @@ TEST_P(WebGPUMailboxTextureTest, ReflectionOfDescriptor) {
       reservation2.deviceId, reservation2.deviceGeneration, reservation2.id,
       reservation2.generation, static_cast<WGPUTextureUsage>(desc2.usage),
       webgpu::WEBGPU_MAILBOX_NONE, shared_image2->mailbox());
+}
+
+// Test that passing a texture with invalid view formats to AssociateMailbox
+// does not cause WebGPU validation errors on a later call to DissociateMailbox.
+TEST_P(WebGPUMailboxTextureTest, AssociateInvalidViewFormats) {
+  wgpu::TextureDescriptor desc = {};
+  desc.size = {1, 1, 1};
+  desc.format = ToDawnFormat(GetParam().format);
+  desc.usage = wgpu::TextureUsage::RenderAttachment;
+  desc.dimension = wgpu::TextureDimension::e2D;
+  desc.sampleCount = 1;
+  desc.mipLevelCount = 1;
+  gpu::webgpu::ReservedTexture reservation = webgpu()->ReserveTexture(
+      device_.Get(), reinterpret_cast<const WGPUTextureDescriptor*>(&desc));
+  wgpu::Texture texture = wgpu::Texture::Acquire(reservation.texture);
+
+  SharedImageInterface* sii = GetSharedImageInterface();
+  scoped_refptr<gpu::ClientSharedImage> shared_image =
+      sii->CreateSharedImage({GetParam().format,
+                              {1, 1},
+                              gfx::ColorSpace::CreateSRGB(),
+                              GetSharedImageUsage(AccessType::ReadWrite),
+                              "TestLabel"},
+                             kNullSurfaceHandle);
+  WGPUTextureFormat view_formats = {
+      WGPUTextureFormat_R8Unorm,
+  };
+
+  // AssociateMailbox may cause validation errors, given the invalid
+  // viewFormats, so wrap it in an error scope.
+  device_.PushErrorScope(wgpu::ErrorFilter::Validation);
+  webgpu()->AssociateMailbox(
+      reservation.deviceId, reservation.deviceGeneration, reservation.id,
+      reservation.generation, static_cast<WGPUTextureUsage>(desc.usage),
+      &view_formats, 1, webgpu::WEBGPU_MAILBOX_NONE, shared_image->mailbox());
+  device_.PopErrorScope(
+      wgpu::CallbackMode::AllowSpontaneous,
+      [](wgpu::PopErrorScopeStatus, wgpu::ErrorType, wgpu::StringView) {});
+
+  // DissociateMailbox should NOT cause validation errors.
+  webgpu()->DissociateMailbox(reservation.id, reservation.generation);
 }
 
 // Test that if some other GL context is current when

@@ -59,14 +59,14 @@ public class LinkToTextIphController {
                             return;
                         }
                         mTracker = TrackerFactory.getTrackerForProfile(profile);
-                        if (!mTracker.wouldTriggerHelpUI(FEATURE_NAME)) {
+                        if (!mTracker.wouldTriggerHelpUi(FEATURE_NAME)) {
                             return;
                         }
 
                         LinkToTextHelper.hasExistingSelectors(
                                 tab,
                                 (hasSelectors) -> {
-                                    if (mTracker.shouldTriggerHelpUI(FEATURE_NAME)) {
+                                    if (mTracker.shouldTriggerHelpUi(FEATURE_NAME)) {
                                         showMessageIph(tab);
                                     }
                                 });
@@ -92,12 +92,10 @@ public class LinkToTextIphController {
                         .with(
                                 MessageBannerProperties.TITLE,
                                 tab.getContext()
-                                        .getResources()
                                         .getString(R.string.iph_message_shared_highlighting_title))
                         .with(
                                 MessageBannerProperties.PRIMARY_BUTTON_TEXT,
                                 tab.getContext()
-                                        .getResources()
                                         .getString(R.string.iph_message_shared_highlighting_button))
                         .with(MessageBannerProperties.ON_DISMISSED, this::onMessageDismissed)
                         .with(

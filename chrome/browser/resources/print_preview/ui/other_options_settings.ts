@@ -74,9 +74,9 @@ export class PrintPreviewOtherOptionsSettingsElement extends
     ];
   }
 
-  disabled: boolean;
-  private options_: CheckboxOption[];
-  private firstIndex_: number;
+  declare disabled: boolean;
+  declare private options_: CheckboxOption[];
+  declare private firstIndex_: number;
   private timeouts_: Map<string, number|null> = new Map();
   private previousValues_: Map<string, boolean> = new Map();
 
@@ -114,7 +114,7 @@ export class PrintPreviewOtherOptionsSettingsElement extends
     const setting = this.getSetting(this.options_[index].name);
     this.set(`options_.${index}.available`, setting.available);
     this.set(`options_.${index}.value`, setting.value);
-    this.set(`options_.${index}.managed`, setting.setByPolicy);
+    this.set(`options_.${index}.managed`, setting.setByGlobalPolicy);
 
     // Update first index
     const availableOptions = this.options_.filter(option => !!option.available);

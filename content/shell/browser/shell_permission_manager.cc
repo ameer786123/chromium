@@ -76,11 +76,11 @@ bool IsAllowlistedPermissionType(PermissionType permission) {
     case PermissionType::POINTER_LOCK:
     case PermissionType::AUTOMATIC_FULLSCREEN:
     case PermissionType::WEB_APP_INSTALLATION:
+    case PermissionType::LOCAL_NETWORK_ACCESS:
       return false;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 }  // namespace
@@ -103,9 +103,11 @@ void ShellPermissionManager::RequestPermissions(
   }
   std::vector<blink::mojom::PermissionStatus> result;
   for (const auto& permission : request_description.permissions) {
-    result.push_back(IsAllowlistedPermissionType(permission)
-                         ? blink::mojom::PermissionStatus::GRANTED
-                         : blink::mojom::PermissionStatus::DENIED);
+    result.push_back(
+        IsAllowlistedPermissionType(
+            blink::PermissionDescriptorToPermissionType(permission))
+            ? blink::mojom::PermissionStatus::GRANTED
+            : blink::mojom::PermissionStatus::DENIED);
   }
   std::move(callback).Run(result);
 }
@@ -129,9 +131,11 @@ void ShellPermissionManager::RequestPermissionsFromCurrentDocument(
   }
   std::vector<blink::mojom::PermissionStatus> result;
   for (const auto& permission : request_description.permissions) {
-    result.push_back(IsAllowlistedPermissionType(permission)
-                         ? blink::mojom::PermissionStatus::GRANTED
-                         : blink::mojom::PermissionStatus::DENIED);
+    result.push_back(
+        IsAllowlistedPermissionType(
+            blink::PermissionDescriptorToPermissionType(permission))
+            ? blink::mojom::PermissionStatus::GRANTED
+            : blink::mojom::PermissionStatus::DENIED);
   }
   std::move(callback).Run(result);
 }

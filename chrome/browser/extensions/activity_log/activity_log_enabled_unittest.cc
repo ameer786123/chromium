@@ -15,8 +15,10 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/prefs/pref_service.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_builder.h"
+#include "extensions/common/extension_features.h"
 
 namespace extensions {
 
@@ -24,6 +26,12 @@ const char kExtensionID[] = "eplckmlabaanikjjcgnigddmagoglhmp";
 
 class ActivityLogEnabledTest : public ChromeRenderViewHostTestHarness {
  protected:
+  ActivityLogEnabledTest() {
+    // Allow unpacked extensions without developer mode for testing.
+    scoped_feature_list_.InitAndDisableFeature(
+        extensions_features::kExtensionDisableUnsupportedDeveloper);
+  }
+
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     SetActivityLogTaskRunnerForTesting(
@@ -34,6 +42,8 @@ class ActivityLogEnabledTest : public ChromeRenderViewHostTestHarness {
     ChromeRenderViewHostTestHarness::TearDown();
     SetActivityLogTaskRunnerForTesting(nullptr);
   }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(ActivityLogEnabledTest, NoSwitch) {
@@ -135,7 +145,7 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
                            .Set("manifest_version", 2))
           .SetID(kExtensionID)
           .Build();
-  extension_service1->AddExtension(extension.get());
+  ExtensionRegistrar::Get(profile1.get())->AddExtension(extension.get());
 
   EXPECT_EQ(1,
       profile1->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive));

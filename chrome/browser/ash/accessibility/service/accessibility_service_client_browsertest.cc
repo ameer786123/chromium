@@ -122,7 +122,7 @@ class TtsUtteranceClientImpl : public ax::mojom::TtsUtteranceClient {
 
   TtsUtteranceClientImpl(const TtsUtteranceClientImpl&) = delete;
   TtsUtteranceClientImpl& operator=(const TtsUtteranceClientImpl&) = delete;
-  ~TtsUtteranceClientImpl() override {}
+  ~TtsUtteranceClientImpl() override = default;
 
   void OnEvent(ax::mojom::TtsEventPtr event) override {
     callback_.Run(std::move(event));
@@ -247,10 +247,6 @@ class MockTtsPlatformImpl : public content::TtsPlatform {
   }
 
   void RefreshVoices() override {}
-
-  content::ExternalPlatformDelegate* GetExternalPlatformDelegate() override {
-    return nullptr;
-  }
 
   // Methods for testing.
   void SendEvent(content::TtsEventType event_type,
@@ -380,8 +376,7 @@ class AccessibilityServiceClientTest : public InProcessBrowserTest {
   void TurnOnAccessibilityService(AssistiveTechnologyType type) {
     switch (type) {
       case ax::mojom::AssistiveTechnologyType::kUnknown:
-        NOTREACHED_IN_MIGRATION() << "Unknown AT type";
-        break;
+        NOTREACHED() << "Unknown AT type";
       case ax::mojom::AssistiveTechnologyType::kChromeVox:
         Client()->SetChromeVoxEnabled(true);
         break;
@@ -1408,8 +1403,16 @@ IN_PROC_BROWSER_TEST_F(AccessibilityServiceClientTest,
   stop_waiter.Run();
 }
 
+// TODO(crbug.com/407463723): Fix and re-enable.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_AccessibilityServiceAsksClientToLoadAFile \
+  DISABLED_AccessibilityServiceAsksClientToLoadAFile
+#else
+#define MAYBE_AccessibilityServiceAsksClientToLoadAFile \
+  AccessibilityServiceAsksClientToLoadAFile
+#endif
 IN_PROC_BROWSER_TEST_F(AccessibilityServiceClientTest,
-                       AccessibilityServiceAsksClientToLoadAFile) {
+                       MAYBE_AccessibilityServiceAsksClientToLoadAFile) {
   TurnOnAccessibilityService(AssistiveTechnologyType::kChromeVox);
   base::RunLoop loop;
   fake_service_->RequestLoadFile(

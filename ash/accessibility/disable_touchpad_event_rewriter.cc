@@ -76,7 +76,7 @@ bool IsFromInternalTouchpad(const ui::Event& event) {
   return event.source_device_id() == GetInternalTouchpadDeviceId();
 }
 
-constexpr base::TimeDelta kEnableTouchpadKeyPressWindow = base::Seconds(3);
+constexpr base::TimeDelta kEnableTouchpadKeyPressWindow = base::Seconds(2);
 }  // namespace
 
 DisableTouchpadEventRewriter::DisableTouchpadEventRewriter() {
@@ -145,39 +145,37 @@ ui::EventDispatchDetails DisableTouchpadEventRewriter::HandleMouseOrScrollEvent(
 }
 
 void DisableTouchpadEventRewriter::HandleKeyEvent(const ui::KeyEvent* event) {
-  // TODO(b/365813554): Prevent escape key from propagating to the system before
-  // a specified time window between escape key presses.
-  if (event->type() != ui::EventType::kKeyPressed) {
+  if (event->type() != ui::EventType::kKeyReleased) {
     return;
   }
-  event->key_code() == ui::VKEY_ESCAPE ? HandleEscapeKeyPress()
-                                       : ResetEscapeKeyPressTracking();
+  event->key_code() == ui::VKEY_SHIFT ? HandleShiftKeyRelease()
+                                      : ResetShiftKeyReleaseTracking();
 }
 
-void DisableTouchpadEventRewriter::HandleEscapeKeyPress() {
-  if (escape_press_count_ == 0) {
-    first_escape_press_time_ = ui::EventTimeForNow();
+void DisableTouchpadEventRewriter::HandleShiftKeyRelease() {
+  if (shift_release_count_ == 0) {
+    first_shift_release_time_ = ui::EventTimeForNow();
   }
 
-  ++escape_press_count_;
+  ++shift_release_count_;
   base::TimeDelta elapsed_time =
-      ui::EventTimeForNow() - first_escape_press_time_;
+      ui::EventTimeForNow() - first_shift_release_time_;
 
   if (elapsed_time > kEnableTouchpadKeyPressWindow) {
-    ResetEscapeKeyPressTracking();
+    ResetShiftKeyReleaseTracking();
     return;
   }
 
-  if (escape_press_count_ >= 5) {
+  if (shift_release_count_ >= 5) {
     SetEnabled(false);
     Shell::Get()->accessibility_controller()->EnableInternalTouchpad();
-    ResetEscapeKeyPressTracking();
+    ResetShiftKeyReleaseTracking();
   }
 }
 
-void DisableTouchpadEventRewriter::ResetEscapeKeyPressTracking() {
-  escape_press_count_ = 0;
-  first_escape_press_time_ = base::TimeTicks();
+void DisableTouchpadEventRewriter::ResetShiftKeyReleaseTracking() {
+  shift_release_count_ = 0;
+  first_shift_release_time_ = base::TimeTicks();
 }
 
 }  // namespace ash

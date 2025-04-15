@@ -4,6 +4,8 @@
 
 #include "components/optimization_guide/core/model_execution/model_execution_manager.h"
 
+#include <optional>
+
 #include "base/command_line.h"
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
@@ -72,17 +74,6 @@ class ScopedModelExecutionResponseLogger {
   raw_ptr<OptimizationGuideLogger> optimization_guide_logger_;
 };
 
-// Returns the URL endpoint for the model execution service.
-GURL GetModelExecutionServiceURL() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(
-          switches::kOptimizationGuideServiceModelExecutionURL)) {
-    return GURL(command_line->GetSwitchValueASCII(
-        switches::kOptimizationGuideServiceModelExecutionURL));
-  }
-  return GURL(kOptimizationGuideServiceModelExecutionDefaultURL);
-}
-
 void RecordSessionUsedRemoteExecutionHistogram(ModelBasedCapabilityKey feature,
                                                bool is_remote) {
   base::UmaHistogramBoolean(
@@ -120,32 +111,6 @@ void NoOpExecuteRemoteFn(
       nullptr);
 }
 
-std::map<ModelBasedCapabilityKey, OnDeviceModelAdaptationLoader>
-GetRequiredModelAdaptationLoaders(
-    OptimizationGuideModelProvider* model_provider,
-    base::WeakPtr<OnDeviceModelComponentStateManager>
-        on_device_component_state_manager,
-    PrefService* local_state,
-    base::WeakPtr<OnDeviceModelServiceController>
-        on_device_model_service_controller) {
-  std::map<ModelBasedCapabilityKey, OnDeviceModelAdaptationLoader> loaders;
-  for (const auto feature : kAllModelBasedCapabilityKeys) {
-    if (!features::internal::IsOnDeviceModelEnabled(feature) ||
-        !features::internal::IsOnDeviceModelAdaptationEnabled(feature)) {
-      continue;
-    }
-    loaders.emplace(
-        std::piecewise_construct, std::forward_as_tuple(feature),
-        std::forward_as_tuple(
-            feature, model_provider, on_device_component_state_manager,
-            local_state,
-            base::BindRepeating(
-                &OnDeviceModelServiceController::MaybeUpdateModelAdaptation,
-                on_device_model_service_controller, feature)));
-  }
-  return loaders;
-}
-
 }  // namespace
 
 using ModelExecutionError =
@@ -153,63 +118,24 @@ using ModelExecutionError =
 
 ModelExecutionManager::ModelExecutionManager(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    PrefService* local_state,
     signin::IdentityManager* identity_manager,
     scoped_refptr<OnDeviceModelServiceController>
         on_device_model_service_controller,
-    OptimizationGuideModelProvider* model_provider,
-    base::WeakPtr<OnDeviceModelComponentStateManager>
-        on_device_component_state_manager,
     OptimizationGuideLogger* optimization_guide_logger,
     base::WeakPtr<ModelQualityLogsUploaderService>
         model_quality_uploader_service)
     : model_quality_uploader_service_(model_quality_uploader_service),
       optimization_guide_logger_(optimization_guide_logger),
       model_execution_service_url_(net::AppendOrReplaceQueryParameter(
-          GetModelExecutionServiceURL(),
+          switches::GetModelExecutionServiceURL(),
           "key",
           features::GetOptimizationGuideServiceAPIKey())),
       url_loader_factory_(url_loader_factory),
       identity_manager_(identity_manager),
-      model_adaptation_loaders_(GetRequiredModelAdaptationLoaders(
-          model_provider,
-          on_device_component_state_manager,
-          local_state,
-          on_device_model_service_controller
-              ? on_device_model_service_controller->GetWeakPtr()
-              : nullptr)),
-      model_provider_(model_provider),
       on_device_model_service_controller_(
-          std::move(on_device_model_service_controller)) {
-  if (!model_provider_ && !on_device_model_service_controller_) {
-    return;
-  }
-  if (!features::ShouldUseTextSafetyClassifierModel()) {
-    return;
-  }
-  if (GetGenAILocalFoundationalModelEnterprisePolicySettings(local_state) !=
-      model_execution::prefs::
-          GenAILocalFoundationalModelEnterprisePolicySettings::kAllowed) {
-    return;
-  }
-
-  did_register_for_supplementary_on_device_models_ = true;
-  model_provider_->AddObserverForOptimizationTargetModel(
-      proto::OptimizationTarget::OPTIMIZATION_TARGET_TEXT_SAFETY,
-      /*model_metadata=*/std::nullopt, this);
-  model_provider_->AddObserverForOptimizationTargetModel(
-      proto::OptimizationTarget::OPTIMIZATION_TARGET_LANGUAGE_DETECTION,
-      /*model_metadata=*/std::nullopt, this);
-}
+          std::move(on_device_model_service_controller)) {}
 
 ModelExecutionManager::~ModelExecutionManager() {
-  if (did_register_for_supplementary_on_device_models_) {
-    model_provider_->RemoveObserverForOptimizationTargetModel(
-        proto::OptimizationTarget::OPTIMIZATION_TARGET_TEXT_SAFETY, this);
-    model_provider_->RemoveObserverForOptimizationTargetModel(
-        proto::OptimizationTarget::OPTIMIZATION_TARGET_LANGUAGE_DETECTION,
-        this);
-  }
 }
 
 void ModelExecutionManager::Shutdown() {
@@ -276,9 +202,6 @@ void ModelExecutionManager::ExecuteModel(
     log_ai_data_request = std::make_unique<proto::LogAiDataRequest>();
   }
 
-  // Set execution request in corresponding `log_ai_data_request`.
-  SetExecutionRequest(feature, *log_ai_data_request.get(), request_metadata);
-
   auto fetcher_it = active_model_execution_fetchers_.emplace(
       std::piecewise_construct, std::forward_as_tuple(feature),
       std::forward_as_tuple(url_loader_factory_, model_execution_service_url_,
@@ -288,25 +211,6 @@ void ModelExecutionManager::ExecuteModel(
       base::BindOnce(&ModelExecutionManager::OnModelExecuteResponse,
                      weak_ptr_factory_.GetWeakPtr(), feature,
                      std::move(log_ai_data_request), std::move(callback)));
-}
-
-bool ModelExecutionManager::CanCreateOnDeviceSession(
-    ModelBasedCapabilityKey feature,
-    OnDeviceModelEligibilityReason* on_device_model_eligibility_reason) {
-  if (!on_device_model_service_controller_) {
-    if (on_device_model_eligibility_reason) {
-      *on_device_model_eligibility_reason =
-          OnDeviceModelEligibilityReason::kFeatureNotEnabled;
-    }
-    return false;
-  }
-
-  OnDeviceModelEligibilityReason reason =
-      on_device_model_service_controller_->CanCreateSession(feature);
-  if (on_device_model_eligibility_reason) {
-    *on_device_model_eligibility_reason = reason;
-  }
-  return reason == OnDeviceModelEligibilityReason::kSuccess;
 }
 
 std::unique_ptr<OptimizationGuideModelExecutor::Session>
@@ -325,7 +229,7 @@ ModelExecutionManager::StartSession(
       execution_mode != SessionConfigParams::ExecutionMode::kServerOnly) {
     auto session = on_device_model_service_controller_->CreateSession(
         feature, execute_fn, optimization_guide_logger_->GetWeakPtr(),
-        model_quality_uploader_service_, config_params);
+        config_params);
     if (session) {
       RecordSessionUsedRemoteExecutionHistogram(feature, /*is_remote=*/false);
       return session;
@@ -337,10 +241,15 @@ ModelExecutionManager::StartSession(
   }
 
   RecordSessionUsedRemoteExecutionHistogram(feature, /*is_remote=*/true);
-  return std::make_unique<SessionImpl>(
-      feature, std::nullopt, std::move(execute_fn),
-      optimization_guide_logger_->GetWeakPtr(), model_quality_uploader_service_,
-      config_params);
+  return std::make_unique<SessionImpl>(feature, std::nullopt,
+                                       std::move(execute_fn), config_params);
+}
+
+on_device_model::Capabilities ModelExecutionManager::GetOnDeviceCapabilities() {
+  if (!on_device_model_service_controller_) {
+    return {};
+  }
+  return on_device_model_service_controller_->GetCapabilities();
 }
 
 void ModelExecutionManager::OnModelExecuteResponse(
@@ -467,10 +376,6 @@ void ModelExecutionManager::OnModelExecuteResponse(
     }
   }
 
-  // Set execution response in corresponding `log_ai_data_request`.
-  SetExecutionResponse(feature, *(log_entry.get()->log_ai_data_request()),
-                       execute_response->response_metadata());
-
   RecordModelExecutionResultHistogram(feature, true);
   std::move(callback).Run(OptimizationGuideModelExecutionResult(
                               base::ok(execute_response->response_metadata()),
@@ -478,26 +383,52 @@ void ModelExecutionManager::OnModelExecuteResponse(
                           std::move(log_entry));
 }
 
-void ModelExecutionManager::OnModelUpdated(
-    proto::OptimizationTarget optimization_target,
-    base::optional_ref<const ModelInfo> model_info) {
-  switch (optimization_target) {
-    case proto::OPTIMIZATION_TARGET_TEXT_SAFETY:
-      if (on_device_model_service_controller_) {
-        on_device_model_service_controller_->MaybeUpdateSafetyModel(model_info);
-      }
-      break;
-
-    case proto::OPTIMIZATION_TARGET_LANGUAGE_DETECTION:
-      if (on_device_model_service_controller_) {
-        on_device_model_service_controller_->SetLanguageDetectionModel(
-            model_info);
-      }
-      break;
-
-    default:
-      break;
+optimization_guide::OnDeviceModelEligibilityReason
+ModelExecutionManager::GetOnDeviceModelEligibility(
+    optimization_guide::ModelBasedCapabilityKey feature) {
+  if (!on_device_model_service_controller_) {
+    return OnDeviceModelEligibilityReason::kFeatureNotEnabled;
   }
+
+  return on_device_model_service_controller_->CanCreateSession(feature);
+}
+
+std::optional<optimization_guide::OnDeviceModelAdaptationMetadata>
+ModelExecutionManager::GetOnDeviceModelAdaptationMetadata(
+    optimization_guide::ModelBasedCapabilityKey feature) {
+  if (!on_device_model_service_controller_) {
+    return std::nullopt;
+  }
+
+  optimization_guide::OnDeviceModelAdaptationMetadata* metadata =
+      on_device_model_service_controller_->GetFeatureMetadata(feature);
+  if (!metadata) {
+    return std::nullopt;
+  }
+  return *metadata;
+}
+
+std::optional<optimization_guide::SamplingParamsConfig>
+ModelExecutionManager::GetSamplingParamsConfig(
+    optimization_guide::ModelBasedCapabilityKey feature) {
+  std::optional<optimization_guide::OnDeviceModelAdaptationMetadata>
+      adaptation_metadata = GetOnDeviceModelAdaptationMetadata(feature);
+  if (!adaptation_metadata.has_value()) {
+    return std::nullopt;
+  }
+
+  return adaptation_metadata->adapter()->GetSamplingParamsConfig();
+}
+
+std::optional<const proto::Any> ModelExecutionManager::GetFeatureMetadata(
+    optimization_guide::ModelBasedCapabilityKey feature) {
+  std::optional<optimization_guide::OnDeviceModelAdaptationMetadata>
+      adaptation_metadata = GetOnDeviceModelAdaptationMetadata(feature);
+  if (!adaptation_metadata.has_value()) {
+    return std::nullopt;
+  }
+
+  return adaptation_metadata->adapter()->GetFeatureMetadata();
 }
 
 }  // namespace optimization_guide

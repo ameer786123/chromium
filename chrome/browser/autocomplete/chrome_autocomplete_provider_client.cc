@@ -8,14 +8,13 @@
 
 #include <algorithm>
 
-#include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/cstring_view.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
+#include "chrome/browser/autocomplete/document_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "chrome/browser/autocomplete/provider_state_service_factory.h"
 #include "chrome/browser/autocomplete/remote_suggestions_service_factory.h"
@@ -55,6 +54,7 @@
 #include "components/omnibox/browser/actions/omnibox_pedal_provider.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
+#include "components/omnibox/browser/lens_suggest_inputs_utils.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_triggered_feature_service.h"
 #include "components/omnibox/browser/shortcuts_backend.h"
@@ -77,7 +77,7 @@
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/app_list/search/essential_search/essential_search_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
@@ -85,6 +85,8 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/autocomplete/keyword_extensions_delegate_impl.h"
+#include "chrome/browser/autocomplete/unscoped_extension_provider_delegate_impl.h"
+#include "extensions/common/extension_features.h"
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -92,10 +94,13 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/side_panel/history_clusters/history_clusters_side_panel_coordinator.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
+#include "components/lens/lens_overlay_invocation_source.h"
 #endif
 
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
@@ -121,7 +126,7 @@ constexpr auto kChromeSettingsSubPages = std::to_array<base::cstring_view>({
     chrome::kResetProfileSettingsSubPage,
     chrome::kSearchEnginesSubPage,
     chrome::kSyncSetupSubPage,
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     chrome::kImportDataSubPage,
     chrome::kManageProfileSubPage,
     chrome::kPeopleSubPage,
@@ -136,14 +141,8 @@ ChromeAutocompleteProviderClient::ChromeAutocompleteProviderClient(
     : profile_(profile),
       scheme_classifier_(profile),
       url_consent_helper_(
-          base::FeatureList::IsEnabled(
-              omnibox::kPrefBasedDataCollectionConsentHelper)
-              ? unified_consent::UrlKeyedDataCollectionConsentHelper::
-                    NewAnonymizedDataCollectionConsentHelper(
-                        profile_->GetPrefs())
-              : unified_consent::UrlKeyedDataCollectionConsentHelper::
-                    NewPersonalizedDataCollectionConsentHelper(
-                        SyncServiceFactory::GetForProfile(profile_))),
+          unified_consent::UrlKeyedDataCollectionConsentHelper::
+              NewAnonymizedDataCollectionConsentHelper(profile_->GetPrefs())),
       tab_matcher_(GetTemplateURLService(), profile_),
       storage_partition_(nullptr),
       omnibox_triggered_feature_service_(
@@ -229,6 +228,12 @@ ChromeAutocompleteProviderClient::GetTemplateURLService() const {
   return TemplateURLServiceFactory::GetForProfile(profile_);
 }
 
+DocumentSuggestionsService*
+ChromeAutocompleteProviderClient::GetDocumentSuggestionsService() const {
+  return DocumentSuggestionsServiceFactory::GetForProfile(
+      profile_, /*create_if_necessary=*/true);
+}
+
 RemoteSuggestionsService*
 ChromeAutocompleteProviderClient::GetRemoteSuggestionsService(
     bool create_if_necessary) const {
@@ -268,6 +273,19 @@ ChromeAutocompleteProviderClient::GetKeywordExtensionsDelegate(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   return std::make_unique<KeywordExtensionsDelegateImpl>(profile_,
                                                          keyword_provider);
+#else
+  return nullptr;
+#endif
+}
+
+std::unique_ptr<UnscopedExtensionProviderDelegate>
+ChromeAutocompleteProviderClient::GetUnscopedExtensionProviderDelegate(
+    UnscopedExtensionProvider* provider) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  CHECK(base::FeatureList::IsEnabled(
+      extensions_features::kExperimentalOmniboxLabs));
+  return std::make_unique<UnscopedExtensionProviderDelegateImpl>(profile_,
+                                                                 provider);
 #else
   return nullptr;
 #endif
@@ -372,7 +390,7 @@ bool ChromeAutocompleteProviderClient::IsGuestSession() const {
 }
 
 bool ChromeAutocompleteProviderClient::SearchSuggestEnabled() const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   return profile_->GetPrefs()->GetBoolean(prefs::kSearchSuggestEnabled) &&
          (!g_browser_process->platform_part() ||
           !g_browser_process->platform_part()->essential_search_manager() ||
@@ -388,8 +406,7 @@ bool ChromeAutocompleteProviderClient::AllowDeletingBrowserHistory() const {
   return profile_->GetPrefs()->GetBoolean(prefs::kAllowDeletingBrowserHistory);
 }
 
-bool ChromeAutocompleteProviderClient::IsPersonalizedUrlDataCollectionActive()
-    const {
+bool ChromeAutocompleteProviderClient::IsUrlDataCollectionActive() const {
   return url_consent_helper_->IsEnabled();
 }
 
@@ -488,6 +505,24 @@ bool ChromeAutocompleteProviderClient::IsHistoryEmbeddingsSettingVisible()
   return history_embeddings::IsHistoryEmbeddingsSettingVisible(profile_);
 }
 
+base::CallbackListSubscription
+ChromeAutocompleteProviderClient::GetLensSuggestInputsWhenReady(
+    LensOverlaySuggestInputsCallback callback) const {
+// TODO(crbug.com/408513470): This is a temporary prototype solution. Long term,
+//  `BrowserList::GetInstance()->GetLastActive()` shouldn't be used.
+#if !BUILDFLAG(IS_ANDROID)
+  if (Browser* browser = BrowserList::GetInstance()->GetLastActive()) {
+    CHECK(browser->GetActiveTabInterface());
+    return browser->GetActiveTabInterface()
+        ->GetTabFeatures()
+        ->lens_overlay_controller()
+        ->GetLensSuggestInputsWhenReady(std::move(callback));
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+  std::move(callback).Run(std::nullopt);
+  return {};
+}
+
 base::WeakPtr<AutocompleteProviderClient>
 ChromeAutocompleteProviderClient::GetWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -503,12 +538,10 @@ bool ChromeAutocompleteProviderClient::StrippedURLsAreEqual(
   const TemplateURLService* template_url_service = GetTemplateURLService();
   return AutocompleteMatch::GURLToStrippedGURL(
              url1, *input, template_url_service, std::u16string(),
-             /*keep_search_intent_params=*/false,
-             /*normalize_search_terms=*/false) ==
+             /*keep_search_intent_params=*/false) ==
          AutocompleteMatch::GURLToStrippedGURL(
              url2, *input, template_url_service, std::u16string(),
-             /*keep_search_intent_params=*/false,
-             /*normalize_search_terms=*/false);
+             /*keep_search_intent_params=*/false);
 }
 
 void ChromeAutocompleteProviderClient::OpenSharingHub() {
@@ -546,11 +579,6 @@ void ChromeAutocompleteProviderClient::CloseIncognitoWindows() {
 
 bool ChromeAutocompleteProviderClient::OpenJourneys(const std::string& query) {
 #if !BUILDFLAG(IS_ANDROID)
-  if (!base::FeatureList::IsEnabled(history_clusters::kSidePanelJourneys) ||
-      !history_clusters::kSidePanelJourneysOpensFromOmnibox.Get()) {
-    return false;
-  }
-
   Browser* browser = BrowserList::GetInstance()->GetLastActive();
   if (!browser)
     return false;
@@ -565,6 +593,49 @@ bool ChromeAutocompleteProviderClient::OpenJourneys(const std::string& query) {
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   return false;
+}
+
+void ChromeAutocompleteProviderClient::OpenLensOverlay(bool show) {
+// TODO(crbug.com/408513470): This is a temporary prototype solution. Long term,
+//  `BrowserList::GetInstance()->GetLastActive()` shouldn't be used.
+#if !BUILDFLAG(IS_ANDROID)
+  if (Browser* browser = BrowserList::GetInstance()->GetLastActive()) {
+    CHECK(browser->GetActiveTabInterface());
+    // TODO(crbug.com/402497756): For prototyping, reusing the existing
+    // omnibox entry point. However, for production, create a new invocation
+    // source for this new entry point.
+    if (show) {
+      browser->GetActiveTabInterface()
+          ->GetTabFeatures()
+          ->lens_overlay_controller()
+          ->ShowUI(lens::LensOverlayInvocationSource::kOmnibox);
+    } else {
+      browser->GetActiveTabInterface()
+          ->GetTabFeatures()
+          ->lens_overlay_controller()
+          ->StartContextualizationWithoutOverlay(
+              lens::LensOverlayInvocationSource::kOmnibox);
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+}
+
+void ChromeAutocompleteProviderClient::IssueContextualSearchRequest(
+      const GURL& destination_url,
+      AutocompleteMatchType::Type match_type,
+      bool is_zero_prefix_suggestion) {
+// TODO(crbug.com/408513470): This is a temporary prototype solution. Long term,
+//  `BrowserList::GetInstance()->GetLastActive()` shouldn't be used.
+#if !BUILDFLAG(IS_ANDROID)
+  if (Browser* browser = BrowserList::GetInstance()->GetLastActive()) {
+    CHECK(browser->GetActiveTabInterface());
+    browser->GetActiveTabInterface()
+        ->GetTabFeatures()
+        ->lens_overlay_controller()
+        ->IssueContextualSearchRequest(
+            destination_url, match_type, is_zero_prefix_suggestion);
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void ChromeAutocompleteProviderClient::PromptPageTranslation() {

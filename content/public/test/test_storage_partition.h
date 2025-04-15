@@ -28,6 +28,8 @@ class ProtoDatabaseProvider;
 }  // namespace leveldb_proto
 
 namespace network {
+class TestURLLoaderFactory;
+
 namespace mojom {
 class NetworkContext;
 }  // namespace mojom
@@ -70,6 +72,10 @@ class TestStoragePartition : public StoragePartition {
 
   storage::SharedStorageManager* GetSharedStorageManager() override;
 
+  void set_url_loader_factory_for_browser_process(
+      network::TestURLLoaderFactory* factory) {
+    test_url_loader_factory_ = factory;
+  }
   scoped_refptr<network::SharedURLLoaderFactory>
   GetURLLoaderFactoryForBrowserProcess() override;
 
@@ -161,7 +167,14 @@ class TestStoragePartition : public StoragePartition {
   CdmStorageDataModel* GetCdmStorageDataModel() override;
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
-  void DeleteStaleSessionOnlyCookiesAfterDelay() override {}
+  network::mojom::DeviceBoundSessionManager* GetDeviceBoundSessionManager()
+      override;
+  void set_device_bound_session_manager(
+      network::mojom::DeviceBoundSessionManager* device_bound_session_manager) {
+    device_bound_session_manager_ = device_bound_session_manager;
+  }
+
+  void DeleteStaleSessionData() override {}
 
   void set_browsing_topics_site_data_manager(
       BrowsingTopicsSiteDataManager* manager) {
@@ -259,6 +272,7 @@ class TestStoragePartition : public StoragePartition {
   mojo::Remote<network::mojom::NetworkContext> network_context_remote_;
   raw_ptr<network::mojom::NetworkContext, DanglingUntriaged> network_context_ =
       nullptr;
+  raw_ptr<network::TestURLLoaderFactory> test_url_loader_factory_ = nullptr;
   raw_ptr<network::mojom::CookieManager> cookie_manager_for_browser_process_ =
       nullptr;
   raw_ptr<storage::QuotaManager> quota_manager_ = nullptr;
@@ -273,6 +287,8 @@ class TestStoragePartition : public StoragePartition {
   raw_ptr<SharedWorkerService> shared_worker_service_ = nullptr;
   mojo::Remote<storage::mojom::CacheStorageControl> cache_storage_control_;
   raw_ptr<GeneratedCodeCacheContext> generated_code_cache_context_ = nullptr;
+  raw_ptr<network::mojom::DeviceBoundSessionManager>
+      device_bound_session_manager_ = nullptr;
   raw_ptr<BrowsingTopicsSiteDataManager> browsing_topics_site_data_manager_ =
       nullptr;
   raw_ptr<PlatformNotificationContext> platform_notification_context_ = nullptr;

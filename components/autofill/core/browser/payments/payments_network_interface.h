@@ -37,9 +37,6 @@ class SharedURLLoaderFactory;
 namespace autofill {
 
 class AccountInfoGetter;
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-class MigratableCreditCard;
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 namespace payments {
 
@@ -48,18 +45,6 @@ using GetCardUploadDetailsCallback = base::OnceCallback<void(
     const std::u16string& context_token,
     std::unique_ptr<base::Value::Dict> legal_message,
     std::vector<std::pair<int, int>> supported_card_bin_ranges)>;
-
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-// Callback type for MigrateCards callback. |result| is the Payments Rpc result.
-// |save_result| is an unordered_map parsed from the response whose key is the
-// unique id (guid) for each card and value is the server save result string.
-// |display_text| is the returned tip from Payments to show on the UI.
-typedef base::OnceCallback<void(
-    PaymentsAutofillClient::PaymentsRpcResult result,
-    std::unique_ptr<std::unordered_map<std::string, std::string>> save_result,
-    const std::string& display_text)>
-    MigrateCardsCallback;
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
 // PaymentsNetworkInterface issues Payments RPCs and manages responses and failure
 // conditions. Only one request may be active at a time. Initiating a new
@@ -177,16 +162,6 @@ class PaymentsNetworkInterface : public PaymentsNetworkInterfaceBase {
       base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult)>
           callback);
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-  // The user has indicated that they would like to migrate their local credit
-  // cards. This request will fail server-side if a successful call to
-  // GetCardUploadDetails has not already been made.
-  virtual void MigrateCards(
-      const MigrationRequestDetails& details,
-      const std::vector<MigratableCreditCard>& migratable_credit_cards,
-      MigrateCardsCallback callback);
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-
   // The user has chosen one of the available challenge options. Send the
   // selected challenge option to server to continue the unmask flow.
   virtual void SelectChallengeOption(
@@ -211,6 +186,43 @@ class PaymentsNetworkInterface : public PaymentsNetworkInterfaceBase {
       const UpdateVirtualCardEnrollmentRequestDetails& request_details,
       base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult)>
           callback);
+
+  // Determine if the user meets the conditions to link a BNPL partner, such as
+  // Affirm. The `request_details` uses `issuer_id` and
+  // `billing_customer_number` to determine the appropriate legal message to
+  // display. The `issuer_id` indicates the BNPL partner to be linked. The
+  // callback function is triggered when the server responds. This function
+  // receives the result of the response. Both the context token and legal
+  // message are always returned in the callback upon a successful response.
+  virtual void GetDetailsForCreateBnplPaymentInstrument(
+      const GetDetailsForCreateBnplPaymentInstrumentRequestDetails&
+          request_details,
+      base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult result,
+                              std::string context_token,
+                              std::unique_ptr<base::Value::Dict>)> callback);
+
+  // The user has indicated that they would like to create a BNPL payment
+  // instrument. This request will fail server side if a successful call to
+  // `GetDetailsForCreateBnplPaymentInstrument` has not already been made.
+  // `request_details` contains all necessary information to build a
+  // `CreateBnplPaymentInstrumentRequest`. `callback` is the callback function
+  // that is triggered when a response is received from the server.
+  virtual void CreateBnplPaymentInstrument(
+      const CreateBnplPaymentInstrumentRequestDetails& request_details,
+      base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult result,
+                              std::string instrument_id)> callback);
+
+  // Get the BNPL VCN details.
+  virtual void GetBnplPaymentInstrumentForFetchingVcn(
+      GetBnplPaymentInstrumentForFetchingVcnRequestDetails request_details,
+      base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult,
+                              const BnplFetchVcnResponseDetails&)> callback);
+
+  // Get the BNPL redirect url details.
+  virtual void GetBnplPaymentInstrumentForFetchingUrl(
+      GetBnplPaymentInstrumentForFetchingUrlRequestDetails request_details,
+      base::OnceCallback<void(PaymentsAutofillClient::PaymentsRpcResult,
+                              const BnplFetchUrlResponseDetails&)> callback);
 
  private:
   friend class PaymentsNetworkInterfaceTest;

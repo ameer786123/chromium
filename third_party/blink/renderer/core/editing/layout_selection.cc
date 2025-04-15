@@ -23,7 +23,6 @@
 
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
@@ -156,8 +155,7 @@ static EphemeralRangeInFlatTree CalcSelectionInFlatTree(
                              : EphemeralRangeInFlatTree(focus, anchor);
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return {};
+  NOTREACHED();
 }
 
 // OldSelectedNodes is current selected Nodes with
@@ -421,8 +419,7 @@ static OldSelectedNodes ResetOldSelectedNodes(
           break;
         }
         default: {
-          NOTREACHED_IN_MIGRATION();
-          break;
+          NOTREACHED();
         }
       }
     }
@@ -614,8 +611,7 @@ static LayoutTextSelectionStatus ComputeSelectionStatusForNode(
       return {start_offset.value(), end_offset.value(),
               SelectionIncludeEnd::kNotInclude};
     default:
-      NOTREACHED_IN_MIGRATION();
-      return {0, 0, SelectionIncludeEnd::kNotInclude};
+      NOTREACHED();
   }
 }
 

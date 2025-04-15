@@ -25,6 +25,7 @@
 #include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/crash/core/common/crash_key.h"
@@ -40,6 +41,10 @@
 #include "ui/accessibility/ax_table_info.h"
 #include "ui/accessibility/ax_tree_observer.h"
 #include "ui/gfx/geometry/transform.h"
+
+#define ACCESSIBILITY_TREE_UNSERIALIZE_ERROR_HISTOGRAM(enum_value) \
+  base::UmaHistogramEnumeration(                                   \
+      "Accessibility.Reliability.Tree.UnserializeError", enum_value)
 
 namespace ui {
 
@@ -58,16 +63,42 @@ constexpr ax::mojom::IntListAttribute kReverseRelationIntListAttributes[] = {
 constexpr ax::mojom::IntAttribute kReverseRelationIntAttributes[] = {
     ax::mojom::IntAttribute::kActivedescendantId};
 
-std::string TreeToStringHelper(const AXNode* node, int indent, bool verbose) {
-  if (!node)
+std::string TreeToStringHelper(const AXNode* node,
+                               int indent,
+                               bool verbose,
+                               int& max_items) {
+  if (!node || max_items == 0) {
     return "";
+  }
+
+  std::string str = base::StrCat(
+      {std::string(2 * indent, ' '), node->data().ToString(verbose), "\n"});
+
+  if (max_items > 0 && --max_items == 0) {
+    return str;
+  }
 
   return std::accumulate(
-      node->children().cbegin(), node->children().cend(),
-      std::string(2 * indent, ' ') + node->data().ToString(verbose) + "\n",
-      [indent, verbose](const std::string& str, const AXNode* child) {
-        return str + TreeToStringHelper(child, indent + 1, verbose);
+      node->children().cbegin(), node->children().cend(), std::move(str),
+      [indent, verbose, &max_items](std::string str,
+                                   const AXNode* child) mutable {
+        str.append(TreeToStringHelper(child, indent + 1, verbose, max_items));
+        return str;
       });
+}
+
+// Return a formatted, indented, string representation of the tree, with each
+// node on its own line.
+// To stringify the entire tree, pass in max_items = -1.
+// This method is used to help diagnose inconsistent tree states. Limiting the
+// max number of items avoids out of memory errors and excessive logging.
+constexpr int kMaxItemsToStringify = 200;
+
+std::string TreeToString(const AXNode* node,
+                         int indent,
+                         bool verbose,
+                         int max_items = kMaxItemsToStringify) {
+  return TreeToStringHelper(node, indent, verbose, max_items);
 }
 
 template <typename K, typename V>
@@ -793,6 +824,41 @@ bool AXTree::ComputeNodeIsIgnoredChanged(
   return old_node_is_ignored != new_node_is_ignored;
 }
 
+#if BUILDFLAG(IS_LINUX)
+ExtraAnnouncementNodes::ExtraAnnouncementNodes(AXNode* root) {
+  assertive_node_ = CreateNode("assertive", root);
+  polite_node_ = CreateNode("polite", root);
+}
+
+ExtraAnnouncementNodes::~ExtraAnnouncementNodes() {
+  assertive_node_.reset();
+  polite_node_.reset();
+}
+
+std::unique_ptr<AXNode> ExtraAnnouncementNodes::CreateNode(
+    const std::string& live_status,
+    AXNode* root) {
+  AXNodeData data;
+
+  // Use a negative number so as not to conflict with positive-numbered node IDs
+  // from tree sources.
+  data.id = root->tree()->GetNextNegativeInternalNodeId();
+  data.role = ax::mojom::Role::kTextField;
+  data.AddStringAttribute(ax::mojom::StringAttribute::kContainerLiveStatus,
+                          live_status);
+
+  const auto count = (live_status == "assertive")
+                         ? ExtraAnnouncementNodes::kHighPriorityIndex
+                         : ExtraAnnouncementNodes::kNormalPriorityIndex;
+  auto node = std::make_unique<AXNode>(
+      /*tree=*/root->tree(), /*parent=*/root, /*id=*/data.id,
+      /*index_in_parent=*/count + root->GetChildCount(),
+      /*unignored_index_in_parent=*/count + root->GetUnignoredChildCount());
+  node->SetData(data);
+  return node;
+}
+#endif  // BUILDFLAG(IS_LINUX)
+
 AXTree::AXTree() {
   // TODO(chrishall): should language_detection_manager be a member or pointer?
   // TODO(chrishall): do we want to initialize all the time, on demand, or only
@@ -817,6 +883,8 @@ AXTree::~AXTree() {
   // observer list will already be destroyed. To avoid that problem, free
   // language detection manager before.
   language_detection_manager.reset();
+
+  CHECK(observers_.empty());
 }
 
 void AXTree::AddObserver(AXTreeObserver* observer) {
@@ -849,6 +917,9 @@ AXNode* AXTree::GetFromId(AXNodeID id) const {
 
 void AXTree::Destroy() {
   base::ElapsedThreadTimer timer;
+#if BUILDFLAG(IS_LINUX)
+  ClearExtraAnnouncementNodes();
+#endif  // BUILDFLAG(IS_LINUX)
 
   table_info_map_.clear();
   if (!root_)
@@ -1096,16 +1167,16 @@ const std::set<AXTreeID> AXTree::GetAllChildTreeIds() const {
 }
 
 bool AXTree::Unserialize(const AXTreeUpdate& update) {
-#if DCHECK_IS_ON()
+#if AX_FAIL_FAST_BUILD() && !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
   for (const auto& new_data : update.nodes)
-    DCHECK(new_data.id != kInvalidAXNodeID)
+    CHECK(new_data.id != kInvalidAXNodeID)
         << "AXTreeUpdate contains invalid node: " << update.ToString();
   if (update.tree_data.tree_id != AXTreeIDUnknown() &&
       data_.tree_id != AXTreeIDUnknown()) {
-    DCHECK_EQ(update.tree_data.tree_id, data_.tree_id)
+    CHECK_EQ(update.tree_data.tree_id, data_.tree_id)
         << "Tree id mismatch between tree update and this tree.";
   }
-#endif
+#endif  // AX_FAIL_FAST_BUILD()
 
   event_data_ = std::make_unique<AXEvent>();
   event_data_->event_from = update.event_from;
@@ -1115,9 +1186,14 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
 
   AXTreeUpdateState update_state(*this, update);
   const AXNodeID old_root_id = root_ ? root_->id() : kInvalidAXNodeID;
-  DCHECK(old_root_id != kInvalidAXNodeID || update.root_id != kInvalidAXNodeID)
-      << "Tree must have a valid root or update must have a valid root.";
-
+  if (old_root_id == kInvalidAXNodeID && update.root_id == kInvalidAXNodeID) {
+#if !defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+    NOTREACHED() << "Tree must have already a valid root or update must have a "
+                    "valid root.";
+#else
+    return false;
+#endif
+  }
   // Accumulates the work that will be required to update the AXTree.
   // This allows us to notify observers of structure changes when the
   // tree is still in a stable and unchanged state.
@@ -1466,14 +1542,14 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
   observers_.Notify(&AXTreeObserver::OnAtomicUpdateFinished, this,
                     root_->id() != old_root_id, changes);
 
-#if DCHECK_IS_ON()
+#if AX_FAIL_FAST_BUILD()
   CheckTreeConsistency(update);
 #endif
 
   return true;
 }
 
-#if DCHECK_IS_ON()
+#if AX_FAIL_FAST_BUILD()
 void AXTree::CheckTreeConsistency(const AXTreeUpdate& update) {
   // Return early if no expected node count was supplied.
   if (!update.tree_checks || !update.tree_checks->node_count) {
@@ -1485,18 +1561,17 @@ void AXTree::CheckTreeConsistency(const AXTreeUpdate& update) {
     return;
   }
 
-  DCHECK(root_);
+  CHECK(root_);
   std::ostringstream msg;
   msg << "After a tree update, there is a tree inconsistency.\n"
       << "\n* Number of ids mapped: " << id_map_.size()
       << "\n* Serializer's node count: " << update.tree_checks->node_count
       << "\n* Slow nodes count: " << root_->GetSubtreeCount()
-      << "\n* AXTreeUpdate: "
-      << TreeToStringHelper(root_, 0, /*verbose*/ false);
+      << "\n* AXTreeUpdate: " << TreeToString(root_, 0, /*verbose*/ false);
 
-  DCHECK(false) << msg.str();
+  NOTREACHED() << msg.str();
 }
-#endif
+#endif  // AX_FAIL_FAST_BUILD()
 
 AXTableInfo* AXTree::GetTableInfo(const AXNode* const_table_node) const {
   DCHECK(!GetTreeUpdateInProgressState());
@@ -1533,8 +1608,7 @@ AXTableInfo* AXTree::GetTableInfo(const AXNode* const_table_node) const {
 }
 
 std::string AXTree::ToString(bool verbose) const {
-  return "AXTree" + data_.ToString() + "\n" +
-         TreeToStringHelper(root_, 0, verbose);
+  return "AXTree" + data_.ToString() + "\n" + TreeToString(root_, 0, verbose);
 }
 
 AXNode* AXTree::CreateNode(AXNode* parent,
@@ -2035,6 +2109,66 @@ void AXTree::NotifyNodeAttributesWillChange(
                     new_data);
 }
 
+#if BUILDFLAG(IS_LINUX)
+void AXTree::ClearExtraAnnouncementNodes() {
+  if (!extra_announcement_nodes_) {
+    return;
+  }
+
+  for (auto& observer : observers()) {
+    observer.OnNodeWillBeDeleted(this,
+                                 &extra_announcement_nodes_->AssertiveNode());
+    observer.OnNodeWillBeDeleted(this,
+                                 &extra_announcement_nodes_->PoliteNode());
+  }
+
+  std::vector<AXNodeID> deleted_ids;
+
+  {
+    ScopedTreeUpdateInProgressStateSetter tree_update_in_progress(*this);
+    deleted_ids.push_back(extra_announcement_nodes_->AssertiveNode().id());
+    deleted_ids.push_back(extra_announcement_nodes_->PoliteNode().id());
+    extra_announcement_nodes_.reset();
+  }
+
+  for (const auto& deleted_id : deleted_ids) {
+    for (auto& observer : observers()) {
+      observer.OnNodeDeleted(this, deleted_id);
+    }
+  }
+
+  for (auto& observer : observers()) {
+    observer.OnAtomicUpdateFinished(
+        this, /*root_changed=*/false,
+        {{root_, AXTreeObserver::ChangeType::NODE_CHANGED}});
+  }
+}
+
+void AXTree::CreateExtraAnnouncementNodes() {
+  if (extra_announcement_nodes_) {
+    return;
+  }
+
+  std::vector<AXTreeObserver::Change> changes;
+  extra_announcement_nodes_ = std::make_unique<ExtraAnnouncementNodes>(root_);
+
+  {
+    ScopedTreeUpdateInProgressStateSetter tree_update_in_progress(*this);
+  }
+
+  if (extra_announcement_nodes_) {
+    for (auto& observer : observers()) {
+      observer.OnNodeCreated(this, &extra_announcement_nodes_->AssertiveNode());
+      observer.OnNodeCreated(this, &extra_announcement_nodes_->PoliteNode());
+    }
+  }
+
+  for (auto& observer : observers()) {
+    observer.OnAtomicUpdateFinished(this, /*root_changed=*/false, changes);
+  }
+}
+#endif  // BUILDFLAG(IS_LINUX)
+
 void AXTree::NotifyNodeAttributesHaveBeenChanged(
     AXNode* node,
     AXTreeUpdateState& update_state,
@@ -2364,6 +2498,14 @@ bool AXTree::CreateNewChildVector(
     AXTreeUpdateState* update_state) {
   DCHECK(GetTreeUpdateInProgressState());
   bool success = true;
+#if BUILDFLAG(IS_LINUX)
+  // If the root node has children added, clear the extra announcement nodes,
+  // which should always have their indices as the last two children of the root
+  // node. They will be recreated if needed, and given the correct indices.
+  if (node == root() && extra_announcement_nodes_) {
+    ClearExtraAnnouncementNodes();
+  }
+#endif  // BUILDFLAG(IS_LINUX)
   for (size_t i = 0; i < new_child_ids.size(); ++i) {
     AXNodeID child_id = new_child_ids[i];
     AXNode* child = GetFromId(child_id);
@@ -2849,8 +2991,8 @@ AXSelection AXTree::GetSelection() const {
   return AXSelection(*this);
 }
 
-AXSelection AXTree::GetUnignoredSelection() const {
-  return GetSelection().ToUnignoredSelection();
+AXSelection AXTree::GetUnignoredSelection(bool non_text_endpoints) const {
+  return GetSelection().ToUnignoredSelection(non_text_endpoints);
 }
 
 bool AXTree::GetTreeUpdateInProgressState() const {
@@ -2885,7 +3027,7 @@ void AXTree::RecordError(const AXTreeUpdateState& update_state,
   // Suppress fatal error logging in builds that target fuzzing, as fuzzers
   // generate invalid trees by design to shake out bugs.
   is_fatal = false;
-#elif defined(AX_FAIL_FAST_BUILD)
+#elif AX_FAIL_FAST_BUILD()
   // In fast-failing-builds, crash immediately with a full message, otherwise
   // rely on UnrecoverableAccessibilityError(), which will not crash until
   // multiple errors occur.
@@ -2895,14 +3037,18 @@ void AXTree::RecordError(const AXTreeUpdateState& update_state,
   is_fatal = true;
 #endif
 
+  std::string tree_str = TreeToString(root_, 0, false);
+  std::string tree_update_str = update_state.pending_tree_update
+                                    ->ToString(
+                                        /*verbose=*/false)
+                                    .substr(0, 1000);
+
   std::ostringstream verbose_error;
   verbose_error << new_error << "\n** Pending tree update **\n"
-                << update_state.pending_tree_update->ToString(
-                       /*verbose*/ false)
-                << "** Root **\n"
+                << tree_update_str << "** Root **\n"
                 << root() << "\n** AXTreeData **\n"
                 << data_.ToString() + "\n** AXTree **\n"
-                << TreeToStringHelper(root_, 0, false).substr(0, 1000);
+                << tree_str.substr(0, 2000);
 
   LOG_IF(FATAL, is_fatal) << verbose_error.str();
 
@@ -2919,10 +3065,8 @@ void AXTree::RecordError(const AXTreeUpdateState& update_state,
 
   // Log additional crash keys so we can debug bad tree updates.
   base::debug::SetCrashKeyString(ax_tree_error_key, new_error);
-  base::debug::SetCrashKeyString(ax_tree_update_key,
-                                 update_state.pending_tree_update->ToString());
-  base::debug::SetCrashKeyString(ax_tree_key,
-                                 TreeToStringHelper(root_, 0, false));
+  base::debug::SetCrashKeyString(ax_tree_update_key, tree_update_str);
+  base::debug::SetCrashKeyString(ax_tree_key, tree_str);
   base::debug::SetCrashKeyString(ax_tree_data_key, data_.ToString());
   LOG(ERROR) << verbose_error.str();
 }

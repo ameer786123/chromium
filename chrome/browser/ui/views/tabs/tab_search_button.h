@@ -5,15 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_TAB_SEARCH_BUTTON_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_SEARCH_BUTTON_H_
 
-#include "chrome/browser/ui/views/tab_search_bubble_host.h"
+#include "chrome/browser/ui/views/tabs/tab_slot_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_control_button.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 
-namespace tabs {
-class TabDeclutterController;
-}  // namespace tabs
-
+class BrowserWindowInterface;
 class TabStripController;
+class TabStrip;
 
 // TabSearchButton should leverage the look and feel of the existing
 // NewTabButton for sizing and appropriate theming. This class updates the
@@ -24,15 +22,13 @@ class TabSearchButton : public TabStripControlButton {
 
  public:
   TabSearchButton(TabStripController* tab_strip_controller,
-                  tabs::TabDeclutterController* tab_declutter_controller,
-                  Edge flat_edge);
+                  BrowserWindowInterface* browser_window_interface,
+                  Edge fixed_flat_edge,
+                  Edge animated_flat_edge,
+                  TabStrip* tab_strip);
   TabSearchButton(const TabSearchButton&) = delete;
   TabSearchButton& operator=(const TabSearchButton&) = delete;
   ~TabSearchButton() override;
-
-  TabSearchBubbleHost* tab_search_bubble_host() {
-    return tab_search_bubble_host_.get();
-  }
 
   // TabStripControlsButton:
   void NotifyClick(const ui::Event& event) final;
@@ -40,9 +36,6 @@ class TabSearchButton : public TabStripControlButton {
  protected:
   int GetCornerRadius() const override;
   int GetFlatCornerRadius() const override;
-
- private:
-  std::unique_ptr<TabSearchBubbleHost> tab_search_bubble_host_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_SEARCH_BUTTON_H_

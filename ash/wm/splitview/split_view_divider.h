@@ -58,7 +58,7 @@ class ASH_EXPORT SplitViewDivider : public aura::WindowObserver,
       int divider_position,
       bool is_dragging);
 
-  views::Widget* divider_widget() { return divider_widget_; }
+  views::Widget* divider_widget() { return divider_widget_.get(); }
 
   int divider_position() const { return divider_position_; }
 
@@ -97,7 +97,8 @@ class ASH_EXPORT SplitViewDivider : public aura::WindowObserver,
   aura::Window* GetRootWindow() const;
 
   // Resizing functions used when resizing with `split_view_divider_` in the
-  // tablet split view mode or clamshell mode if `kSnapGroup` is enabled.
+  // tablet split view mode or clamshell mode when two windows are in a Snap
+  // Group.
   void StartResizeWithDivider(const gfx::Point& location_in_screen);
   void ResizeWithDivider(const gfx::Point& location_in_screen);
   void EndResizeWithDivider(const gfx::Point& location_in_screen);
@@ -222,7 +223,7 @@ class ASH_EXPORT SplitViewDivider : public aura::WindowObserver,
   // screen to the other, containing a small white drag bar in the middle. As
   // the user presses on it and drag it to left or right, the left and right
   // window will be resized accordingly.
-  raw_ptr<views::Widget> divider_widget_ = nullptr;
+  std::unique_ptr<views::Widget> divider_widget_ = nullptr;
 
   // The contents view of the `divider_widget_`.
   raw_ptr<SplitViewDividerView> divider_view_ = nullptr;

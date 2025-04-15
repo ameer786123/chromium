@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.image_descriptions;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -11,9 +13,10 @@ import android.widget.CheckBox;
 import android.widget.RadioGroup;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.device.DeviceConditions;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.widget.RadioButtonWithDescription;
@@ -35,6 +38,7 @@ import org.chromium.ui.widget.Toast;
  * see a new option under the main menu to get image descriptions. If they select that option this
  * dialog will display giving the user the option to enable the feature.
  */
+@NullMarked
 public class ImageDescriptionsDialog
         implements ModalDialogProperties.Controller, RadioGroup.OnCheckedChangeListener {
     // Please treat this list as append only and keep it in sync with
@@ -87,7 +91,7 @@ public class ImageDescriptionsDialog
         mModalDialogManager = modalDialogManager;
         mControllerDelegate = delegate;
         mWebContents = webContents;
-        mProfile = Profile.fromWebContents(webContents).getOriginalProfile();
+        mProfile = assumeNonNull(Profile.fromWebContents(webContents)).getOriginalProfile();
         mContext = context;
 
         // Set initial state.
@@ -155,13 +159,9 @@ public class ImageDescriptionsDialog
                     }
 
                     @Override
-                    public void destroy() {
-                        super.destroy();
-                        // If no dismissal cause has been set, web contents were destroyed.
-                        if (mDismissalCause == DialogDismissalCause.UNKNOWN) {
-                            mDismissalCause = DialogDismissalCause.WEB_CONTENTS_DESTROYED;
-                        }
-                        dismiss();
+                    public void webContentsDestroyed() {
+                        mDismissalCause = DialogDismissalCause.WEB_CONTENTS_DESTROYED;
+                        unregisterObserverAndDismiss();
                     }
                 };
 
@@ -274,7 +274,8 @@ public class ImageDescriptionsDialog
      * or on user action. The call to #destroy() will also dismiss the dialog.
      */
     private void unregisterObserverAndDismiss() {
-        mWebContentsObserver.destroy();
+        mWebContentsObserver.observe(null);
+        dismiss();
     }
 
     /** Helper method to display this dialog. */

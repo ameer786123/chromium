@@ -38,10 +38,10 @@ bool CallbackInvokeHelper<CallbackBase, mode, return_type_is_promise>::
   if constexpr (mode == CallbackInvokeHelperMode::kConstructorCall) {
     // step 3. If ! IsConstructor(F) is false, throw a TypeError exception.
     if (!callback_->IsConstructor()) {
-      ExceptionState exception_state(isolate, v8::ExceptionContext::kOperation,
-                                     class_like_name_, property_name_);
-      exception_state.ThrowTypeError(
-          "The provided callback is not a constructor.");
+      V8ThrowException::ThrowTypeError(
+          isolate, ExceptionMessages::FailedToExecute(
+                       property_name_, class_like_name_,
+                       "The provided callback is not a constructor."));
       return Abort();
     }
   }
@@ -160,7 +160,7 @@ bool CallbackInvokeHelper<CallbackBase, mode, return_type_is_promise>::Call(
       // doesn't matter what type we use.
       result_ = ScriptPromise<IDLUndefined>::Reject(
                     callback_->CallbackRelevantScriptState(), block.Exception())
-                    .V8Value();
+                    .V8Promise();
     }
   } else {
     if (!CallInternal(argc, argv))

@@ -13,10 +13,11 @@
 
 namespace {
 
-bool IsInPrimaryMainFrameOrSubFrame(
+bool FrameTypeMayTriggerInterstitial(
     content::NavigationHandle* navigation_handle) {
   return (navigation_handle->GetNavigatingFrameType() ==
               content::FrameType::kPrimaryMainFrame ||
+          navigation_handle->IsGuestViewMainFrame() ||
           (navigation_handle->GetNavigatingFrameType() ==
                content::FrameType::kSubframe &&
            navigation_handle->GetParentFrame()->IsActive()));
@@ -30,7 +31,7 @@ SecurityInterstitialTabHelper::~SecurityInterstitialTabHelper() = default;
 void SecurityInterstitialTabHelper::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
   if (navigation_handle->IsSameDocument() ||
-      !IsInPrimaryMainFrameOrSubFrame(navigation_handle)) {
+      !FrameTypeMayTriggerInterstitial(navigation_handle)) {
     return;
   }
 
@@ -110,7 +111,7 @@ void SecurityInterstitialTabHelper::AssociateBlockingPage(
         blocking_page) {
   // An interstitial should not be shown in a prerendered page or in a fenced
   // frame. The prerender should just be canceled.
-  CHECK(IsInPrimaryMainFrameOrSubFrame(navigation_handle));
+  CHECK(FrameTypeMayTriggerInterstitial(navigation_handle));
 
   // CreateForWebContents() creates a tab helper if it doesn't yet exist for the
   // WebContents provided by |navigation_handle|.
@@ -167,6 +168,17 @@ bool SecurityInterstitialTabHelper::IsInterstitialCommittedForFrame(
 }
 
 security_interstitials::SecurityInterstitialPage*
+SecurityInterstitialTabHelper::GetBlockingPageForFrame(
+    content::FrameTreeNodeId frame_tree_node_id) {
+  if (IsInterstitialCommittedForFrame(frame_tree_node_id)) {
+    return blocking_documents_for_committed_navigations_
+        .find(frame_tree_node_id)
+        ->second.get();
+  }
+  return nullptr;
+}
+
+security_interstitials::SecurityInterstitialPage*
 SecurityInterstitialTabHelper::
     GetBlockingPageForCurrentlyCommittedNavigationForTesting() {
   // TODO(crbug.com/369759355): Support retrieving blocking page by frame ID.
@@ -197,10 +209,13 @@ void SecurityInterstitialTabHelper::SetBlockingPage(
 
 SecurityInterstitialPage*
 SecurityInterstitialTabHelper::GetBlockingPageForCurrentTargetFrame() {
-  CHECK(!blocking_documents_for_committed_navigations_.empty());
   auto* render_frame_host = receivers_.GetCurrentTargetFrame();
   content::FrameTreeNodeId id = render_frame_host->GetFrameTreeNodeId();
-  CHECK(IsInterstitialCommittedForFrame(id));
+  if (!IsInterstitialCommittedForFrame(id)) {
+    // TODO(crbug.com/376688788): Remove this condition. This method should not
+    // be invoked if there is no blocking page for the current target frame.
+    return nullptr;
+  }
   return blocking_documents_for_committed_navigations_.find(id)->second.get();
 }
 
@@ -225,8 +240,13 @@ void SecurityInterstitialTabHelper::HandleCommand(
   // HandleCommand is only called in response to a Mojo message sent from frames
   // that have a committed interstitial. This ensures that the current target
   // frame is present and can process the corresponding command received.
-  GetBlockingPageForCurrentTargetFrame()->CommandReceived(
-      base::NumberToString(cmd));
+  SecurityInterstitialPage* blocking_page =
+      GetBlockingPageForCurrentTargetFrame();
+  // TODO(crbug.com/376688788): Remove this check once the statement above is
+  // guaranteed.
+  if (blocking_page) {
+    blocking_page->CommandReceived(base::NumberToString(cmd));
+  }
 }
 
 void SecurityInterstitialTabHelper::DontProceed() {

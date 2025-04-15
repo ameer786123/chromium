@@ -5,10 +5,10 @@
 #include "third_party/blink/renderer/core/layout/flex/layout_flexible_box.h"
 
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
-#include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_opt_group_element.h"
-#include "third_party/blink/renderer/core/html/html_hr_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
+#include "third_party/blink/renderer/core/html/html_hr_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/block_node.h"
@@ -88,7 +88,7 @@ bool LayoutFlexibleBox::IsChildAllowed(LayoutObject* object,
   const auto* select = DynamicTo<HTMLSelectElement>(GetNode());
   if (select && select->UsesMenuList()) [[unlikely]] {
     if (select->IsAppearanceBaseButton()) {
-      CHECK(RuntimeEnabledFeatures::CustomizableSelectEnabled());
+      CHECK(HTMLSelectElement::CustomizableSelectEnabled(select));
       if (IsA<HTMLOptionElement>(object->GetNode()) ||
           IsA<HTMLOptGroupElement>(object->GetNode()) ||
           IsA<HTMLHRElement>(object->GetNode())) {
@@ -104,14 +104,6 @@ bool LayoutFlexibleBox::IsChildAllowed(LayoutObject* object,
         // If the author doesn't provide a button, then we still want to display
         // the InnerElement.
         return false;
-      }
-      if (auto* popover = select->PopoverForAppearanceBase()) {
-        if (child == popover && !popover->popoverOpen()) {
-          // This is needed in order to keep the popover hidden after the UA
-          // sheet is forcing it to be display:block in order to get a computed
-          // style.
-          return false;
-        }
       }
       return true;
     } else {
@@ -138,8 +130,10 @@ const DevtoolsFlexInfo* LayoutFlexibleBox::FlexLayoutData() const {
 
 void LayoutFlexibleBox::RemoveChild(LayoutObject* child) {
   if (!DocumentBeingDestroyed() &&
-      !StyleRef().IsDeprecatedFlexboxUsingFlexLayout())
+      (RuntimeEnabledFeatures::LayoutWebkitBoxTreeFixEnabled() ||
+       !StyleRef().IsDeprecatedFlexbox())) {
     MergeAnonymousFlexItems(child);
+  }
 
   LayoutBlock::RemoveChild(child);
 }

@@ -11,11 +11,12 @@
 #include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/interest_group/auction_config.h"
 #include "third_party/blink/public/mojom/interest_group/interest_group_types.mojom-shared.h"
 #include "third_party/blink/public/mojom/interest_group/interest_group_types.mojom.h"
@@ -32,7 +33,7 @@ namespace {
 bool AreBuyerPrioritySignalsValid(
     const base::flat_map<std::string, double>& buyer_priority_signals) {
   for (const auto& priority_signal : buyer_priority_signals) {
-    if (base::StartsWith(priority_signal.first, "browserSignals.")) {
+    if (priority_signal.first.starts_with("browserSignals.")) {
       return false;
     }
     if (!std::isfinite(priority_signal.second)) {
@@ -86,8 +87,7 @@ bool AdConfigMaybePromiseTraitsHelper<View, Wrapper>::Read(View in,
       return true;
     }
   }
-  NOTREACHED_IN_MIGRATION();
-  return false;
+  NOTREACHED();
 }
 
 template struct BLINK_COMMON_EXPORT AdConfigMaybePromiseTraitsHelper<
@@ -213,8 +213,10 @@ bool StructTraits<blink::mojom::AuctionAdConfigNonSharedParamsDataView,
   if (!data.ReadInterestGroupBuyers(&out->interest_group_buyers) ||
       !data.ReadAuctionSignals(&out->auction_signals) ||
       !data.ReadSellerSignals(&out->seller_signals) ||
+      !data.ReadSellerTkvSignals(&out->seller_tkv_signals) ||
       !data.ReadSellerTimeout(&out->seller_timeout) ||
       !data.ReadPerBuyerSignals(&out->per_buyer_signals) ||
+      !data.ReadPerBuyerTkvSignals(&out->per_buyer_tkv_signals) ||
       !data.ReadBuyerTimeouts(&out->buyer_timeouts) ||
       !data.ReadReportingTimeout(&out->reporting_timeout) ||
       !data.ReadSellerCurrency(&out->seller_currency) ||
@@ -330,6 +332,13 @@ bool StructTraits<blink::mojom::AuctionAdConfigNonSharedParamsDataView,
     }
   }
 
+  for (const auto& signal : out->per_buyer_tkv_signals) {
+    // Buyer must be HTTPS.
+    if (signal.first.scheme() != url::kHttpsScheme) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -441,6 +450,20 @@ bool StructTraits<blink::mojom::AuctionAdConfigDataView, blink::AuctionConfig>::
   if (!out->direct_from_seller_signals.is_promise() &&
       !out->IsDirectFromSellerSignalsValid(
           out->direct_from_seller_signals.value())) {
+    return false;
+  }
+
+  // Private aggregation coordinator must be HTTPS. This also excludes opaque
+  // origins, for which scheme() returns an empty string.
+  if (out->aggregation_coordinator_origin &&
+      out->aggregation_coordinator_origin->scheme() != url::kHttpsScheme) {
+    return false;
+  }
+
+  out->send_creative_scanning_metadata = data.send_creative_scanning_metadata();
+  if (out->send_creative_scanning_metadata.has_value() &&
+      !base::FeatureList::IsEnabled(
+          blink::features::kFledgeTrustedSignalsKVv1CreativeScanning)) {
     return false;
   }
 

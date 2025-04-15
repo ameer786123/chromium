@@ -63,6 +63,9 @@ class MockNavigationHandle : public NavigationHandle {
     return is_prerendered_page_activation_;
   }
   bool IsInFencedFrameTree() const override { return is_in_fenced_frame_tree_; }
+  bool IsGuestViewMainFrame() const override {
+    return GetNavigatingFrameType() == FrameType::kGuestMainFrame;
+  }
   FrameType GetNavigatingFrameType() const override {
     NOTIMPLEMENTED();
     return FrameType::kPrimaryMainFrame;
@@ -93,7 +96,7 @@ class MockNavigationHandle : public NavigationHandle {
     return render_frame_host_->GetFrameTreeNodeId();
   }
   MOCK_METHOD0(GetPreviousRenderFrameHostId, GlobalRenderFrameHostId());
-  MOCK_METHOD(int, GetExpectedRenderProcessHostId, ());
+  MOCK_METHOD(ChildProcessId, GetExpectedRenderProcessHostId, ());
   bool IsServedFromBackForwardCache() override {
     return is_served_from_bfcache_;
   }
@@ -217,7 +220,7 @@ class MockNavigationHandle : public NavigationHandle {
               (blink::mojom::TransferrableURLLoaderPtr));
   MOCK_METHOD(bool, IsSameProcess, ());
   MOCK_METHOD(NavigationEntry*, GetNavigationEntry, (), (const, override));
-  MOCK_METHOD(int, GetNavigationEntryOffset, ());
+  MOCK_METHOD(int, GetNavigationEntryOffset, (), (const, override));
   MOCK_METHOD(void,
               ForceEnableOriginTrials,
               (const std::vector<std::string>& trials));

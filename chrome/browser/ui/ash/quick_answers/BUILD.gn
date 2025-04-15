@@ -36,8 +36,8 @@ source_set("quick_answers") {
 
   deps = [
     "//ash",
-    "//chrome/browser:browser_process",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/ash/editor_menu:utils",
     "//chrome/browser/ui/ash/quick_answers/ui:loading_view",
     "//chrome/browser/ui/ash/quick_answers/ui:quick_answers_stage_button",
     "//chrome/browser/ui/ash/quick_answers/ui:result_view",
@@ -45,7 +45,6 @@ source_set("quick_answers") {
     "//chrome/browser/ui/ash/quick_answers/ui:typography",
     "//chrome/browser/ui/ash/read_write_cards",
     "//chrome/browser/ui/color:color_headers",
-    "//chrome/browser/ui/views/editor_menu:utils",
     "//chromeos/components/kiosk",
     "//chromeos/components/magic_boost/public/cpp/views",
     "//chromeos/components/quick_answers",
@@ -56,6 +55,7 @@ source_set("quick_answers") {
     "//chromeos/strings:strings_grit",
     "//chromeos/ui/vector_icons",
     "//components/account_id",
+    "//components/application_locale_storage",
     "//components/language/core/browser",
     "//components/omnibox/browser:vector_icons",
     "//components/prefs",

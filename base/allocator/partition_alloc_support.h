@@ -49,7 +49,9 @@ class BASE_EXPORT PartitionAllocSupport {
  public:
   struct BrpConfiguration {
     bool enable_brp = false;
-    bool process_affected_by_brp_flag = false;
+
+    // TODO(https://crbug.com/371135823): Remove after the investigation.
+    size_t extra_extras_size = 0;
   };
 
   // Reconfigure* functions re-configure PartitionAlloc. It is impossible to
@@ -155,6 +157,13 @@ class BASE_EXPORT MemoryReclaimerSupport {
   bool in_foreground_ = true;
   bool has_pending_task_ = false;
 };
+
+// Utility function to detect Double-Free or Out-of-Bounds writes.
+// This function can be called to memory assumed to be valid.
+// If not, this may crash (not guaranteed).
+// This is useful if you want to investigate crashes at `free()`,
+// to know which point at execution it goes wrong.
+BASE_EXPORT void CheckHeapIntegrity(const void* ptr);
 
 }  // namespace base::allocator
 

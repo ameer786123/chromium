@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/peerconnection/media_stream_remote_video_source.h"
 
 #include <stdint.h>
@@ -56,9 +51,7 @@ class WebRtcEncodedVideoFrame : public EncodedVideoFrame {
     }
   }
 
-  base::span<const uint8_t> Data() const override {
-    return base::make_span(buffer_->data(), buffer_->size());
-  }
+  base::span<const uint8_t> Data() const override { return *buffer_; }
 
   media::VideoCodec Codec() const override { return codec_; }
 
@@ -71,7 +64,7 @@ class WebRtcEncodedVideoFrame : public EncodedVideoFrame {
   gfx::Size Resolution() const override { return resolution_; }
 
  private:
-  rtc::scoped_refptr<const webrtc::EncodedImageBufferInterface> buffer_;
+  webrtc::scoped_refptr<const webrtc::EncodedImageBufferInterface> buffer_;
   media::VideoCodec codec_;
   bool is_key_frame_;
   std::optional<gfx::ColorSpace> color_space_;
@@ -84,8 +77,8 @@ class WebRtcEncodedVideoFrame : public EncodedVideoFrame {
 // libjingle thread and forward it to the IO-thread.
 class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
     : public WTF::ThreadSafeRefCounted<RemoteVideoSourceDelegate>,
-      public rtc::VideoSinkInterface<webrtc::VideoFrame>,
-      public rtc::VideoSinkInterface<webrtc::RecordableEncodedFrame> {
+      public webrtc::VideoSinkInterface<webrtc::VideoFrame>,
+      public webrtc::VideoSinkInterface<webrtc::RecordableEncodedFrame> {
  public:
   RemoteVideoSourceDelegate(
       scoped_refptr<base::SequencedTaskRunner> video_task_runner,
@@ -98,7 +91,7 @@ class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
   friend class WTF::ThreadSafeRefCounted<RemoteVideoSourceDelegate>;
   ~RemoteVideoSourceDelegate() override;
 
-  // Implements rtc::VideoSinkInterface used for receiving video frames
+  // Implements webrtc::VideoSinkInterface used for receiving video frames
   // from the PeerConnection video track. May be called on a libjingle internal
   // thread.
   void OnFrame(const webrtc::VideoFrame& frame) override;
@@ -179,11 +172,11 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
                "Ideal Render Instant", render_time.ToInternalValue(),
                "Timestamp", elapsed_timestamp.InMicroseconds());
 
-  rtc::scoped_refptr<webrtc::VideoFrameBuffer> buffer =
+  webrtc::scoped_refptr<webrtc::VideoFrameBuffer> buffer =
       incoming_frame.video_frame_buffer();
   scoped_refptr<media::VideoFrame> video_frame;
   if (buffer->type() == webrtc::VideoFrameBuffer::Type::kNative) {
-    video_frame = static_cast<WebRtcVideoFrameAdapter*>(buffer.get())
+    video_frame = static_cast<WebRtcVideoFrameAdapterInterface*>(buffer.get())
                       ->getMediaVideoFrame();
     video_frame->set_timestamp(elapsed_timestamp);
   } else {
@@ -347,7 +340,7 @@ void MediaStreamRemoteVideoSource::StartSourceImpl(
       std::move(sub_capture_target_version_callback));
   scoped_refptr<webrtc::VideoTrackInterface> video_track(
       static_cast<webrtc::VideoTrackInterface*>(observer_->track().get()));
-  video_track->AddOrUpdateSink(delegate_.get(), rtc::VideoSinkWants());
+  video_track->AddOrUpdateSink(delegate_.get(), webrtc::VideoSinkWants());
   OnStartDone(mojom::MediaStreamRequestResult::OK);
 }
 
@@ -367,12 +360,12 @@ void MediaStreamRemoteVideoSource::StopSourceImpl() {
   observer_.reset();
 }
 
-rtc::VideoSinkInterface<webrtc::VideoFrame>*
+webrtc::VideoSinkInterface<webrtc::VideoFrame>*
 MediaStreamRemoteVideoSource::SinkInterfaceForTesting() {
   return delegate_.get();
 }
 
-rtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*
+webrtc::VideoSinkInterface<webrtc::RecordableEncodedFrame>*
 MediaStreamRemoteVideoSource::EncodedSinkInterfaceForTesting() {
   return delegate_.get();
 }
@@ -388,8 +381,7 @@ void MediaStreamRemoteVideoSource::OnChanged(
       SetReadyState(WebMediaStreamSource::kReadyStateEnded);
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 

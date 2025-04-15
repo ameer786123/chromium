@@ -31,6 +31,7 @@ import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatch.MatchClassification;
 import org.chromium.components.omnibox.OmniboxFeatures;
+import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 
@@ -147,9 +148,9 @@ public abstract class BaseSuggestionViewProcessor implements SuggestionProcessor
         @DrawableRes int icon;
         String iconString;
         Runnable action;
-        if (suggestion.hasTabMatch()) {
+        if (suggestion.hasTabMatch() || suggestion.getType() == OmniboxSuggestionType.OPEN_TAB) {
             // Hub doesn't have refine icons for switch-to-tab.
-            if (input.getPageClassification().getAsInt() == PageClassification.ANDROID_HUB_VALUE) {
+            if (input.getPageClassification() == PageClassification.ANDROID_HUB_VALUE) {
                 return;
             }
             icon = R.drawable.switch_to_tab;

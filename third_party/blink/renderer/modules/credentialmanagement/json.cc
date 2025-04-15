@@ -41,7 +41,7 @@ namespace blink {
 namespace {
 
 std::optional<DOMArrayBuffer*> WebAuthnBase64UrlDecode(const String& in) {
-  VectorOf<char> out;
+  VectorOf<uint8_t> out;
   if (!Base64UnpaddedURLDecode(in, out)) {
     return std::nullopt;
   }
@@ -279,7 +279,7 @@ AuthenticationExtensionsClientOutputsToJSON(
     if (large_blob->hasWritten()) {
       builder.AddBoolean("written", large_blob->written());
     }
-    json->setLargeBlob(builder.GetScriptValue());
+    json->setLargeBlob(builder.ToScriptObject());
   }
   if (in.hasCredBlob()) {
     json->setCredBlob(in.getCredBlob());
@@ -302,7 +302,7 @@ AuthenticationExtensionsClientOutputsToJSON(
             "second", WebAuthnBase64UrlEncode(prf.results()->second()));
       }
     }
-    json->setPrf(builder.GetScriptValue());
+    json->setPrf(builder.ToScriptObject());
   }
   if (in.hasSupplementalPubKeys()) {
     const AuthenticationExtensionsSupplementalPubKeysOutputs&
@@ -312,7 +312,7 @@ AuthenticationExtensionsClientOutputsToJSON(
       builder.AddVector<DOMArrayBuffer>("signatures",
                                         supplemental_pub_keys.signatures());
     }
-    json->setSupplementalPubKeys(builder.GetScriptValue());
+    json->setSupplementalPubKeys(builder.ToScriptObject());
   }
   return json;
 }

@@ -12,6 +12,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/visited_url_ranking/public/fetch_options.h"
 #include "components/visited_url_ranking/public/url_visit.h"
+#include "components/visited_url_ranking/public/url_visit_aggregates_transformer.h"
 
 namespace visited_url_ranking {
 
@@ -108,12 +109,6 @@ class VisitedURLRankingService : public KeyedService {
   // this method.
   using DecorateURLVisitAggregatesCallback =
       base::OnceCallback<void(ResultStatus, std::vector<URLVisitAggregate>)>;
-  // TODO(crbug/364577990): Remove this function when callers switch to the
-  // version that uses metadata.
-  virtual void DecorateURLVisitAggregates(
-      const Config& config,
-      std::vector<URLVisitAggregate> visit_aggregates,
-      DecorateURLVisitAggregatesCallback callback) = 0;
   virtual void DecorateURLVisitAggregates(
       const Config& config,
       visited_url_ranking::URLVisitsMetadata url_visits_metadata,
@@ -139,6 +134,12 @@ class VisitedURLRankingService : public KeyedService {
       ScoredURLUserAction action,
       const std::string& visit_id,
       segmentation_platform::TrainingRequestId visit_request_id) = 0;
+
+  // Sets additional transformers for fetching visits and data. Does not replace
+  // an existing transformer of same type.
+  virtual void RegisterTransformer(
+      URLVisitAggregatesTransformType type,
+      std::unique_ptr<URLVisitAggregatesTransformer> transformer) = 0;
 };
 
 }  // namespace visited_url_ranking

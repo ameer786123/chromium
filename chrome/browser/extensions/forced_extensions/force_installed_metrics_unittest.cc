@@ -33,15 +33,17 @@
 #include "extensions/browser/updater/safe_manifest_parser.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/switches.h"
 #include "net/base/net_errors.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "ash/components/arc/arc_prefs.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_names.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -194,7 +196,7 @@ class ForceInstalledMetricsTest : public ForceInstalledTestBase {
   void CreateExtensionService(bool extensions_enabled) {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
     if (!extensions_enabled) {
-      command_line.AppendSwitch(::switches::kDisableExtensions);
+      command_line.AppendSwitch(switches::kDisableExtensions);
     }
     extensions::TestExtensionSystem* test_ext_system =
         static_cast<extensions::TestExtensionSystem*>(
@@ -457,8 +459,8 @@ TEST_F(ForceInstalledMetricsTest,
   registry()->AddDisabled(ext1.get());
   ExtensionPrefs::Get(profile())->AddDisableReasons(
       kExtensionId1,
-      disable_reason::DisableReason::DISABLE_NOT_VERIFIED |
-          disable_reason::DisableReason::DISABLE_UNSUPPORTED_REQUIREMENT);
+      {disable_reason::DisableReason::DISABLE_NOT_VERIFIED,
+       disable_reason::DisableReason::DISABLE_UNSUPPORTED_REQUIREMENT});
   scoped_refptr<const Extension> ext2 = CreateNewExtension(
       kExtensionName2, kExtensionId2, ExtensionStatus::kLoaded);
   // ForceInstalledMetrics should still keep running as kExtensionId1 is
@@ -902,11 +904,9 @@ TEST_F(ForceInstalledMetricsTest, ReportManagedGuestSessionOnExtensionFailure) {
       base::WrapUnique(fake_user_manager));
   const AccountId account_id =
       AccountId::FromUserEmail(profile()->GetProfileUserName());
-  user_manager::User* user =
-      fake_user_manager->AddPublicAccountUser(account_id);
-  fake_user_manager->UserLoggedIn(account_id, user->username_hash(),
-                                  false /* browser_restart */,
-                                  false /* is_child */);
+  fake_user_manager->AddPublicAccountUser(account_id);
+  fake_user_manager->UserLoggedIn(
+      account_id, user_manager::TestHelper::GetFakeUsernameHash(account_id));
   SetupForceList(ExtensionOrigin::kWebStore);
   install_stage_tracker()->ReportFailure(
       kExtensionId1, InstallStageTracker::FailureReason::INVALID_ID);
@@ -927,9 +927,9 @@ TEST_F(ForceInstalledMetricsTest, ReportGuestSessionOnExtensionFailure) {
   user_manager::ScopedUserManager scoped_user_manager(
       base::WrapUnique(fake_user_manager));
   user_manager::User* user = fake_user_manager->AddGuestUser();
-  fake_user_manager->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                                  false /* browser_restart */,
-                                  false /* is_child */);
+  fake_user_manager->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
   SetupForceList(ExtensionOrigin::kWebStore);
   install_stage_tracker()->ReportFailure(
       kExtensionId1, InstallStageTracker::FailureReason::INVALID_ID);
@@ -953,9 +953,9 @@ TEST_F(ForceInstalledMetricsTest,
   user_manager::ScopedUserManager scoped_user_manager(
       base::WrapUnique(fake_user_manager));
   user_manager::User* user = fake_user_manager->AddGuestUser();
-  fake_user_manager->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                                  false /* browser_restart */,
-                                  false /* is_child */);
+  fake_user_manager->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
 
   SetupForceList(ExtensionOrigin::kWebStore);
   CreateExtensionService(/*extensions_enabled=*/true);

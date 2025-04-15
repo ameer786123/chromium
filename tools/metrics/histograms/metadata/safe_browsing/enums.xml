@@ -123,6 +123,11 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Managed Pref"/>
 </enum>
 
+<enum name="BooleanRepeatVisit">
+  <int value="0" label="Never visited before"/>
+  <int value="1" label="Visited before"/>
+</enum>
+
 <enum name="BooleanSafeBrowsingApiUnknownException">
   <int value="0" label="Known exception"/>
   <int value="1" label="Unknown exception"/>
@@ -131,11 +136,6 @@ chromium-metrics-reviews@google.com.
 <enum name="BooleanSameURL">
   <int value="0" label="Different URL"/>
   <int value="1" label="Same URL"/>
-</enum>
-
-<enum name="BooleanSentOrReceived">
-  <int value="0" label="Sent"/>
-  <int value="1" label="Received"/>
 </enum>
 
 <enum name="BooleanSubsequentResponse">
@@ -195,6 +195,29 @@ chromium-metrics-reviews@google.com.
   <int value="24" label="Abusive notification permission accepted"/>
   <int value="25" label="dangerous download auto deleted"/>
   <int value="26" label="dangerous download canceled on profile closure"/>
+</enum>
+
+<!-- LINT.IfChange(DismissReason) -->
+
+<enum name="DismissReason">
+  <int value="0" label="UNKNOWN"/>
+  <int value="1" label="PRIMARY_ACTION"/>
+  <int value="2" label="SECONDARY_ACTION"/>
+  <int value="3" label="TIMER"/>
+  <int value="4" label="GESTURE"/>
+  <int value="5" label="TAB_SWITCHED"/>
+  <int value="6" label="TAB_DESTROYED"/>
+  <int value="7" label="ACTIVITY_DESTROYED"/>
+  <int value="8" label="SCOPE_DESTROYED"/>
+  <int value="9" label="DISMISSED_BY_FEATURE"/>
+  <int value="10" label="COUNT"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/messages/android/message_enums.h) -->
+
+<enum name="DisplayPersistentNotificationEvents">
+  <int value="0" label="Request to display persistent notification"/>
+  <int value="1" label="Finished displaying persistent notification"/>
 </enum>
 
 <enum name="SafeBrowsingAllowlistAsyncMatch">
@@ -393,6 +416,8 @@ chromium-metrics-reviews@google.com.
 <enum name="SafeBrowsingRTLookupResponseVerdictType">
   <int value="0" label="VERDICT_TYPE_UNSPECIFIED"/>
   <int value="1" label="SAFE"/>
+  <int value="50" label="SUSPICIOUS"/>
+  <int value="75" label="WARN"/>
   <int value="100" label="DANGEROUS"/>
 </enum>
 
@@ -674,6 +699,14 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="VISITED_MORE_THAN_A_DAY_AGO_PREVIOUSLY_UNFAMILIAR"/>
 </enum>
 
+<enum name="SuspiciousNotificationWarningInteractions">
+  <int value="0" label="WARNING_SHOWN"/>
+  <int value="1" label="SHOW_ORIGINAL_NOTIFICATION"/>
+  <int value="2" label="UNSUBSCRIBE"/>
+  <int value="3" label="ALWAYS_ALLOW"/>
+  <int value="4" label="DISMISS"/>
+</enum>
+
 <enum name="SuspiciousSiteTriggerEvent">
   <int value="0" label="A page load started"/>
   <int value="1" label="A page load finished"/>
@@ -704,6 +737,17 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="The trigger is in monitoring mode"/>
 </enum>
 
+<!-- LINT.IfChange(SyncedEsbOutcome) -->
+
+<enum name="SyncedEsbOutcome">
+  <int value="0" label="Shown"/>
+  <int value="1" label="AcceptedOk"/>
+  <int value="2" label="AcceptedTurnOn"/>
+  <int value="3" label="Dismissed"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/safe_browsing/tailored_security/consented_message_android.cc:SyncedEsbOutcome) -->
+
 <enum name="URTAndBackgroundHPRTResult">
   <int value="0" label="UrtSafeAndHprtUnfinished"/>
   <int value="1" label="UrtUnsafeAndHprtUnfinished"/>
@@ -712,6 +756,19 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="UrtUnsafeAndHprtSafe"/>
   <int value="5" label="UrtUnsafeAndHprtUnsafe"/>
 </enum>
+
+<!-- LINT.IfChange(V4HashPrefixMapWriteError) -->
+
+<enum name="V4HashPrefixMapWriteError">
+  <int value="0" label="Error writing file to disk"/>
+  <int value="1" label="File size not a multiple of prefix size"/>
+  <int value="2" label="File not found"/>
+  <int value="3" label="File size does not match metadata"/>
+  <int value="4" label="Failed to memory map file"/>
+  <int value="5" label="Memory mapped region has wrong size"/>
+</enum>
+
+<!-- LINT.ThenChange(//components/safe_browsing/core/browser/db/hash_prefix_map.cc:WriteError) -->
 
 </enums>
 

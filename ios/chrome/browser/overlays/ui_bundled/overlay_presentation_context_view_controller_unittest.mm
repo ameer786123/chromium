@@ -19,8 +19,8 @@
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/platform_test.h"
 
-using base::test::ios::WaitUntilConditionOrTimeout;
 using base::test::ios::kWaitForUIElementTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace {
 // The frame of resizable presened overlay UI.
@@ -75,7 +75,8 @@ class OverlayPresentationContextViewControllerTest : public PlatformTest {
 
 // Tests that `view_controller_`'s frame is CGRectZero when there is no overlay
 // UI presented upon it.
-TEST_F(OverlayPresentationContextViewControllerTest, NoPresentedUI) {
+// TODO(crbug.com/409942614): Fix this flaky test.
+TEST_F(OverlayPresentationContextViewControllerTest, FLAKY_NoPresentedUI) {
   CGRect container_view_frame =
       view_controller_.presentationController.containerView.frame;
   EXPECT_TRUE(CGRectEqualToRect(container_view_frame, CGRectZero));
@@ -145,7 +146,9 @@ TEST_F(OverlayPresentationContextViewControllerTest,
 // Tests that `view_controller_`'s frame is the same as its presented view's
 // container view if it is shown using custom UIViewController presentation that
 // resizes the contianer view.
-TEST_F(OverlayPresentationContextViewControllerTest, ResizingPresentedOverlay) {
+// TODO(crbug.com/409942614): Fix this flaky test.
+TEST_F(OverlayPresentationContextViewControllerTest,
+       FLAKY_ResizingPresentedOverlay) {
   if (@available(iOS 15.7.1, *)) {
     if (@available(iOS 15.7.2, *)) {
     } else {

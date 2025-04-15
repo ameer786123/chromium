@@ -20,11 +20,14 @@ source_set("internal") {
     "tab_group_sync_service_factory_helper.cc",
     "tab_group_sync_service_impl.cc",
     "tab_group_sync_service_impl.h",
+    "tab_group_type_observer.cc",
+    "tab_group_type_observer.h",
   ]
   deps = [
     ":tab_group_sync_bridge",
     "//base",
     "//components/data_sharing/public:features",
+    "//components/data_sharing/public:logger",
     "//components/keyed_service/core",
     "//components/optimization_guide/core",
     "//components/saved_tab_groups/delegate",
@@ -70,6 +73,7 @@ source_set("model") {
     "//components/saved_tab_groups/public:features",
     "//components/sync",
     "//components/tab_groups",
+    "//google_apis",
     "//ui/gfx",
     "//url",
   ]
@@ -81,6 +85,7 @@ if (is_android) {
 
     deps = [
       "//base:base_java",
+      "//components/saved_tab_groups/public:conversion_utils_java",
       "//components/saved_tab_groups/public:java",
       "//components/tab_groups:tab_groups_java",
       "//net/android:net_java",
@@ -124,22 +129,6 @@ if (is_android) {
     testonly = true
     sources = [ "android/java/src/org/chromium/components/tab_group_sync/TabGroupSyncServiceAndroidUnitTest.java" ]
   }
-
-  robolectric_library("junit") {
-    include_android_sdk = false
-    sources = [ "//components/saved_tab_groups/messaging/android/java/src/org/chromium/components/tab_group_sync/messaging/EitherIdTest.java" ]
-
-    deps = [
-      ":java",
-      "//base:base_java",
-      "//base:base_java_test_support",
-      "//base:base_junit_test_support",
-      "//components/saved_tab_groups/messaging/android:java",
-      "//components/saved_tab_groups/public:java",
-      "//third_party/androidx:androidx_annotation_annotation_java",
-      "//third_party/junit",
-    ]
-  }
 }
 
 source_set("service_test_utils") {
@@ -171,12 +160,14 @@ source_set("unit_tests") {
     "saved_tab_group_model_unittest.cc",
     "saved_tab_group_proto_conversion_unittest.cc",
     "saved_tab_group_sync_bridge_unittest.cc",
+    "shared_tab_group_account_data_sync_bridge_unittest.cc",
     "shared_tab_group_data_sync_bridge_unittest.cc",
     "startup_helper_unittest.cc",
     "tab_group_sync_bridge_mediator_unittest.cc",
     "tab_group_sync_coordinator_unittest.cc",
     "tab_group_sync_metrics_logger_unittest.cc",
     "tab_group_sync_service_unittest.cc",
+    "tab_group_type_observer_unittest.cc",
   ]
   deps = [
     ":internal",
@@ -184,7 +175,10 @@ source_set("unit_tests") {
     ":tab_group_sync_bridge",
     "//base",
     "//base/test:test_support",
+    "//components/data_sharing/public:features",
+    "//components/data_sharing/public:logger",
     "//components/optimization_guide/core",
+    "//components/optimization_guide/core:test_support",
     "//components/pref_registry:pref_registry",
     "//components/prefs:test_support",
     "//components/saved_tab_groups/delegate",
@@ -226,6 +220,7 @@ source_set("tab_group_sync_bridge") {
     "//chrome/test:browser_tests",
     "//chrome/test:sync_integration_tests",
     "//ios/chrome/browser/saved_tab_groups/model",
+    "//ios/chrome/test/app:test_support",
   ]
 
   sources = [
@@ -233,6 +228,8 @@ source_set("tab_group_sync_bridge") {
     "saved_tab_group_proto_conversions.h",
     "saved_tab_group_sync_bridge.cc",
     "saved_tab_group_sync_bridge.h",
+    "shared_tab_group_account_data_sync_bridge.cc",
+    "shared_tab_group_account_data_sync_bridge.h",
     "shared_tab_group_data_sync_bridge.cc",
     "shared_tab_group_data_sync_bridge.h",
     "sync_bridge_tab_group_model_wrapper.cc",
@@ -245,6 +242,7 @@ source_set("tab_group_sync_bridge") {
 
   deps = [
     ":model",
+    "//components/data_sharing/public:logger",
     "//components/saved_tab_groups/proto",
     "//components/saved_tab_groups/public",
     "//components/tab_groups:tab_groups",

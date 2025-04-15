@@ -174,6 +174,9 @@ class MockAccessibilityPrivate {
     /** @private {?string} */
     this.faceGazeBubbleText_ = null;
 
+    /** @private {boolean} */
+    this.faceGazeBubbleIsWarning_ = false;
+
     /** @private {Function} */
     this.onUpdateDictationBubble_ = null;
 
@@ -305,6 +308,21 @@ class MockAccessibilityPrivate {
         }
       },
     };
+
+    this.onSelectToSpeakKeysPressedChanged = {
+      addListener: listener => {},
+      removeListener: listener => {},
+    };
+
+    this.onSelectToSpeakMouseChanged = {
+      addListener: listener => {},
+      removeListener: listener => {},
+    };
+
+    this.onSelectToSpeakContextMenuClicked = {
+      addListener: listener => {},
+      removeListener: listener => {},
+    };
   }
 
   /**
@@ -393,7 +411,10 @@ class MockAccessibilityPrivate {
    * Creates a synthetic keyboard event.
    * @param {chrome.accessibilityPrivate.SyntheticKeyboardEvent} event
    */
-  sendSyntheticKeyEvent(event) {
+  sendSyntheticKeyEvent(event, useRewriters, isRepeat) {
+    event.useRewriters = useRewriters;
+    event.repeat = isRepeat;
+
     this.syntheticKeyEvents_.push(event);
   }
 
@@ -570,8 +591,9 @@ class MockAccessibilityPrivate {
   }
 
   /** @param {string} text */
-  updateFaceGazeBubble(text) {
+  updateFaceGazeBubble(text, isWarning) {
     this.faceGazeBubbleText_ = text;
+    this.faceGazeBubbleIsWarning_ = isWarning;
   }
 
   /** @param {boolean} enabled */
@@ -585,6 +607,11 @@ class MockAccessibilityPrivate {
   /** @return {?string} */
   getFaceGazeBubbleText() {
     return this.faceGazeBubbleText_;
+  }
+
+  /** @return {boolean} */
+  getFaceGazeBubbleIsWarning() {
+    return this.faceGazeBubbleIsWarning_;
   }
 
   /**
@@ -702,7 +729,7 @@ class MockAccessibilityPrivate {
     };
 
     const data = {};
-    const pumpkinDir = '../../accessibility_common/third_party/pumpkin';
+    const pumpkinDir = '../../accessibility_common/mv2/third_party/pumpkin';
     data.js_pumpkin_tagger_bin_js =
         await getFileBytes(`${pumpkinDir}/js_pumpkin_tagger_bin.js`);
     data.tagger_wasm_main_js =
@@ -757,7 +784,7 @@ class MockAccessibilityPrivate {
 
     const assets = {};
     const mediapipeDir =
-        '../../accessibility_common/third_party/mediapipe_task_vision';
+        '../../accessibility_common/mv2/third_party/mediapipe_task_vision';
     assets.model = await getFileBytes(`${mediapipeDir}/face_landmarker.task`);
     assets.wasm =
         await getFileBytes(`${mediapipeDir}/vision_wasm_internal.wasm`);
@@ -777,4 +804,9 @@ class MockAccessibilityPrivate {
     this.scrollAtPointData_.target = target;
     this.scrollAtPointData_.direction = direction;
   }
+
+  /**
+   * No-op to prevent error in testing.
+   */
+  setSelectToSpeakState(state) {}
 }

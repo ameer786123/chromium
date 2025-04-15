@@ -10,14 +10,17 @@
 #include "base/containers/fixed_flat_set.h"
 #include "base/containers/flat_map.h"
 #include "base/i18n/case_conversion.h"
+#include "base/pickle.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/uuid.h"
 #include "base/values.h"
-#include "components/search_engines/prepopulated_engines.h"
 #include "components/search_engines/regulatory_extension_type.h"
+#include "components/search_engines/search_engines_switches.h"
+#include "crypto/hash.h"
+#include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 
 namespace {
 
@@ -50,9 +53,9 @@ TemplateURLData::TemplateURLData()
       id(0),
       date_created(base::Time::Now()),
       last_modified(base::Time::Now()),
-      created_by_policy(CreatedByPolicy::kNoPolicy),
+      policy_origin(PolicyOrigin::kNoPolicy),
       enforced_by_policy(false),
-      created_from_play_api(false),
+      regulatory_origin(RegulatoryExtensionType::kDefault),
       usage_count(0),
       prepopulate_id(0),
       sync_guid(base::Uuid::GenerateRandomV4().AsLowercaseString()),
@@ -78,8 +81,6 @@ TemplateURLData::TemplateURLData(
     std::string_view search_url_post_params,
     std::string_view suggest_url_post_params,
     std::string_view image_url_post_params,
-    std::string_view side_search_param,
-    std::string_view side_image_search_param,
     std::string_view image_translate_source_language_param_key,
     std::string_view image_translate_target_language_param_key,
     std::vector<std::string> search_intent_params,
@@ -102,8 +103,6 @@ TemplateURLData::TemplateURLData(
       search_url_post_params(search_url_post_params),
       suggestions_url_post_params(suggest_url_post_params),
       image_url_post_params(image_url_post_params),
-      side_search_param(side_search_param),
-      side_image_search_param(side_image_search_param),
       image_translate_source_language_param_key(
           image_translate_source_language_param_key),
       image_translate_target_language_param_key(
@@ -113,9 +112,9 @@ TemplateURLData::TemplateURLData(
       favicon_url(favicon_url),
       safe_for_autoreplace(true),
       id(0),
-      created_by_policy(CreatedByPolicy::kNoPolicy),
+      policy_origin(PolicyOrigin::kNoPolicy),
       enforced_by_policy(false),
-      created_from_play_api(false),
+      regulatory_origin(RegulatoryExtensionType::kDefault),
       usage_count(0),
       prepopulate_id(prepopulate_id),
       sync_guid(GenerateGUID(prepopulate_id, 0)),
@@ -132,7 +131,6 @@ TemplateURLData::TemplateURLData(
       alternate_urls.push_back(*alternate_url);
     }
   }
-
   regulatory_extensions = base::MakeFlatMap<
       RegulatoryExtensionType,
       raw_ptr<const TemplateURLData::RegulatoryExtension, CtnExperimental>>(
@@ -168,6 +166,22 @@ void TemplateURLData::SetURL(const std::string& url) {
   url_ = url;
 }
 
+std::vector<uint8_t> TemplateURLData::GenerateHash() const {
+  DCHECK(!url_.empty());
+  DCHECK_NE(id, 0);
+  base::Pickle pickle;
+  pickle.WriteInt64(id);
+  pickle.WriteString(url_);
+  // Prepend a hash version. This would allow expanding the data contained
+  // within the hash in the future, while keeping backwards compatibility.
+  const uint8_t kHashVersion = 1u;
+  std::vector<uint8_t> result(1, kHashVersion);
+
+  const auto hash = crypto::hash::Sha256(pickle);
+  result.insert(result.end(), hash.begin(), hash.end());
+  return result;
+}
+
 void TemplateURLData::GenerateSyncGUID() {
   sync_guid = GenerateGUID(prepopulate_id, starter_pack_id);
 }
@@ -184,8 +198,6 @@ size_t TemplateURLData::EstimateMemoryUsage() const {
   res += base::trace_event::EstimateMemoryUsage(search_url_post_params);
   res += base::trace_event::EstimateMemoryUsage(suggestions_url_post_params);
   res += base::trace_event::EstimateMemoryUsage(image_url_post_params);
-  res += base::trace_event::EstimateMemoryUsage(side_search_param);
-  res += base::trace_event::EstimateMemoryUsage(side_image_search_param);
   res += base::trace_event::EstimateMemoryUsage(favicon_url);
   res += base::trace_event::EstimateMemoryUsage(image_search_branding_label);
   res += base::trace_event::EstimateMemoryUsage(originating_url);
@@ -197,4 +209,20 @@ size_t TemplateURLData::EstimateMemoryUsage() const {
   res += base::trace_event::EstimateMemoryUsage(url_);
 
   return res;
+}
+
+bool TemplateURLData::CreatedByPolicy() const {
+  return policy_origin != PolicyOrigin::kNoPolicy;
+}
+
+bool TemplateURLData::CreatedByDefaultSearchProviderPolicy() const {
+  return policy_origin == PolicyOrigin::kDefaultSearchProvider;
+}
+
+bool TemplateURLData::CreatedByNonDefaultSearchProviderPolicy() const {
+  return CreatedByPolicy() && !CreatedByDefaultSearchProviderPolicy();
+}
+
+bool TemplateURLData::CreatedByEnterpriseSearchAggregatorPolicy() const {
+  return policy_origin == PolicyOrigin::kSearchAggregator;
 }

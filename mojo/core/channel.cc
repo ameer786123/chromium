@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -25,7 +26,6 @@
 #include "base/numerics/safe_math.h"
 #include "base/process/current_process.h"
 #include "base/process/process_handle.h"
-#include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/typed_macros.h"
@@ -88,12 +88,12 @@ Channel::AlignedBuffer MakeAlignedBuffer(size_t size) {
   // Generic allocators (such as malloc) return a pointer that is suitably
   // aligned for storing any type of object with a fundamental alignment
   // requirement. Buffers have no additional alignment requirement beyond that.
-  void* ptr = operator new(size);
+  auto* ptr = new char[size];
   // Even though the allocator is configured in such a way that it crashes
   // rather than return nullptr, ASAN and friends don't know about that. This
   // CHECK() prevents Clusterfuzz from complaining. crbug.com/1180576.
   CHECK(ptr);
-  return Channel::AlignedBuffer(static_cast<char*>(ptr));
+  return Channel::AlignedBuffer(ptr);
 }
 
 struct TrivialMessage;
@@ -105,7 +105,7 @@ struct IpczMessage : public Channel::Message {
   IpczMessage(base::span<const uint8_t> data,
               std::vector<PlatformHandle> handles) {
     size_ = sizeof(IpczHeader) + data.size();
-    data_.reset(static_cast<char*>(operator new(size_)));
+    data_.reset(new char[size_]);
 
     IpczHeader& header = *reinterpret_cast<IpczHeader*>(data_.get());
     header.size = sizeof(IpczHeader);
@@ -302,7 +302,7 @@ Channel::MessagePtr Channel::Message::CreateRawForFuzzing(
   message->size_ = data.size();
   if (data.size()) {
     message->data_ = MakeAlignedBuffer(data.size());
-    base::ranges::copy(data, message->data_.get());
+    std::ranges::copy(data, message->data_.get());
   }
   return base::WrapUnique<Channel::Message>(message.release());
 }
@@ -944,8 +944,8 @@ bool Channel::OnReadComplete(size_t bytes_read, size_t* next_read_size_hint) {
     }
 
     DispatchResult result =
-        TryDispatchMessage(base::make_span(read_buffer_->occupied_bytes(),
-                                           read_buffer_->num_occupied_bytes()),
+        TryDispatchMessage(base::span(read_buffer_->occupied_bytes(),
+                                      read_buffer_->num_occupied_bytes()),
                            next_read_size_hint);
     if (result == DispatchResult::kOK) {
       if (ShouldRecordSubsampledHistograms()) {
@@ -1153,6 +1153,13 @@ MOJO_SYSTEM_IMPL_EXPORT void Channel::OfferChannelUpgrade() {
   NOTREACHED();
 }
 #endif
+
+void Channel::RecordSentMessageMetrics(size_t payload_size) {
+  if (ShouldRecordSubsampledHistograms()) {
+    UMA_HISTOGRAM_COUNTS_100000("Mojo.Channel.WriteMessageSize", payload_size);
+    LogHistogramForIPCMetrics(MessageType::kSent);
+  }
+}
 
 bool Channel::ShouldRecordSubsampledHistograms() {
   base::AutoLock hold(lock_);

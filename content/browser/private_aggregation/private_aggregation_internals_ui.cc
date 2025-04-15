@@ -34,12 +34,10 @@ PrivateAggregationInternalsUI::PrivateAggregationInternalsUI(WebUI* web_ui)
       web_ui->GetWebContents()->GetBrowserContext(),
       kChromeUIPrivateAggregationInternalsHost);
 
-  source->AddResourcePaths(
-      base::make_span(kPrivateAggregationInternalsResources,
-                      kPrivateAggregationInternalsResourcesSize));
+  source->AddResourcePaths(kPrivateAggregationInternalsResources);
 
   source->SetDefaultResource(
-    IDR_PRIVATE_AGGREGATION_INTERNALS_PRIVATE_AGGREGATION_INTERNALS_HTML);
+      IDR_PRIVATE_AGGREGATION_INTERNALS_PRIVATE_AGGREGATION_INTERNALS_HTML);
 
   source->OverrideContentSecurityPolicy(
       network::mojom::CSPDirectiveName::TrustedTypes,

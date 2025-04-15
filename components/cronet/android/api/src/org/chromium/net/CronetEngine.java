@@ -14,6 +14,7 @@ import androidx.annotation.VisibleForTesting;
 
 import org.json.JSONObject;
 
+import org.chromium.base.metrics.ScopedSysTraceEvent;
 import org.chromium.net.impl.CronetLogger;
 import org.chromium.net.impl.CronetLoggerFactory;
 
@@ -376,13 +377,15 @@ public abstract class CronetEngine {
         /**
          * Sets the thread priority of Cronet's internal thread.
          *
+         * @deprecated On modern versions of Cronet, this method does nothing.
          * @param priority the thread priority of Cronet's internal thread. A Linux priority level,
-         *         from
-         * -20 for highest scheduling priority to 19 for lowest scheduling priority. For more
-         * information on values, see {@link android.os.Process#setThreadPriority(int, int)} and
-         * {@link android.os.Process#THREAD_PRIORITY_DEFAULT THREAD_PRIORITY_*} values.
+         *     from -20 for highest scheduling priority to 19 for lowest scheduling priority. For
+         *     more information on values, see {@link android.os.Process#setThreadPriority(int,
+         *     int)} and {@link android.os.Process#THREAD_PRIORITY_DEFAULT THREAD_PRIORITY_*}
+         *     values.
          * @return the builder to facilitate chaining.
          */
+        @Deprecated
         public Builder setThreadPriority(int priority) {
             mBuilderDelegate.setThreadPriority(priority);
             return this;
@@ -547,39 +550,45 @@ public abstract class CronetEngine {
          * @return the created {@code ICronetEngineBuilder}.
          */
         private static ICronetEngineBuilder createBuilderDelegate(Context context) {
-            var startUptimeMillis = SystemClock.uptimeMillis();
-            CronetProvider.ProviderInfo providerInfo =
-                    getEnabledCronetProviders(
-                                    context,
-                                    new ArrayList<>(CronetProvider.getAllProviderInfos(context)))
-                            .get(0);
-            var logger = CronetLoggerFactory.createLogger(context, providerInfo.logSource);
-            var logInfo = new CronetLogger.CronetEngineBuilderInitializedInfo();
-            try {
-                logInfo.creationSuccessful = false;
-                logInfo.author = CronetLogger.CronetEngineBuilderInitializedInfo.Author.API;
-                logInfo.source = providerInfo.logSource;
-                logInfo.uid = Process.myUid();
-                logInfo.apiVersion = new CronetLogger.CronetVersion(ApiVersion.getCronetVersion());
-                if (Log.isLoggable(TAG, Log.DEBUG)) {
-                    Log.d(
-                            TAG,
-                            String.format(
-                                    "Using '%s' provider for creating CronetEngine.Builder.",
-                                    providerInfo.provider));
+            try (var traceEvent =
+                    ScopedSysTraceEvent.scoped("CronetEngine#createBuilderDelegate")) {
+                var startUptimeMillis = SystemClock.uptimeMillis();
+                CronetProvider.ProviderInfo providerInfo =
+                        getEnabledCronetProviders(
+                                        context,
+                                        new ArrayList<>(
+                                                CronetProvider.getAllProviderInfos(context)))
+                                .get(0);
+                var logger = CronetLoggerFactory.createLogger(context, providerInfo.logSource);
+                var logInfo = new CronetLogger.CronetEngineBuilderInitializedInfo();
+                try {
+                    logInfo.creationSuccessful = false;
+                    logInfo.author = CronetLogger.CronetEngineBuilderInitializedInfo.Author.API;
+                    logInfo.source = providerInfo.logSource;
+                    logInfo.uid = Process.myUid();
+                    logInfo.apiVersion =
+                            new CronetLogger.CronetVersion(ApiVersion.getCronetVersion());
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(
+                                TAG,
+                                String.format(
+                                        "Using '%s' provider for creating CronetEngine.Builder.",
+                                        providerInfo.provider));
+                    }
+                    var builderDelegate = providerInfo.provider.createBuilder().mBuilderDelegate;
+                    var implCronetVersion = getImplCronetVersion(builderDelegate);
+                    if (implCronetVersion != null) {
+                        logInfo.implVersion = new CronetLogger.CronetVersion(implCronetVersion);
+                    }
+                    logInfo.cronetInitializationRef =
+                            builderDelegate.getLogCronetInitializationRef();
+                    logInfo.creationSuccessful = true;
+                    return builderDelegate;
+                } finally {
+                    logInfo.engineBuilderCreatedLatencyMillis =
+                            (int) (SystemClock.uptimeMillis() - startUptimeMillis);
+                    logger.logCronetEngineBuilderInitializedInfo(logInfo);
                 }
-                var builderDelegate = providerInfo.provider.createBuilder().mBuilderDelegate;
-                var implCronetVersion = getImplCronetVersion(builderDelegate);
-                if (implCronetVersion != null) {
-                    logInfo.implVersion = new CronetLogger.CronetVersion(implCronetVersion);
-                }
-                logInfo.cronetInitializationRef = builderDelegate.getLogCronetInitializationRef();
-                logInfo.creationSuccessful = true;
-                return builderDelegate;
-            } finally {
-                logInfo.engineBuilderCreatedLatencyMillis =
-                        (int) (SystemClock.uptimeMillis() - startUptimeMillis);
-                logger.logCronetEngineBuilderInitializedInfo(logInfo);
             }
         }
 

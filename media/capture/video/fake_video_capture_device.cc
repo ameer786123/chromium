@@ -24,11 +24,10 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/audio/fake_audio_input_stream.h"
 #include "media/base/video_frame.h"
 #include "media/capture/mojom/image_capture_types.h"
-#include "media/capture/video/gpu_memory_buffer_utils.h"
+#include "media/capture/video/mappable_shared_image_utils.h"
 #include "skia/ext/font_utils.h"
 #include "skia/ext/legacy_display_globals.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -286,26 +285,17 @@ class JpegEncodingFrameDeliverer : public FrameDeliverer {
 class GpuMemoryBufferFrameDeliverer : public FrameDeliverer {
  public:
   GpuMemoryBufferFrameDeliverer(
-      std::unique_ptr<PacmanFramePainter> frame_painter,
-      gpu::GpuMemoryBufferSupport* gmb_support);
+      std::unique_ptr<PacmanFramePainter> frame_painter);
   ~GpuMemoryBufferFrameDeliverer() override;
 
   // Implementation of FrameDeliveryStrategy
   void PaintAndDeliverNextFrame(base::TimeDelta timestamp_to_paint) override;
-
- private:
-  raw_ptr<gpu::GpuMemoryBufferSupport> gmb_support_;
 };
 
 FrameDelivererFactory::FrameDelivererFactory(
     FakeVideoCaptureDevice::DeliveryMode delivery_mode,
-    const FakeDeviceState* device_state,
-    std::unique_ptr<gpu::GpuMemoryBufferSupport> gmb_support)
-    : delivery_mode_(delivery_mode),
-      device_state_(device_state),
-      gmb_support_(gmb_support
-                       ? std::move(gmb_support)
-                       : std::make_unique<gpu::GpuMemoryBufferSupport>()) {}
+    const FakeDeviceState* device_state)
+    : delivery_mode_(delivery_mode), device_state_(device_state) {}
 
 FrameDelivererFactory::~FrameDelivererFactory() = default;
 
@@ -327,8 +317,7 @@ std::unique_ptr<FrameDeliverer> FrameDelivererFactory::CreateFrameDeliverer(
       painter_format = PacmanFramePainter::Format::NV12;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      painter_format = PacmanFramePainter::Format::I420;
+      NOTREACHED();
   }
   auto frame_painter =
       std::make_unique<PacmanFramePainter>(painter_format, device_state_);
@@ -363,7 +352,7 @@ std::unique_ptr<FrameDeliverer> FrameDelivererFactory::CreateFrameDeliverer(
           std::move(frame_painter));
     case FakeVideoCaptureDevice::DeliveryMode::USE_GPU_MEMORY_BUFFERS:
       return std::make_unique<GpuMemoryBufferFrameDeliverer>(
-          std::move(frame_painter), gmb_support_.get());
+          std::move(frame_painter));
   }
   NOTREACHED();
 }
@@ -841,11 +830,17 @@ void OwnBufferFrameDeliverer::PaintAndDeliverNextFrame(
   memset(buffer_.data(), 0, frame_size);
   frame_painter()->PaintFrame(timestamp_to_paint, buffer_.data());
   base::TimeTicks now = base::TimeTicks::Now();
+
+  VideoFrameMetadata metadata;
+  metadata.source_size = gfx::Size(frame_format.frame_size.width(),
+                                   frame_format.frame_size.height());
+  metadata.device_scale_factor = 1.0f;
   client()->OnIncomingCapturedData(
       buffer_.data(), frame_size, device_state()->format,
       GetDefaultColorSpace(device_state()->format.pixel_format),
       0 /* rotation */, false /* flip_y */, now,
-      CalculateTimeSinceFirstInvocation(now), std::nullopt);
+      CalculateTimeSinceFirstInvocation(now),
+      /*capture_begin_timestamp=*/std::nullopt, metadata);
 }
 
 ClientBufferFrameDeliverer::ClientBufferFrameDeliverer(
@@ -882,7 +877,8 @@ void ClientBufferFrameDeliverer::PaintAndDeliverNextFrame(
   base::TimeTicks now = base::TimeTicks::Now();
   client()->OnIncomingCapturedBuffer(
       std::move(capture_buffer), device_state()->format, now,
-      CalculateTimeSinceFirstInvocation(now), std::nullopt);
+      CalculateTimeSinceFirstInvocation(now),
+      /*capture_begin_timestamp=*/std::nullopt, /*metadata=*/std::nullopt);
 }
 
 JpegEncodingFrameDeliverer::JpegEncodingFrameDeliverer(
@@ -923,13 +919,14 @@ void JpegEncodingFrameDeliverer::PaintAndDeliverNextFrame(
   client()->OnIncomingCapturedData(
       &jpeg_buffer_[0], frame_size, device_state()->format,
       gfx::ColorSpace::CreateJpeg(), 0 /* rotation */, false /* flip_y */, now,
-      CalculateTimeSinceFirstInvocation(now), std::nullopt);
+      CalculateTimeSinceFirstInvocation(now),
+      /*capture_begin_timestamp=*/std::nullopt,
+      /*metadata=*/std::nullopt);
 }
 
 GpuMemoryBufferFrameDeliverer::GpuMemoryBufferFrameDeliverer(
-    std::unique_ptr<PacmanFramePainter> frame_painter,
-    gpu::GpuMemoryBufferSupport* gmb_support)
-    : FrameDeliverer(std::move(frame_painter)), gmb_support_(gmb_support) {}
+    std::unique_ptr<PacmanFramePainter> frame_painter)
+    : FrameDeliverer(std::move(frame_painter)) {}
 
 GpuMemoryBufferFrameDeliverer::~GpuMemoryBufferFrameDeliverer() = default;
 
@@ -938,11 +935,11 @@ void GpuMemoryBufferFrameDeliverer::PaintAndDeliverNextFrame(
   if (!client())
     return;
 
-  std::unique_ptr<gfx::GpuMemoryBuffer> gmb;
+  scoped_refptr<gpu::ClientSharedImage> shared_image;
   VideoCaptureDevice::Client::Buffer capture_buffer;
   const gfx::Size& buffer_size = device_state()->format.frame_size;
-  auto reserve_result = AllocateNV12GpuMemoryBuffer(
-      client(), buffer_size, gmb_support_, &gmb, &capture_buffer);
+  auto reserve_result = AllocateNV12SharedImage(client(), buffer_size,
+                                                &shared_image, &capture_buffer);
   if (reserve_result != VideoCaptureDevice::Client::ReserveResult::kSucceeded) {
     client()->OnFrameDropped(
         ConvertReservationFailureToFrameDropReason(reserve_result));
@@ -965,13 +962,14 @@ void GpuMemoryBufferFrameDeliverer::PaintAndDeliverNextFrame(
     capture_buffer.is_premapped = true;
   }
 #else
-  ScopedNV12GpuMemoryBufferMapping scoped_mapping(std::move(gmb));
-  memset(scoped_mapping.y_plane(), 0,
-         scoped_mapping.y_stride() * buffer_size.height());
-  memset(scoped_mapping.uv_plane(), 0,
-         scoped_mapping.uv_stride() * (buffer_size.height() / 2));
-  frame_painter()->PaintFrame(timestamp_to_paint, scoped_mapping.y_plane(),
-                              scoped_mapping.y_stride());
+  auto scoped_mapping = shared_image->Map();
+  memset(scoped_mapping->GetMemoryForPlane(0).data(), 0,
+         scoped_mapping->Stride(0) * buffer_size.height());
+  memset(scoped_mapping->GetMemoryForPlane(1).data(), 0,
+         scoped_mapping->Stride(1) * (buffer_size.height() / 2));
+  frame_painter()->PaintFrame(timestamp_to_paint,
+                              scoped_mapping->GetMemoryForPlane(0).data(),
+                              scoped_mapping->Stride(0));
 #endif  // if BUILDFLAG(IS_WIN)
   base::TimeTicks now = base::TimeTicks::Now();
   VideoCaptureFormat modified_format = device_state()->format;
@@ -980,7 +978,8 @@ void GpuMemoryBufferFrameDeliverer::PaintAndDeliverNextFrame(
   modified_format.pixel_format = PIXEL_FORMAT_NV12;
   client()->OnIncomingCapturedBuffer(
       std::move(capture_buffer), modified_format, now,
-      CalculateTimeSinceFirstInvocation(now), std::nullopt);
+      CalculateTimeSinceFirstInvocation(now),
+      /*capture_begin_timestamp=*/std::nullopt, /*metadata=*/std::nullopt);
 }
 
 void FakeVideoCaptureDevice::BeepAndScheduleNextCapture(

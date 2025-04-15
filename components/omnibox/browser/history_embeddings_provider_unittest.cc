@@ -32,6 +32,9 @@
 #include "components/omnibox/browser/omnibox_triggered_feature_service.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "components/optimization_guide/proto/features/history_answer.pb.h"
+#include "components/os_crypt/async/browser/os_crypt_async.h"
+#include "components/os_crypt/async/browser/test_utils.h"
+#include "components/passage_embeddings/passage_embeddings_test_util.h"
 #include "components/search_engines/template_url.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
@@ -57,12 +60,11 @@ history_embeddings::ScoredUrlRow CreateScoredUrlRow(
     const std::string& url,
     const std::u16string& title) {
   history_embeddings::ScoredUrlRow scored_url_row(
-      history_embeddings::ScoredUrl(0, 0, {}, score));
+      history_embeddings::ScoredUrl(0, 0, {}, score, 0));
   scored_url_row.row = history::URLRow{GURL{url}};
   scored_url_row.row.set_title(title);
-  scored_url_row.passages_embeddings.url_passages.passages.add_passages(
-      "passage");
-  scored_url_row.passages_embeddings.url_embeddings.embeddings.emplace_back(
+  scored_url_row.passages_embeddings.passages.add_passages("passage");
+  scored_url_row.passages_embeddings.embeddings.emplace_back(
       std::vector<float>(768, 1.0f));
   scored_url_row.scores.push_back(score);
   return scored_url_row;
@@ -108,6 +110,13 @@ class HistoryEmbeddingsProviderTest : public testing::Test,
   void SetUp() override {
     testing::Test::SetUp();
 
+    os_crypt_ = os_crypt_async::GetTestOSCryptAsyncForTesting(
+        /*is_sync_for_unittests=*/true);
+
+    auto feature_parameters = history_embeddings::GetFeatureParameters();
+    feature_parameters.use_ml_answerer = false;
+    history_embeddings::SetFeatureParametersForTesting(feature_parameters);
+
     CHECK(history_dir_.CreateUniqueTempDir());
     client_ = std::make_unique<FakeAutocompleteProviderClient>();
     client_->set_history_service(
@@ -115,7 +124,9 @@ class HistoryEmbeddingsProviderTest : public testing::Test,
     client_->set_history_embeddings_service(
         std::make_unique<testing::NiceMock<
             history_embeddings::MockHistoryEmbeddingsService>>(
-            client_->GetHistoryService()));
+            os_crypt_.get(), client_->GetHistoryService(),
+            passage_embeddings_test_env_.embedder_metadata_provider(),
+            passage_embeddings_test_env_.embedder()));
     history_embeddings_service_ = static_cast<
         testing::NiceMock<history_embeddings::MockHistoryEmbeddingsService>*>(
         client_->GetHistoryEmbeddingsService());
@@ -125,11 +136,12 @@ class HistoryEmbeddingsProviderTest : public testing::Test,
     // When `Search()` is called, pushes a callback to `search_callbacks_` that
     // can be ran to simulate `Search()` responding asyncly.
     ON_CALL(*history_embeddings_service_,
-            Search(testing::_, testing::_, testing::_, testing::_, testing::_))
+            Search(testing::_, testing::_, testing::_, testing::_, testing::_,
+                   testing::_))
         .WillByDefault(
             [&](history_embeddings::SearchResult* previous_search_result,
                 std::string query, std::optional<base::Time> time_range_start,
-                size_t count,
+                size_t count, bool skip_answering,
                 history_embeddings::SearchResultCallback callback) {
               search_callbacks_.push_back(base::BindOnce(
                   [](history_embeddings::SearchResultCallback callback,
@@ -149,7 +161,9 @@ class HistoryEmbeddingsProviderTest : public testing::Test,
   }
 
   base::ScopedTempDir history_dir_;
+  std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_;
   base::test::TaskEnvironment task_environment_;
+  passage_embeddings::TestEnvironment passage_embeddings_test_env_;
   std::unique_ptr<FakeAutocompleteProviderClient> client_;
   raw_ptr<testing::NiceMock<history_embeddings::MockHistoryEmbeddingsService>>
       history_embeddings_service_;
@@ -178,18 +192,20 @@ TEST_F(HistoryEmbeddingsProviderTest, Start) {
   // When the feature is disabled, should early exit.
   EXPECT_CALL(*client_, IsHistoryEmbeddingsEnabled())
       .WillOnce(testing::Return(false));
-  EXPECT_CALL(
-      *history_embeddings_service_,
-      Search(testing::_, testing::_, testing::_, testing::_, testing::_))
+  EXPECT_CALL(*history_embeddings_service_,
+              Search(testing::_, testing::_, testing::_, testing::_, testing::_,
+                     testing::_))
       .Times(0);
   history_embeddings_provider_->Start(long_input, false);
   EXPECT_FALSE(trigger_service->GetFeatureTriggeredInSession(trigger_feature));
 
   // Short queries should be blocked.
+  auto feature_parameters = history_embeddings::GetFeatureParameters();
+  feature_parameters.search_query_minimum_word_count = 3;
+  history_embeddings::SetFeatureParametersForTesting(feature_parameters);
   base::test::ScopedFeatureList enabled_feature;
   enabled_feature.InitWithFeaturesAndParameters(
-      {{history_embeddings::kHistoryEmbeddings,
-        {{history_embeddings::kSearchQueryMinimumWordCount.name, "3"}}},
+      {{history_embeddings::kHistoryEmbeddings, {}},
 #if BUILDFLAG(IS_CHROMEOS)
        {chromeos::features::kFeatureManagementHistoryEmbedding, {{}}}
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -198,18 +214,18 @@ TEST_F(HistoryEmbeddingsProviderTest, Start) {
   EXPECT_CALL(*client_, IsHistoryEmbeddingsEnabled())
       .WillRepeatedly(testing::Return(true));
 
-  EXPECT_CALL(
-      *history_embeddings_service_,
-      Search(testing::_, testing::_, testing::_, testing::_, testing::_))
+  EXPECT_CALL(*history_embeddings_service_,
+              Search(testing::_, testing::_, testing::_, testing::_, testing::_,
+                     testing::_))
       .Times(0);
   history_embeddings_provider_->Start(short_input, false);
   EXPECT_FALSE(trigger_service->GetFeatureTriggeredInSession(trigger_feature));
   trigger_service->ResetSession();
 
   // Sync queries should be blocked.
-  EXPECT_CALL(
-      *history_embeddings_service_,
-      Search(testing::_, testing::_, testing::_, testing::_, testing::_))
+  EXPECT_CALL(*history_embeddings_service_,
+              Search(testing::_, testing::_, testing::_, testing::_, testing::_,
+                     testing::_))
       .Times(0);
   history_embeddings_provider_->Start(sync_long_input, false);
   EXPECT_FALSE(trigger_service->GetFeatureTriggeredInSession(trigger_feature));
@@ -218,7 +234,7 @@ TEST_F(HistoryEmbeddingsProviderTest, Start) {
   // Long queries should pass.
   EXPECT_CALL(*history_embeddings_service_,
               Search(testing::_, "query query query",
-                     std::optional<base::Time>{}, 3u, testing::_))
+                     std::optional<base::Time>{}, 3u, false, testing::_))
       .Times(1);
   history_embeddings_provider_->Start(long_input, false);
   EXPECT_TRUE(trigger_service->GetFeatureTriggeredInSession(trigger_feature));
@@ -306,10 +322,12 @@ TEST_F(HistoryEmbeddingsProviderTest,
 
 TEST_F(HistoryEmbeddingsProviderTest,
        Start_MultipleParallelSearchesWithIneligibleQuery) {
+  auto feature_parameters = history_embeddings::GetFeatureParameters();
+  feature_parameters.search_query_minimum_word_count = 3;
+  history_embeddings::SetFeatureParametersForTesting(feature_parameters);
   base::test::ScopedFeatureList enabled_feature;
   enabled_feature.InitWithFeaturesAndParameters(
-      {{history_embeddings::kHistoryEmbeddings,
-        {{history_embeddings::kSearchQueryMinimumWordCount.name, "3"}}},
+      {{history_embeddings::kHistoryEmbeddings, {}},
 #if BUILDFLAG(IS_CHROMEOS)
        {chromeos::features::kFeatureManagementHistoryEmbedding, {{}}}
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -346,17 +364,19 @@ TEST_F(HistoryEmbeddingsProviderTest, Start_Stop_SearchCompletesAfterStop) {
 
   // Results returned after `Stop()` should be discarded.
   std::move(search_callbacks_[0]).Run("1 1 1", u"1");
-  // TODO(crbug.com/364303536) Temporarily allow history embeddings provider to
-  //   ignore `Stop()`.
-  EXPECT_FALSE(last_update_matches_.empty());
+  EXPECT_TRUE(last_update_matches_.empty());
 }
 
 TEST_F(HistoryEmbeddingsProviderTest, Stop) {
   history_embeddings_provider_->done_ = false;
-  history_embeddings_provider_->Stop(false, false);
+
   // TODO(crbug.com/364303536) Temporarily allow history embeddings provider to
   //   ignore `Stop()`.
+  history_embeddings_provider_->Stop(false, true);
   EXPECT_FALSE(history_embeddings_provider_->done_);
+
+  history_embeddings_provider_->Stop(false, false);
+  EXPECT_TRUE(history_embeddings_provider_->done_);
 }
 
 TEST_F(HistoryEmbeddingsProviderTest, DeleteMatch) {
@@ -435,10 +455,14 @@ TEST_F(HistoryEmbeddingsProviderTest,
 
 TEST_F(HistoryEmbeddingsProviderTest,
        OnReceivedSearchResult_CreatesScopedAutocompleteAnswerMatches) {
+  auto feature_parameters = history_embeddings::GetFeatureParameters();
+  feature_parameters.answers_in_omnibox_scoped = true;
+  feature_parameters.trim_after_host_in_results = true;
+  history_embeddings::SetFeatureParametersForTesting(feature_parameters);
+
   base::test::ScopedFeatureList enabled_feature;
   enabled_feature.InitWithFeaturesAndParameters(
-      {{history_embeddings::kHistoryEmbeddings,
-        {{history_embeddings::kAnswersInOmniboxScoped.name, "true"}}},
+      {{history_embeddings::kHistoryEmbeddings, {}},
 #if BUILDFLAG(IS_CHROMEOS)
        {chromeos::features::kFeatureManagementHistoryEmbedding, {{}}}
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -453,7 +477,7 @@ TEST_F(HistoryEmbeddingsProviderTest,
   result.query = "query";
   result.scored_url_rows = {
       CreateScoredUrlRow(.75, "https://url1.com/", u"title"),
-      CreateScoredUrlRow(.50, "https://url2.com/", u"title"),
+      CreateScoredUrlRow(.50, "https://url2.com/path?key=value", u"title"),
       CreateScoredUrlRow(.25, "https://url3.com/", u"title"),
   };
   base::Time time;
@@ -477,7 +501,8 @@ TEST_F(HistoryEmbeddingsProviderTest,
       AllOf(Field(&AutocompleteMatch::relevance, 500),
             Field(&AutocompleteMatch::type,
                   AutocompleteMatchType::HISTORY_EMBEDDINGS),
-            Field(&AutocompleteMatch::destination_url, "https://url2.com/"));
+            Field(&AutocompleteMatch::destination_url,
+                  "https://url2.com/path?key=value"));
   auto expected_match_3 =
       AllOf(Field(&AutocompleteMatch::relevance, 250),
             Field(&AutocompleteMatch::type,
@@ -509,7 +534,7 @@ TEST_F(HistoryEmbeddingsProviderTest,
                       AutocompleteMatchType::HISTORY_EMBEDDINGS_ANSWER),
                 Field(&AutocompleteMatch::destination_url, ""),
                 Field(&AutocompleteMatch::history_embeddings_answer_header_text,
-                      u"Generating summary based on your browsing history"),
+                      u"Searching for a summary\x2026"),
                 Field(&AutocompleteMatch::description, u""))));
 
   // 3rd response with status `kSuccess`.
@@ -518,7 +543,7 @@ TEST_F(HistoryEmbeddingsProviderTest,
   result_success.answerer_result.query = "query";
   result_success.answerer_result.answer.set_score(1);
   result_success.answerer_result.answer.set_text("answer text");
-  result_success.answerer_result.url = "https://url2.com/";
+  result_success.answerer_result.url = "https://url2.com/path?key=value";
   history_embeddings_provider_->OnReceivedSearchResult(
       std::move(result_success));
 
@@ -538,19 +563,19 @@ TEST_F(HistoryEmbeddingsProviderTest,
                       u"Summary"),
                 Field(&AutocompleteMatch::description, u"answer text"),
                 Field(&AutocompleteMatch::contents,
-                      u"https://url2.com/  •  Visited Mar 23, 2025"))));
+                      u"url2.com  •  Visited Mar 23, 2025"))));
 
   // Test error cases.
-  std::u16string temporary_error =
+  std::u16string execution_error =
       u"Something went wrong. Please try again later.";
   std::u16string non_temporary_error = u"Sorry, I can't help you with that.";
   for (const auto& [status, expected_answer_text] : std::vector<
            std::pair<history_embeddings::ComputeAnswerStatus, std::u16string>>{
-           {kUnanswerable, non_temporary_error},
-           {kModelUnavailable, temporary_error},
-           {kExecutionFailure, temporary_error},
+           {kUnanswerable, u""},
+           {kModelUnavailable, u""},
+           {kExecutionFailure, execution_error},
            {kExecutionCancelled, u""},
-           {kFiltered, non_temporary_error}}) {
+           {kFiltered, u""}}) {
     SCOPED_TRACE("Testing status: " +
                  base::NumberToString(static_cast<int>(status)));
     auto result_error = result.Clone();

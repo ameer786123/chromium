@@ -108,8 +108,28 @@ bool InputTypeIsCancelable(InputEvent::InputType input_type) {
 
 }  // anonymous namespace
 
+/* static */ InputEvent* InputEvent::Create(v8::Isolate* isolate,
+                                            const AtomicString& type,
+                                            const InputEventInit* initializer,
+                                            ExceptionState& exception_state) {
+  InputEvent* result;
+  if (RuntimeEnabledFeatures::InputEventConstructorThrowsEnabled()) {
+    CHECK(!exception_state.HadException());
+    result =
+        MakeGarbageCollected<InputEvent>(type, initializer, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+  } else {
+    result = MakeGarbageCollected<InputEvent>(type, initializer,
+                                              IgnoreException(isolate));
+  }
+  return result;
+}
+
 InputEvent::InputEvent(const AtomicString& type,
-                       const InputEventInit* initializer)
+                       const InputEventInit* initializer,
+                       ExceptionState& exception_state)
     : UIEvent(type, initializer) {
   // TODO(ojan): We should find a way to prevent conversion like
   // String->enum->String just in order to use initializer.
@@ -125,7 +145,7 @@ InputEvent::InputEvent(const AtomicString& type,
   if (!initializer->hasTargetRanges())
     return;
   for (const auto& range : initializer->targetRanges())
-    ranges_.push_back(range->toRange());
+    ranges_.push_back(range->toRange(exception_state));
 }
 
 InputEvent::InputEvent(const AtomicString& type,
@@ -134,7 +154,7 @@ InputEvent::InputEvent(const AtomicString& type,
                        const String& data,
                        DataTransfer* data_transfer,
                        EventIsComposing is_composing,
-                       const StaticRangeVector* ranges)
+                       const GCedStaticRangeVector* ranges)
     : UIEvent(type, &init),
       input_type_(input_type),
       data_(data),
@@ -142,7 +162,7 @@ InputEvent::InputEvent(const AtomicString& type,
       is_composing_(is_composing == kIsComposing) {
   if (ranges) {
     for (const auto& range : *ranges) {
-      ranges_.push_back(range->toRange());
+      ranges_.push_back(range->toRange(ASSERT_NO_EXCEPTION));
     }
   }
 }
@@ -151,7 +171,7 @@ InputEvent::InputEvent(const AtomicString& type,
 InputEvent* InputEvent::CreateBeforeInput(InputType input_type,
                                           const String& data,
                                           EventIsComposing is_composing,
-                                          const StaticRangeVector* ranges) {
+                                          const GCedStaticRangeVector* ranges) {
   auto* event_init = UIEventInit::Create();
   event_init->setBubbles(true);
   event_init->setCancelable(InputTypeIsCancelable(input_type));
@@ -165,7 +185,7 @@ InputEvent* InputEvent::CreateBeforeInput(InputType input_type,
 InputEvent* InputEvent::CreateBeforeInput(InputType input_type,
                                           DataTransfer* data_transfer,
                                           EventIsComposing is_composing,
-                                          const StaticRangeVector* ranges) {
+                                          const GCedStaticRangeVector* ranges) {
   auto* event_init = UIEventInit::Create();
   event_init->setBubbles(true);
   event_init->setCancelable(InputTypeIsCancelable(input_type));
@@ -179,7 +199,7 @@ InputEvent* InputEvent::CreateBeforeInput(InputType input_type,
 InputEvent* InputEvent::CreateInput(InputType input_type,
                                     const String& data,
                                     EventIsComposing is_composing,
-                                    const StaticRangeVector* ranges) {
+                                    const GCedStaticRangeVector* ranges) {
   auto* event_init = UIEventInit::Create();
   event_init->setBubbles(true);
   event_init->setCancelable(false);

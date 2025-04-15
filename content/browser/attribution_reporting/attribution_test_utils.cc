@@ -10,6 +10,7 @@
 #include <optional>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
@@ -19,6 +20,8 @@
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
 #include "components/attribution_reporting/aggregatable_dedup_key.h"
 #include "components/attribution_reporting/aggregatable_filtering_id_max_bytes.h"
+#include "components/attribution_reporting/aggregatable_named_budget_candidate.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregatable_trigger_config.h"
 #include "components/attribution_reporting/aggregatable_trigger_data.h"
 #include "components/attribution_reporting/aggregatable_values.h"
@@ -36,6 +39,8 @@
 #include "components/attribution_reporting/trigger_config.h"
 #include "components/attribution_reporting/trigger_data_matching.mojom-forward.h"
 #include "components/attribution_reporting/trigger_registration.h"
+#include "content/browser/attribution_reporting/aggregatable_attribution_utils.h"
+#include "content/browser/attribution_reporting/aggregatable_named_budget_pair.h"
 #include "content/browser/attribution_reporting/attribution_observer.h"
 #include "content/browser/attribution_reporting/attribution_reporting.mojom.h"
 #include "content/browser/attribution_reporting/attribution_trigger.h"
@@ -47,9 +52,9 @@
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
 #include "net/http/structured_headers.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -261,15 +266,24 @@ SourceBuilder& SourceBuilder::SetAttributionScopesData(
   return *this;
 }
 
+SourceBuilder& SourceBuilder::SetAggregatableNamedBudgetDefs(
+    attribution_reporting::AggregatableNamedBudgetDefs budgets) {
+  registration_.aggregatable_named_budget_defs = std::move(budgets);
+  return *this;
+}
+
 StorableSource SourceBuilder::Build() const {
   StorableSource source(reporting_origin_, registration_, source_origin_,
-                        source_type_, is_within_fenced_frame_);
+                        source_type_, is_within_fenced_frame_,
+                        ukm::kInvalidSourceId);
   source.set_cookie_based_debug_allowed(cookie_based_debug_allowed_);
   return source;
 }
 
 StoredSource SourceBuilder::BuildStored() const {
   base::Time expiry_time = source_time_ + registration_.expiry;
+  StoredSource::AggregatableNamedBudgets named_budgets =
+      ConvertNamedBudgetsMap(registration_.aggregatable_named_budget_defs);
   StoredSource source = *StoredSource::Create(
       CommonSourceInfo(source_origin_, reporting_origin_, source_type_,
                        cookie_based_debug_allowed_),
@@ -283,7 +297,7 @@ StoredSource SourceBuilder::BuildStored() const {
       registration_.trigger_data_matching, registration_.event_level_epsilon,
       registration_.aggregatable_debug_reporting_config.config().key_piece,
       remaining_aggregatable_debug_budget_,
-      registration_.attribution_scopes_data);
+      registration_.attribution_scopes_data, named_budgets);
   source.dedup_keys() = dedup_keys_;
   source.aggregatable_dedup_keys() = aggregatable_dedup_keys_;
   return source;
@@ -419,6 +433,13 @@ TriggerBuilder& TriggerBuilder::SetAttributionScopes(
   return *this;
 }
 
+TriggerBuilder& TriggerBuilder::SetAggregatableNamedBudgetCandidates(
+    std::vector<attribution_reporting::AggregatableNamedBudgetCandidate>
+        budgets) {
+  aggregatable_named_budget_candidates_ = std::move(budgets);
+  return *this;
+}
+
 AttributionTrigger TriggerBuilder::Build(
     bool generate_event_trigger_data) const {
   attribution_reporting::TriggerRegistration reg;
@@ -444,9 +465,12 @@ AttributionTrigger TriggerBuilder::Build(
   reg.aggregatable_debug_reporting_config =
       aggregatable_debug_reporting_config_;
   reg.attribution_scopes = attribution_scopes_;
+  reg.aggregatable_named_budget_candidates =
+      aggregatable_named_budget_candidates_;
 
   return AttributionTrigger(reporting_origin_, std::move(reg),
-                            destination_origin_, is_within_fenced_frame_);
+                            destination_origin_, is_within_fenced_frame_,
+                            ukm::kInvalidSourceId);
 }
 
 AttributionInfoBuilder::AttributionInfoBuilder(SuitableOrigin context_origin)
@@ -659,6 +683,16 @@ std::ostream& operator<<(std::ostream& out,
 }
 
 std::ostream& operator<<(std::ostream& out,
+                         StoredSource::AggregatableNamedBudgets budgets) {
+  out << "{";
+  for (const auto& [key, value] : budgets) {
+    out << key << ": { original_budget=" << value.original_budget()
+        << ", remaining_budget=" << value.remaining_budget() << " }, ";
+  }
+  return out << "}";
+}
+
+std::ostream& operator<<(std::ostream& out,
                          const AttributionTrigger& conversion) {
   return out << "{registration=" << conversion.registration()
              << ",destination_origin=" << conversion.destination_origin()
@@ -721,6 +755,7 @@ std::ostream& operator<<(std::ostream& out, const StoredSource& source) {
               ? SerializeAttributionJson(
                     source.attribution_scopes_data()->ToJson())
               : "null")
+      << ",aggregatable_named_budgets=" << source.aggregatable_named_budgets()
       << ",dedup_keys=[";
 
   const char* separator = "";
@@ -755,7 +790,6 @@ std::ostream& operator<<(std::ostream& out,
       << ",source_event_id=" << data.source_event_id
       << ",source_type=" << data.source_type << ",source_debug_key=";
 
-
   return out << ",randomized_response_rate=" << data.randomized_response_rate
              << ",attributed_truthfully=" << data.attributed_truthfully << "}";
 }
@@ -789,7 +823,7 @@ std::ostream& operator<<(std::ostream& out,
 namespace {
 std::ostream& operator<<(std::ostream& out,
                          const AttributionReport::Data& data) {
-  absl::visit([&out](const auto& v) { out << v; }, data);
+  std::visit([&out](const auto& v) { out << v; }, data);
   return out;
 }
 }  // namespace
@@ -821,6 +855,8 @@ std::ostream& operator<<(std::ostream& out, SendResult::Status status) {
       return out << "kTransientFailure";
     case SendResult::Status::kFailure:
       return out << "kFailure";
+    case SendResult::Status::kExpired:
+      return out << "kExpired";
     case SendResult::Status::kDropped:
       return out << "kDropped";
     case SendResult::Status::kAssemblyFailure:
@@ -831,29 +867,30 @@ std::ostream& operator<<(std::ostream& out, SendResult::Status status) {
 }
 
 std::ostream& operator<<(std::ostream& out, const SendResult& info) {
-  absl::visit(base::Overloaded{
-                  [&](SendResult::Sent sent) {
-                    out << "{Sent={result=";
-                    switch (sent.result) {
-                      case SendResult::Sent::Result::kSent:
-                        out << "kSent";
-                        break;
-                      case SendResult::Sent::Result::kTransientFailure:
-                        out << "kTransientFailure";
-                        break;
-                      case SendResult::Sent::Result::kFailure:
-                        out << "kFailure";
-                        break;
-                    }
-                    out << ",status=" << sent.status << "}}";
-                  },
-                  [&](SendResult::Dropped) { out << "{Dropped={}}"; },
-                  [&](SendResult::AssemblyFailure failure) {
-                    out << "{AssemblyFailure={transient=" << failure.transient
-                        << "}}";
-                  },
-              },
-              info.result);
+  std::visit(base::Overloaded{
+                 [&](SendResult::Sent sent) {
+                   out << "{Sent={result=";
+                   switch (sent.result) {
+                     case SendResult::Sent::Result::kSent:
+                       out << "kSent";
+                       break;
+                     case SendResult::Sent::Result::kTransientFailure:
+                       out << "kTransientFailure";
+                       break;
+                     case SendResult::Sent::Result::kFailure:
+                       out << "kFailure";
+                       break;
+                   }
+                   out << ",status=" << sent.status << "}}";
+                 },
+                 [&](SendResult::Dropped) { out << "{Dropped={}}"; },
+                 [&](SendResult::Expired) { out << "{Expired={}}"; },
+                 [&](SendResult::AssemblyFailure failure) {
+                   out << "{AssemblyFailure={transient=" << failure.transient
+                       << "}}";
+                 },
+             },
+             info.result);
   return out;
 }
 

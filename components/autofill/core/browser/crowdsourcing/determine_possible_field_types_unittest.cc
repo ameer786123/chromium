@@ -4,13 +4,17 @@
 
 #include "components/autofill/core/browser/crowdsourcing/determine_possible_field_types.h"
 
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/strings/stringprintf.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/data_model/autofill_i18n_api.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "base/test/task_environment.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_i18n_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/foundations/test_autofill_client.h"
+#include "components/autofill/core/browser/geo/alternative_state_name_map_test_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
 #include "components/autofill/core/common/form_data_test_api.h"
@@ -24,7 +28,11 @@ using ::autofill::test::CreateTestFormField;
 using ::autofill::test::CreateTestSelectField;
 using ::testing::Contains;
 using ::testing::ElementsAre;
+using ::testing::IsEmpty;
+using ::testing::Matcher;
 using ::testing::Not;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAreArray;
 
 // Fakes that a `form` has been seen (without its field value) and parsed and
 // then values have been entered. Returns the resulting FormStructure.
@@ -32,8 +40,7 @@ std::unique_ptr<FormStructure> ConstructFormStructureFromFormData(
     const FormData& form) {
   auto cached_form_structure =
       std::make_unique<FormStructure>(test::WithoutValues(form));
-  cached_form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr,
-                                                 nullptr);
+  cached_form_structure->DetermineHeuristicTypes(GeoIpCountryCode(""), nullptr);
 
   auto form_structure = std::make_unique<FormStructure>(form);
   form_structure->RetrieveFromCache(
@@ -142,10 +149,12 @@ class ProfileMatchingTypesTest
       public ::testing::WithParamInterface<ProfileMatchingTypesTestCase> {
  public:
   ProfileMatchingTypesTest() {
-    features_.InitWithFeatures({features::kAutofillUseCAAddressModel,
-                                features::kAutofillUseFRAddressModel,
-                                features::kAutofillUseITAddressModel},
-                               {});
+    features_.InitWithFeatures(
+        {features::kAutofillUseFRAddressModel,
+         features::kAutofillUseNLAddressModel,
+         features::kAutofillUseNegativePatternForAllAttributes,
+         features::kAutofillSupportLastNamePrefix},
+        {});
   }
 
  protected:
@@ -158,7 +167,7 @@ const ProfileMatchingTypesTestCase kProfileMatchingTypesTestCases[] = {
     {"Elvis", {NAME_FIRST}},
     {"Aaron", {NAME_MIDDLE}},
     {"A", {NAME_MIDDLE_INITIAL}},
-    {"Presley", {NAME_LAST, NAME_LAST_SECOND}},
+    {"Presley", {NAME_LAST, NAME_LAST_SECOND, NAME_LAST_CORE}},
     {"Elvis Aaron Presley", {NAME_FULL}},
     {"theking@gmail.com", {EMAIL_ADDRESS}},
     {"RCA", {COMPANY_NAME}},
@@ -175,23 +184,13 @@ const ProfileMatchingTypesTestCase kProfileMatchingTypesTestCases[] = {
     {"12345678901", {PHONE_HOME_WHOLE_NUMBER}},
     {"+1 (234) 567-8901", {PHONE_HOME_WHOLE_NUMBER}},
     {"(234)567-8901",
-     base::FeatureList::IsEnabled(
-         features::kAutofillEnableSupportForPhoneNumberTrunkTypes)
-         ? FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER,
-                        PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}
-         : FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER}},
+     {PHONE_HOME_CITY_AND_NUMBER,
+      PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}},
     {"2345678901",
-     base::FeatureList::IsEnabled(
-         features::kAutofillEnableSupportForPhoneNumberTrunkTypes)
-         ? FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER,
-                        PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}
-         : FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER}},
+     {PHONE_HOME_CITY_AND_NUMBER,
+      PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}},
     {"1", {PHONE_HOME_COUNTRY_CODE}},
-    {"234", base::FeatureList::IsEnabled(
-                features::kAutofillEnableSupportForPhoneNumberTrunkTypes)
-                ? FieldTypeSet{PHONE_HOME_CITY_CODE,
-                               PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX}
-                : FieldTypeSet{PHONE_HOME_CITY_CODE}},
+    {"234", {PHONE_HOME_CITY_CODE, PHONE_HOME_CITY_CODE_WITH_TRUNK_PREFIX}},
     {"5678901", {PHONE_HOME_NUMBER}},
     {"567", {PHONE_HOME_NUMBER_PREFIX}},
     {"8901", {PHONE_HOME_NUMBER_SUFFIX}},
@@ -245,13 +244,10 @@ const ProfileMatchingTypesTestCase kProfileMatchingTypesTestCases[] = {
     {"Texas", {ADDRESS_HOME_STATE}},  // Saved as "TX" in profile.
 
     // Special phone number case. A profile with no country code should
-    // only match PHONE_HOME_CITY_AND_NUMBER.
+    // only match PHONE_HOME_CITY_AND_NUMBER (And the trunk prefix equivalent).
     {"5142821292",
-     base::FeatureList::IsEnabled(
-         features::kAutofillEnableSupportForPhoneNumberTrunkTypes)
-         ? FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER,
-                        PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}
-         : FieldTypeSet{PHONE_HOME_CITY_AND_NUMBER}},
+     {PHONE_HOME_CITY_AND_NUMBER,
+      PHONE_HOME_CITY_AND_NUMBER_WITHOUT_TRUNK_PREFIX}},
 
     // Make sure unsupported variants do not match.
     {"Elvis Aaron", {UNKNOWN_TYPE}},
@@ -261,6 +257,14 @@ const ProfileMatchingTypesTestCase kProfileMatchingTypesTestCases[] = {
     {"5", {UNKNOWN_TYPE}},
     {"56", {UNKNOWN_TYPE}},
     {"901", {UNKNOWN_TYPE}},
+
+    // Make sure that last name prefix and last name core is handled correctly.
+    {"Vincent Wilhelm van Gogh", {NAME_FULL}},
+    {"Vincent", {NAME_FIRST}},
+    {"Wilhelm", {NAME_MIDDLE}},
+    {"van Gogh", {NAME_LAST}},
+    {"van", {NAME_LAST_PREFIX}},
+    {"Gogh", {NAME_LAST_CORE, NAME_LAST_SECOND}},
 };
 
 // Tests that DeterminePossibleFieldTypesForUpload finds accurate possible
@@ -280,7 +284,7 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
 
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles(
-      3, AutofillProfile(i18n_model_definition::kLegacyHierarchyCountryCode));
+      4, AutofillProfile(i18n_model_definition::kLegacyHierarchyCountryCode));
 
   TestAddressFillData profile_info_data = GetElvisAddressFillData();
   profile_info_data.phone = "+1 (234) 567-8901";
@@ -298,6 +302,9 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
                        "Apt. 11", "Paris", "Île de France", "75008", "FR",
                        "+33 2 49 19 70 70");
   profiles[2].set_guid(MakeGuid(1));
+
+  test::SetProfileInfo(&profiles[3], "Vincent", "Wilhelm", "van Gogh", "NL");
+  profiles[3].set_guid(MakeGuid(4));
 
   // Set up the test credit cards.
   std::vector<CreditCard> credit_cards;
@@ -318,7 +325,7 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
       ConstructFormStructureFromFormData(form);
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
 
   ASSERT_EQ(1U, form_structure->field_count());
 
@@ -365,7 +372,7 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest, CrowdsourceCVCFieldByValue) {
   form_structure->field(0)->set_possible_types({CREDIT_CARD_NUMBER});
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, kCvc16, "en-us",
-                                       &*form_structure);
+                                       *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(
       *form_structure, 2, CREDIT_CARD_VERIFICATION_CODE,
@@ -413,7 +420,7 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   std::vector<AutofillProfile> profiles;
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 2,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -461,7 +468,7 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   std::vector<AutofillProfile> profiles;
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 2,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -508,7 +515,7 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   std::vector<AutofillProfile> profiles;
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 1,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -555,7 +562,7 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   std::vector<AutofillProfile> profiles;
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
   CheckThatNoFieldHasThisPossibleType(*form_structure,
                                       CREDIT_CARD_VERIFICATION_CODE);
 }
@@ -599,10 +606,335 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   std::vector<AutofillProfile> profiles;
 
   DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+                                       "en-us", *form_structure);
 
   CheckThatNoFieldHasThisPossibleType(*form_structure,
                                       CREDIT_CARD_VERIFICATION_CODE);
+}
+
+// Test fixture for PreProcessStateMatchingTypes().
+class PreProcessStateMatchingTypesTest : public testing::Test {
+ public:
+  void SetUp() override {
+    testing::Test::SetUp();
+    test::ClearAlternativeStateNameMapForTesting();
+    test::PopulateAlternativeStateNameMapForTesting();
+    test::SetProfileInfo(&profile_, "", "", "", "", "", "", "", "", "Bavaria",
+                         "", "DE", "");
+  }
+
+  void TearDown() override { testing::Test::TearDown(); }
+
+  TestAutofillClient& client() { return client_; }
+  AutofillProfile& profile() { return profile_; }
+
+ private:
+  base::test::TaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  test::AutofillUnitTestEnvironment autofill_test_environment_;
+  TestAutofillClient client_;
+  AutofillProfile profile_{i18n_model_definition::kLegacyHierarchyCountryCode};
+};
+
+// Tests that we properly match typed values to stored state data.
+TEST_F(PreProcessStateMatchingTypesTest, PreProcessStateMatchingTypes) {
+  const char* const kValidMatches[] = {"by", "Bavaria", "Bayern",
+                                       "BY", "B.Y",     "B-Y"};
+  for (const char* valid_match : kValidMatches) {
+    SCOPED_TRACE(valid_match);
+    FormData form;
+    form.set_fields({CreateTestFormField("Name", "Name", /*value=*/"",
+                                         FormControlType::kInputText),
+                     CreateTestFormField("State", "state", /*value=*/"",
+                                         FormControlType::kInputText)});
+
+    FormStructure form_structure(form);
+    ASSERT_EQ(form_structure.field_count(), 2U);
+    form_structure.fields()[0]->set_value(u"Test");
+    form_structure.fields()[1]->set_value(base::UTF8ToUTF16(valid_match));
+    if (base::FeatureList::IsEnabled(features::kAutofillFixValueSemantics)) {
+      // If kAutofillFixValueSemantics is disabled, there's no distinction
+      // between the current and initial value.
+      ASSERT_EQ(form_structure.fields()[0]->value(ValueSemantics::kInitial),
+                u"");
+      ASSERT_EQ(form_structure.fields()[1]->value(ValueSemantics::kInitial),
+                u"");
+    }
+
+    PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
+    EXPECT_TRUE(form_structure.field(1)->state_is_a_matching_type());
+  }
+
+  const char* const kInvalidMatches[] = {"Garbage", "BYA",   "BYA is a state",
+                                         "Bava",    "Empty", ""};
+  for (const char* invalid_match : kInvalidMatches) {
+    SCOPED_TRACE(invalid_match);
+    FormData form;
+    form.set_fields({CreateTestFormField("Name", "Name", "Test",
+                                         FormControlType::kInputText),
+                     CreateTestFormField("State", "state", invalid_match,
+                                         FormControlType::kInputText)});
+
+    FormStructure form_structure(form);
+    EXPECT_EQ(form_structure.field_count(), 2U);
+
+    PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
+    EXPECT_FALSE(form_structure.field(1)->state_is_a_matching_type());
+  }
+
+  test::PopulateAlternativeStateNameMapForTesting(
+      "US", "California",
+      {{.canonical_name = "California",
+        .abbreviations = {"CA"},
+        .alternative_names = {}}});
+
+  test::SetProfileInfo(&profile(), "", "", "", "", "", "", "", "", "California",
+                       "", "US", "");
+
+  FormData form;
+  form.set_fields({CreateTestFormField("Name", "Name", /*value=*/"",
+                                       FormControlType::kInputText),
+                   CreateTestFormField("State", "state", /*value=*/"",
+                                       FormControlType::kInputText)});
+
+  FormStructure form_structure(form);
+  ASSERT_EQ(form_structure.field_count(), 2U);
+  form_structure.fields()[0]->set_value(u"Test");
+  form_structure.fields()[1]->set_value(u"CA");
+  if (base::FeatureList::IsEnabled(features::kAutofillFixValueSemantics)) {
+    // If kAutofillFixValueSemantics is disabled, there's no distinction between
+    // the current and initial value.
+    ASSERT_EQ(form_structure.fields()[0]->value(ValueSemantics::kInitial), u"");
+    ASSERT_EQ(form_structure.fields()[1]->value(ValueSemantics::kInitial), u"");
+  }
+
+  PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
+  EXPECT_TRUE(form_structure.field(1)->state_is_a_matching_type());
+}
+
+// Test fixture for DeterminePossibleFormatStringsForUpload().
+class DeterminePossibleFormatStringsForUploadTest : public testing::Test {
+ public:
+  DeterminePossibleFormatStringsForUploadTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kAutofillAiVoteForFormatStringsFromSingleFields,
+         features::kAutofillAiVoteForFormatStringsFromMultipleFields},
+        {});
+  }
+
+  static std::unique_ptr<AutofillField> CreateInput(
+      std::string_view value,
+      FormControlType form_control_type = FormControlType::kInputText) {
+    auto field = std::make_unique<AutofillField>(CreateTestFormField(
+        /*label=*/"", /*name=*/"", /*value=*/value, form_control_type));
+    field->set_is_user_edited(true);
+    return field;
+  }
+
+  static std::unique_ptr<AutofillField> CreateSelect(
+      std::string_view value,
+      const std::vector<const char*>& values) {
+    auto field = std::make_unique<AutofillField>(CreateTestSelectField(
+        /*label=*/"", /*name=*/"", /*value=*/value, /*values=*/values,
+        /*contents=*/values));
+    field->set_is_user_edited(true);
+    return field;
+  }
+
+ private:
+  test::AutofillUnitTestEnvironment autofill_test_environment_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Tests that non-text <input> do not match any format string.
+TEST_F(DeterminePossibleFormatStringsForUploadTest, InputNonText) {
+  using enum FormControlType;
+  EXPECT_THAT(DeterminePossibleFormatStringsForUpload({
+                  CreateInput("2025-12-31", kInputDate),
+                  CreateInput("2025-12", kInputMonth),
+                  CreateInput("2025-12-31", kInputNumber),
+                  CreateInput("2025-12-31", kInputPassword),
+                  CreateInput("2025-12-31", kInputSearch),
+                  CreateInput("2025-12-31", kInputUrl),
+              }),
+              IsEmpty());
+}
+
+struct DateSingleTextParam {
+  std::string ToString() const {
+    return base::StrCat({"value: ", value, "\n",  //
+                         "formats: [", base::JoinString(format_strings, ", "),
+                         "]"});
+  }
+
+  std::string_view value;
+  std::vector<std::string_view> format_strings;
+};
+
+// Test fixture for a single <input type=text> whose value may be a complete
+// date.
+class DeterminePossibleFormatStringsForUploadTest_SingleTextInput
+    : public DeterminePossibleFormatStringsForUploadTest,
+      public testing::WithParamInterface<DateSingleTextParam> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    DeterminePossibleFormatStringsForUploadTest_SingleTextInput,
+    testing::ValuesIn(std::vector<DateSingleTextParam>{
+        {"2025-12-31", {"YYYY-MM-DD", "YYYY-M-D"}},
+        {"31/12/2025", {"DD/MM/YYYY", "D/M/YYYY"}},
+        {"31.12.2025", {"DD.MM.YYYY", "D.M.YYYY"}},
+        {"31-01-2025", {"DD-MM-YYYY"}},
+        {"31-31-2025", {}},
+        {"31012025", {"DDMMYYYY"}},
+        {"12/12/12",
+         {"DD/MM/YY", "MM/DD/YY", "YY/MM/DD", "D/M/YY", "M/D/YY", "YY/M/D"}},
+        {"31/12/12", {"DD/MM/YY", "YY/MM/DD", "D/M/YY", "YY/M/D"}},
+        {"12/13/12", {"MM/DD/YY", "M/D/YY"}},
+        {"12/12/32", {"DD/MM/YY", "MM/DD/YY", "D/M/YY", "M/D/YY"}},
+        {"13/13/12", {}},
+        {"foobar", {}},
+    }));
+
+// Tests that the values of <input type=text> match certain format strings.
+TEST_P(DeterminePossibleFormatStringsForUploadTest_SingleTextInput,
+       SingleTextInput) {
+  SCOPED_TRACE(testing::Message() << "Values are:\n" << GetParam().ToString());
+  std::unique_ptr<AutofillField> field = CreateInput(GetParam().value);
+  if (GetParam().format_strings.empty()) {
+    EXPECT_THAT(
+        DeterminePossibleFormatStringsForUpload(base::span_from_ref(field)),
+        IsEmpty());
+  } else {
+    EXPECT_THAT(
+        DeterminePossibleFormatStringsForUpload(base::span_from_ref(field)),
+        ElementsAre(Pair(field->global_id(),
+                         UnorderedElementsAreArray(base::ToVector(
+                             GetParam().format_strings, [](std::string_view s) {
+                               return base::UTF8ToUTF16(s);
+                             })))));
+  }
+}
+
+struct DateMultipleTextParam {
+  struct Field {
+    std::string ToString() const {
+      return base::StrCat({"- label: ", label, "\n",  //
+                           "  value: ", value, "\n",  //
+                           "  format strings: [",
+                           base::JoinString(format_strings, ", "), "]"});
+    }
+
+    std::string_view label;
+    std::string_view value;
+    std::vector<std::string_view> format_strings;
+  };
+
+  std::string ToString() const {
+    return base::JoinString(base::ToVector(fields, &Field::ToString), "\n");
+  }
+
+  std::vector<Field> fields;
+};
+
+// Test fixture for a sequences of <input type=text> whose combined values may
+// be a complete date.
+class DeterminePossibleFormatStringsForUploadTest_MultipleTextInput
+    : public DeterminePossibleFormatStringsForUploadTest,
+      public testing::WithParamInterface<DateMultipleTextParam> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    DeterminePossibleFormatStringsForUploadTest_MultipleTextInput,
+    testing::ValuesIn(std::vector<DateMultipleTextParam>{
+        {{{"Date", "2025", {"YYYY"}},
+          {"Date", "12", {"MM", "M"}},
+          {"Date", "31", {"DD", "D"}}}},
+        {{{"Date", "31", {"DD", "D"}},
+          {"/", "12", {"MM", "M"}},
+          {"/", "2025", {"YYYY"}}}},
+        {{{"Date", "31", {"DD", "D"}},
+          {".", "12", {"MM", "M"}},
+          {".", "2025", {"YYYY"}}}},
+        {{{"Date", "31", {"DD", "D"}},
+          {".", "12", {"MM", "M"}},
+          {".", "2025", {"YYYY"}}}},
+        {{{"Date", "31", {"DD"}},
+          {"Date", "01", {"MM"}},
+          {"Date", "2025", {"YYYY"}}}},
+        {{{"Date", "31", {}}, {"Date", "31", {}}, {"Date", "2025", {}}}},
+        {{{"Date", "12", {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {"DD", "D", "MM", "M"}},
+          {"Date", "12", {"DD", "D", "YY"}}}},
+        {{{"Date", "31", {"DD", "D", "YY"}},
+          {"Date", "12", {"MM", "M"}},
+          {"Date", "12", {"DD", "D", "YY"}}}},
+        {{{"Date", "12", {"MM", "M"}},
+          {"Date", "13", {"DD", "D"}},
+          {"Date", "12", {"YY"}}}},
+        {{{"Date", "12", {"DD", "D", "MM", "M"}},
+          {"Date", "12", {"DD", "D", "MM", "M"}},
+          {"Date", "32", {"YY"}}}},
+        {{{"Date", "13", {}}, {"Date", "13", {}}, {"Date", "12", {}}}},
+        {{{"Date", "1", {}},
+          {"Date", "2025", {"YYYY"}},
+          {"Date", "12", {"MM", "M"}},
+          {"Date", "31", {"DD", "D"}}}},
+        {{{"Date", "12", {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {"DD", "D", "YY"}}}},
+        {{{"Date", "31", {}},
+          {"Something else", "12", {}},
+          {"Something completely different", "2025", {}}}},
+        {{{"Date", "1", {}},
+          {"Date", "1", {}},
+          {"Date", "1", {}},
+          {"Date", "1", {}}}},
+        {{{"Date", "123", {}},
+          {"Date", "123", {}},
+          {"Date", "123", {}},
+          {"Date", "123", {}}}},
+        {{{"Date", "ash", {}},
+          {"Date", "sho", {}},
+          {"Date", "hte", {}},
+          {"Date", "tne", {}},
+          {"Date", "neo", {}}}}}));
+
+// Tests that the combined values of sequences of <input type=text> match
+// certain format strings. For example,
+//   <input type=text value=31>
+//   <input type=text value=12>
+//   <input type=text value=2025>
+// represents the date 31/12/2025 and the resulting format strings for the
+// three fields should be DD od D, MM or M, and YYYY, respectively.
+TEST_P(DeterminePossibleFormatStringsForUploadTest_MultipleTextInput,
+       MultipleTextInput) {
+  SCOPED_TRACE(testing::Message() << "Fields are:\n" << GetParam().ToString());
+  std::vector<std::unique_ptr<AutofillField>> fields = base::ToVector(
+      GetParam().fields, [](const DateMultipleTextParam::Field& field) {
+        std::unique_ptr<AutofillField> f = CreateInput(field.value);
+        f->set_label(base::UTF8ToUTF16(field.label));
+        return f;
+      });
+
+  std::vector<Matcher<std::pair<FieldGlobalId, base::flat_set<std::u16string>>>>
+      expectations;
+  for (size_t i = 0; i < GetParam().fields.size(); ++i) {
+    std::vector<std::u16string> format_strings =
+        base::ToVector(GetParam().fields[i].format_strings,
+                       [](std::string_view format_string) {
+                         return base::UTF8ToUTF16(format_string);
+                       });
+    if (!format_strings.empty()) {
+      expectations.emplace_back(
+          Pair(fields[i]->global_id(),
+               UnorderedElementsAreArray(std::move(format_strings))));
+    }
+  }
+
+  EXPECT_THAT(DeterminePossibleFormatStringsForUpload(fields),
+              UnorderedElementsAreArray(expectations));
 }
 
 }  // namespace

@@ -28,7 +28,16 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/browsing_data/core/cookie_or_cache_deletion_choice.h"
+#include "components/fingerprinting_protection_filter/interventions/common/interventions_features.h"
+#include "content/browser/browser_context_impl.h"
 #include "content/browser/browsing_data/browsing_data_filter_builder_impl.h"
+#include "content/browser/btm/btm_service_impl.h"
+#include "content/browser/btm/btm_utils.h"
+#include "content/browser/fingerprinting_protection/canvas_noise_token_data.h"
+#include "content/browser/preloading/prefetch/prefetch_features.h"
+#include "content/browser/preloading/prefetch/prefetch_service.h"
+#include "content/browser/preloading/prefetch/prefetch_status.h"
+#include "content/browser/preloading/prerender/prerender_host_registry.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -43,6 +52,7 @@
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/storage_partition_config.h"
+#include "content/public/common/content_client.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
@@ -459,12 +469,7 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_SHADER_CACHE;
   }
-  if (remove_mask & DATA_TYPE_MEDIA_LICENSES ||
-      // TODO(crbug.com/40264778): For now, media licenses are part of the quota
-      // management system. If all DOM storage types are being removed, remove
-      // media licenses as well. When bug is resolved, this condition can be
-      // removed.
-      (remove_mask & DATA_TYPE_DOM_STORAGE) == DATA_TYPE_DOM_STORAGE) {
+  if (remove_mask & DATA_TYPE_MEDIA_LICENSES) {
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_MEDIA_LICENSES;
   }
@@ -492,9 +497,17 @@ void BrowsingDataRemoverImpl::RemoveImpl(
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_INTEREST_GROUPS_INTERNAL;
   }
+  if (remove_mask & DATA_TYPE_INTEREST_GROUPS_USER_CLEAR) {
+    storage_partition_remove_mask |=
+        StoragePartition::REMOVE_DATA_MASK_INTEREST_GROUPS_USER_CLEAR;
+  }
   if (remove_mask & DATA_TYPE_SHARED_STORAGE) {
     storage_partition_remove_mask |=
         StoragePartition::REMOVE_DATA_MASK_SHARED_STORAGE;
+  }
+  if (remove_mask & DATA_TYPE_DEVICE_BOUND_SESSIONS) {
+    storage_partition_remove_mask |=
+        StoragePartition::REMOVE_DATA_MASK_DEVICE_BOUND_SESSIONS;
   }
 
   if (storage_partition_remove_mask) {
@@ -597,11 +610,22 @@ void BrowsingDataRemoverImpl::RemoveImpl(
 
     // Clears the BFCache entries that match the removal filter for the current
     // browser context.
+    // Clears the Prerender and Prefetch Cache for the current browser context.
     auto storage_key_filter = filter_builder->BuildStorageKeyFilter();
     for (WebContentsImpl* web_contents : WebContentsImpl::GetAllWebContents()) {
       if (web_contents->GetBrowserContext() == browser_context_) {
         web_contents->GetController().GetBackForwardCache().Flush(
             storage_key_filter);
+        web_contents->GetPrerenderHostRegistry()->CancelHostsByOriginFilter(
+            storage_key_filter, PrerenderFinalStatus::kBrowsingDataRemoved);
+        if (base::FeatureList::IsEnabled(
+                features::kPrefetchBrowsingDataRemoval)) {
+          PrefetchService* prefetch_service =
+              BrowserContextImpl::From(browser_context_)->GetPrefetchService();
+          prefetch_service->EvictPrefetchesForBrowsingDataRemoval(
+              storage_key_filter,
+              PrefetchStatus::kPrefetchEvictedAfterBrowsingDataRemoved);
+        }
       }
     }
   }
@@ -651,8 +675,7 @@ void BrowsingDataRemoverImpl::RemoveImpl(
 
   //////////////////////////////////////////////////////////////////////////////
   // Auth cache.
-  if ((remove_mask & DATA_TYPE_COOKIES) &&
-      !(remove_mask & DATA_TYPE_AVOID_CLOSING_CONNECTIONS)) {
+  if (remove_mask & DATA_TYPE_COOKIES) {
     storage_partition->GetNetworkContext()->ClearHttpAuthCache(
         delete_begin_.is_null() ? base::Time::Min() : delete_begin_,
         delete_end_.is_null() ? base::Time::Max() : delete_end_,
@@ -672,6 +695,39 @@ void BrowsingDataRemoverImpl::RemoveImpl(
           CreateTaskCompletionClosureForMojo(
               TracingDataType::kSharedDictionary));
     }
+  }
+
+  // Different types of DIPS events are cleared for DATA_TYPE_HISTORY and
+  // DATA_TYPE_COOKIES.
+  BtmEventRemovalType dips_mask = BtmEventRemovalType::kNone;
+  if ((remove_mask & DATA_TYPE_COOKIES) &&
+      !filter_builder->PartitionedCookiesOnly()) {
+    dips_mask |= BtmEventRemovalType::kStorage;
+  }
+  if (GetContentClient()->browser()->ShouldDipsDeleteInteractionRecords(
+          remove_mask)) {
+    dips_mask |= BtmEventRemovalType::kHistory;
+  }
+
+  if (dips_mask != BtmEventRemovalType::kNone) {
+    if (BtmServiceImpl* dips_service = BtmServiceImpl::Get(browser_context_)) {
+      dips_service->RemoveEvents(delete_begin_, delete_end_,
+                                 filter_builder->BuildNetworkServiceFilter(),
+                                 dips_mask);
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Regenerate CanvasNoiseToken:
+  // Renegerate the noise token for canvas noising. Because these noise tokens
+  // are linked to the profile, it can be used to identify users. As such,
+  // regeneration of the randomized token must occur to prevent creating a
+  // stable identifier.
+  if (remove_mask & DATA_TYPE_COOKIES &&
+      base::FeatureList::IsEnabled(
+          fingerprinting_protection_interventions::features::kCanvasNoise) &&
+      filter_builder->MatchesMostOriginsAndDomains()) {
+    content::CanvasNoiseTokenData::SetNewToken(browser_context_);
   }
 
   //////////////////////////////////////////////////////////////////////////////

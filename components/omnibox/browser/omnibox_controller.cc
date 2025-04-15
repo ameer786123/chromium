@@ -18,6 +18,7 @@
 #include "components/omnibox/browser/omnibox_popup_view.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
 #include "components/omnibox/browser/page_classification_functions.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/search_engines/template_url_starter_pack_data.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -56,6 +57,8 @@ OmniboxController::OmniboxController(
   }
 }
 
+constexpr bool is_ios = !!BUILDFLAG(IS_IOS);
+
 OmniboxController::~OmniboxController() = default;
 
 void OmniboxController::StartAutocomplete(
@@ -77,28 +80,27 @@ void OmniboxController::StartZeroSuggestPrefetch() {
   TRACE_EVENT0("omnibox", "OmniboxController::StartZeroSuggestPrefetch");
   auto page_classification =
       client_->GetPageClassification(/*is_prefetch=*/true);
+
+  // TODO(crbug.com/406826913): Remove this check from OmniboxController and
+  // fix associated tests.
   if (!OmniboxFieldTrial::IsZeroSuggestPrefetchingEnabledInContext(
-          page_classification)) {
+          page_classification) &&
+      !omnibox_feature_configs::OmniboxUrlSuggestionsOnFocus::Get()
+           .MostVisitedPrefetchingEnabled()) {
     return;
   }
-
-  const bool is_ntp_page = omnibox::IsNTPPage(page_classification);
-  const bool interaction_clobber_focus_type = base::FeatureList::IsEnabled(
-      omnibox::kOmniboxOnClobberFocusTypeOnContent);
 
   GURL current_url = client_->GetURL();
   std::u16string text = base::UTF8ToUTF16(current_url.spec());
 
-  if (is_ntp_page || interaction_clobber_focus_type) {
+  if (omnibox::IsNTPPage(page_classification) || !is_ios) {
     text.clear();
   }
 
   AutocompleteInput input(text, page_classification,
                           client_->GetSchemeClassifier());
   input.set_current_url(current_url);
-  input.set_focus_type(interaction_clobber_focus_type && !is_ntp_page
-                           ? metrics::OmniboxFocusType::INTERACTION_CLOBBER
-                           : metrics::OmniboxFocusType::INTERACTION_FOCUS);
+  input.set_focus_type(metrics::OmniboxFocusType::INTERACTION_FOCUS);
   autocomplete_controller_->StartPrefetch(input);
 }
 
@@ -115,11 +117,10 @@ void OmniboxController::OnResultChanged(AutocompleteController* controller,
       edit_model_->OnCurrentMatchChanged();
     } else {
       edit_model_->OnPopupResultChanged();
-      edit_model_->OnPopupDataChanged(std::u16string(),
-                                      /*is_temporary_text=*/false,
-                                      std::u16string(), std::u16string(),
-                                      std::u16string(), std::u16string(), false,
-                                      std::u16string(), AutocompleteMatch());
+      edit_model_->OnPopupDataChanged(
+          std::u16string(),
+          /*is_temporary_text=*/false, std::u16string(), std::u16string(),
+          std::u16string(), false, std::u16string(), AutocompleteMatch());
     }
   } else {
     edit_model_->OnPopupResultChanged();
@@ -175,7 +176,7 @@ bool OmniboxController::IsSuggestionHidden(
     const AutocompleteMatch& match) const {
   if (OmniboxFieldTrial::IsStarterPackExpansionEnabled() &&
       match.from_keyword) {
-    TemplateURL* turl =
+    const TemplateURL* turl =
         match.GetTemplateURL(client_->GetTemplateURLService(), false);
     if (turl &&
         turl->starter_pack_id() == TemplateURLStarterPackData::kGemini) {
@@ -202,8 +203,13 @@ void OmniboxController::SetSuggestionGroupHidden(
 }
 
 void OmniboxController::SetRichSuggestionBitmap(int result_index,
+                                                const GURL& icon_url,
                                                 const SkBitmap& bitmap) {
-  edit_model_->SetPopupRichSuggestionBitmap(result_index, bitmap);
+  if (!icon_url.is_empty()) {
+    edit_model_->SetIconBitmap(icon_url, bitmap);
+  } else {
+    edit_model_->SetPopupRichSuggestionBitmap(result_index, bitmap);
+  }
 }
 
 void OmniboxController::OnSuggestionGroupVisibilityPrefChanged() {

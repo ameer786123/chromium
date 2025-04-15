@@ -4,17 +4,18 @@
 
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_utils_ios.h"
 
+#import <algorithm>
 #import <iterator>
 #import <memory>
 #import <string>
 #import <vector>
 
-#import "base/ranges/algorithm.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/time/time.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_node.h"
+#import "components/sync/base/user_selectable_type.h"
 #import "components/sync/test/test_sync_service.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_ios_unit_test_support.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
@@ -29,8 +30,8 @@ using bookmarks::BookmarkNode;
 std::vector<std::u16string> GetBookmarkTitles(
     const std::vector<std::unique_ptr<BookmarkNode>>& nodes) {
   std::vector<std::u16string> result;
-  base::ranges::transform(nodes, std::back_inserter(result),
-                          [](const auto& node) { return node->GetTitle(); });
+  std::ranges::transform(nodes, std::back_inserter(result),
+                         [](const auto& node) { return node->GetTitle(); });
   return result;
 }
 
@@ -251,7 +252,7 @@ TEST_F(BookmarkIOSUtilsUnitTest, TestVisibleNonDescendantNodes) {
       obstructions, bookmark_model_, BookmarkStorageType::kLocalOrSyncable);
   ASSERT_EQ(13u, result.size());
 
-  EXPECT_EQ(result[0]->GetTitle(), u"Mobile Bookmarks");
+  EXPECT_EQ(result[0]->GetTitle(), u"Mobile bookmarks");
   EXPECT_EQ(result[1]->GetTitle(), u"animals");
   EXPECT_EQ(result[2]->GetTitle(), u"camel");
   EXPECT_EQ(result[3]->GetTitle(), u"al paca");
@@ -262,7 +263,7 @@ TEST_F(BookmarkIOSUtilsUnitTest, TestVisibleNonDescendantNodes) {
   EXPECT_EQ(result[8]->GetTitle(), u"f31");
   EXPECT_EQ(result[9]->GetTitle(), u"opeth");
   EXPECT_EQ(result[10]->GetTitle(), u"pop");
-  EXPECT_EQ(result[11]->GetTitle(), u"Other Bookmarks");
+  EXPECT_EQ(result[11]->GetTitle(), u"Other bookmarks");
   EXPECT_EQ(result[12]->GetTitle(), u"buildings");
 }
 
@@ -391,35 +392,16 @@ TEST_F(BookmarkIOSUtilsUnitTest, TestMissingNodes) {
 // Tests returned values from `IsAccountBookmarkStorageOptedIn()`.
 TEST_F(BookmarkIOSUtilsUnitTest, IsAccountBookmarkStorageOptedIn) {
   syncer::TestSyncService sync_service;
-
-  // If the user is signed out, `IsAccountBookmarkStorageOptedIn()` should
-  // always return false.
+  sync_service.SetSignedOut();
   EXPECT_FALSE(IsAccountBookmarkStorageOptedIn(&sync_service));
 
-  // If sync-the-feature is on, including bookmarks,
-  // `IsAccountBookmarkStorageOptedIn()` should always return false.
-  sync_service.SetSignedIn(signin::ConsentLevel::kSync);
-  sync_service.GetUserSettings()->SetSelectedTypes(
-      /*sync_everything=*/true, /*types=*/syncer::UserSelectableTypeSet());
-  EXPECT_FALSE(IsAccountBookmarkStorageOptedIn(&sync_service));
-
-  // If sync-the-feature is on, but bookmarks excluded,
-  // `IsAccountBookmarkStorageOptedIn()` should always return false.
-  sync_service.GetUserSettings()->SetSelectedTypes(
-      /*sync_everything=*/false, /*types=*/syncer::UserSelectableTypeSet());
-  EXPECT_FALSE(IsAccountBookmarkStorageOptedIn(&sync_service));
-
-  // If sync-the-feature is off and the account storage is enabled,
-  // `IsAccountBookmarkStorageOptedIn()` should return true.
   sync_service.SetSignedIn(signin::ConsentLevel::kSignin);
-  sync_service.GetUserSettings()->SetSelectedTypes(
-      /*sync_everything=*/true, /*types=*/syncer::UserSelectableTypeSet());
+  ASSERT_TRUE(sync_service.GetUserSettings()->GetSelectedTypes().Has(
+      syncer::UserSelectableType::kBookmarks));
   EXPECT_TRUE(IsAccountBookmarkStorageOptedIn(&sync_service));
 
-  // If sync-the-feature is off and the account storage is not enabled,
-  // `IsAccountBookmarkStorageOptedIn()` should return false.
-  sync_service.GetUserSettings()->SetSelectedTypes(
-      /*sync_everything=*/false, /*types=*/syncer::UserSelectableTypeSet());
+  sync_service.GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kBookmarks, false);
   EXPECT_FALSE(IsAccountBookmarkStorageOptedIn(&sync_service));
 }
 

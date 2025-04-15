@@ -68,12 +68,12 @@ BirchModel::BirchModel()
       release_notes_data_(prefs::kBirchUseReleaseNotes, "ReleaseNotes"),
       weather_data_(prefs::kBirchUseWeather, "Weather"),
       coral_data_(prefs::kBirchUseCoral, "Coral"),
-      icon_cache_(std::make_unique<BirchIconCache>()) {
-  if (features::IsBirchWeatherEnabled()) {
-    weather_provider_ = std::make_unique<BirchWeatherProvider>(this);
-  }
+      icon_cache_(std::make_unique<BirchIconCache>()),
+      weather_provider_(std::make_unique<BirchWeatherProvider>(this)) {
   if (features::IsCoralFeatureEnabled()) {
-    coral_provider_ = std::make_unique<BirchCoralProvider>(this);
+    auto coral_provider = std::make_unique<BirchCoralProvider>();
+    coral_provider->AddObserver(this);
+    coral_provider_ = std::move(coral_provider);
   }
   Shell::Get()->session_controller()->AddObserver(this);
   SimpleGeolocationProvider::GetInstance()->AddObserver(this);
@@ -100,7 +100,7 @@ void BirchModel::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kBirchUseLostMedia, true);
   registry->RegisterBooleanPref(prefs::kBirchUseWeather, true);
   registry->RegisterBooleanPref(prefs::kBirchUseReleaseNotes, true);
-  // TODO(yulunwu): Change this to false once there is a way to opt-in.
+  // TODO(zxdan): Change this to false once there is a way to opt-in.
   registry->RegisterBooleanPref(prefs::kBirchUseCoral, true);
   // NOTE: If you add a pref here, also update birch_browsertest.cc and
   // birch_model_unittest.cc which have code that disables all prefs.
@@ -539,6 +539,8 @@ void BirchModel::RemoveItem(BirchItem* item) {
       birch_client_->RemoveFileItemFromLauncher(file_item->file_path());
     }
   }
+
+  // Coral items must be filtered in `BirchCoralProvider`.
   if (item->GetType() == BirchItemType::kCoral) {
     BirchCoralProvider::Get()->RemoveGroup(
         static_cast<BirchCoralItem*>(item)->group_id());
@@ -594,6 +596,23 @@ void BirchModel::OnGeolocationPermissionChanged(bool enabled) {
   if (!enabled) {
     weather_data_.items.clear();
     weather_data_.is_fresh = false;
+  }
+}
+
+void BirchModel::OnCoralGroupRemoved(const base::Token& group_id) {
+  std::erase_if(coral_data_.items, [&group_id](const BirchCoralItem& item) {
+    return item.group_id() == group_id;
+  });
+}
+
+void BirchModel::OnCoralGroupTitleUpdated(const base::Token& group_id,
+                                          const std::string& title) {
+  auto it = std::find_if(coral_data_.items.begin(), coral_data_.items.end(),
+                         [&group_id](const BirchCoralItem& item) {
+                           return item.group_id() == group_id;
+                         });
+  if (it != coral_data_.items.end() && !title.empty()) {
+    it->set_title(base::UTF8ToUTF16(title));
   }
 }
 

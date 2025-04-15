@@ -14,13 +14,11 @@ import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import type {FocusConfig} from '../focus_config.js';
-import {HatsBrowserProxyImpl, TrustSafetyInteraction} from '../hats_browser_proxy.js';
 import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 import {routes} from '../route.js';
-import type {Route} from '../router.js';
-import {RouteObserverMixin, Router} from '../router.js';
+import {Router} from '../router.js';
 
 import {getTemplate} from './privacy_sandbox_page.html.js';
 
@@ -31,7 +29,7 @@ export interface SettingsPrivacySandboxPageElement {
 }
 
 const SettingsPrivacySandboxPageElementBase =
-    RouteObserverMixin(I18nMixin(PrefsMixin(PolymerElement)));
+    I18nMixin(PrefsMixin(PolymerElement));
 
 export class SettingsPrivacySandboxPageElement extends
     SettingsPrivacySandboxPageElementBase {
@@ -45,14 +43,6 @@ export class SettingsPrivacySandboxPageElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       focusConfig: {
         type: Object,
         observer: 'focusConfigChanged_',
@@ -72,17 +62,11 @@ export class SettingsPrivacySandboxPageElement extends
     };
   }
 
-  focusConfig: FocusConfig;
-  private isPrivacySandboxRestricted_: boolean;
+  declare focusConfig: FocusConfig;
+  declare private isPrivacySandboxRestricted_: boolean;
+  declare private measurementLinkRowClass_: string;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
-
-  override currentRouteChanged(newRoute: Route) {
-    if (newRoute === routes.PRIVACY_SANDBOX) {
-      HatsBrowserProxyImpl.getInstance().trustSafetyInteractionOccurred(
-          TrustSafetyInteraction.OPENED_AD_PRIVACY);
-    }
-  }
 
   private focusConfigChanged_(_newConfig: FocusConfig, oldConfig: FocusConfig) {
     assert(!oldConfig);

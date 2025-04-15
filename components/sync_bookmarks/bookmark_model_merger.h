@@ -14,6 +14,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
+#include "components/sync/base/previously_syncing_gaia_id_info_for_metrics.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/engine/commit_and_get_updates_types.h"
 
@@ -41,7 +42,9 @@ class BookmarkModelMerger {
   BookmarkModelMerger(syncer::UpdateResponseDataList updates,
                       BookmarkModelView* bookmark_model,
                       favicon::FaviconService* favicon_service,
-                      SyncedBookmarkTracker* bookmark_tracker);
+                      SyncedBookmarkTracker* bookmark_tracker,
+                      syncer::PreviouslySyncingGaiaIdInfoForMetrics
+                          previously_syncing_gaia_id_info);
 
   BookmarkModelMerger(const BookmarkModelMerger&) = delete;
   BookmarkModelMerger& operator=(const BookmarkModelMerger&) = delete;
@@ -151,6 +154,12 @@ class BookmarkModelMerger {
   void MergeSubtree(const bookmarks::BookmarkNode* local_node,
                     const RemoteTreeNode& remote_node);
 
+  // Makes a second pass on previously-merged subtree to detect if any of the
+  // remote updates are lacking a client tag hash. If so, it migrates the entity
+  // by issuing a deletion and a creation, using a new random GUID.
+  void MigrateBookmarksInSubtreeWithoutClientTagHash(
+      const RemoteTreeNode& remote_node);
+
   // Updates |local_node| to hold same UUID and semantics as its |remote_node|
   // match. The input nodes are two equivalent local and remote bookmarks that
   // are about to be merged. The output node is the potentially replaced
@@ -222,6 +231,8 @@ class BookmarkModelMerger {
   const raw_ptr<BookmarkModelView> bookmark_model_;
   const raw_ptr<favicon::FaviconService> favicon_service_;
   const raw_ptr<SyncedBookmarkTracker> bookmark_tracker_;
+  const syncer::PreviouslySyncingGaiaIdInfoForMetrics
+      previously_syncing_gaia_id_info_;
   const size_t remote_updates_size_;
   // Preprocessed remote nodes in the form a forest where each tree's root is a
   // permanent node. Computed upon construction via BuildRemoteForest().

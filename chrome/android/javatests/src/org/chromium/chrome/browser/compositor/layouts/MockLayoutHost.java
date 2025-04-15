@@ -7,16 +7,19 @@ package org.chromium.chrome.browser.compositor.layouts;
 import android.content.Context;
 import android.graphics.RectF;
 
+import androidx.annotation.NonNull;
+
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
+import org.chromium.chrome.browser.layouts.SceneOverlay;
 import org.chromium.ui.resources.ResourceManager;
 
 /**
  * The {@link LayoutManagerHost} usually is based on a {@link android.view.View}. This
  * implementation is stripped down with static sizes but still support 2 different orientations.
  */
-class MockLayoutHost implements LayoutManagerHost, LayoutRenderHost {
+public class MockLayoutHost implements LayoutManagerHost, LayoutRenderHost {
 
     public static final int LAYOUT_HOST_PORTRAIT_WIDTH = 320; // dp
     public static final int LAYOUT_HOST_PORTRAIT_HEIGHT = 460; // dp
@@ -25,7 +28,7 @@ class MockLayoutHost implements LayoutManagerHost, LayoutRenderHost {
     private boolean mPortrait = true;
     private final BrowserControlsManager mBrowserControlsManager;
 
-    MockLayoutHost(Context context) {
+    public MockLayoutHost(Context context) {
         mContext = context;
         mBrowserControlsManager =
                 new BrowserControlsManager(null, BrowserControlsStateProvider.ControlsPosition.TOP);
@@ -112,4 +115,15 @@ class MockLayoutHost implements LayoutManagerHost, LayoutRenderHost {
 
     @Override
     public void hideKeyboard(Runnable postHideTask) {}
+
+    @Override
+    public void resetKeyboardFocus() {}
+
+    @Override
+    public void requestKeyboardFocus(@NonNull SceneOverlay sceneOverlay) {}
+
+    @Override
+    public boolean containsKeyboardFocus(@NonNull SceneOverlay sceneOverlay) {
+        return false;
+    }
 }

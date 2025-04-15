@@ -469,7 +469,13 @@ TEST_P(FeedStreamTestForAllStreamTypes, LoadFromNetwork) {
   TestSurface surface(stream_.get());
   WaitForIdleTaskQueue();
   ASSERT_TRUE(network_.query_request_sent);
-  EXPECT_EQ(0, network_.GetApiRequestCount<QueryInteractiveFeedDiscoverApi>());
+  if (GetStreamType().IsForYou()) {
+    EXPECT_EQ(1,
+              network_.GetApiRequestCount<QueryInteractiveFeedDiscoverApi>());
+  } else {
+    EXPECT_EQ(1, network_.GetApiRequestCount<ListWebFeedsDiscoverApi>());
+    EXPECT_EQ(1, network_.GetApiRequestCount<WebFeedListContentsDiscoverApi>());
+  }
   EXPECT_EQ(
       "token",
       network_.query_request_sent->feed_request().consistency_token().token());
@@ -1706,6 +1712,10 @@ TEST_F(FeedApiTest, LoadMoreBeforeLoad) {
 }
 
 TEST_F(FeedApiTest, ReadNetworkResponse) {
+  // InjectRealFeedQueryResponse is only supported in old feed query request.
+  base::test::ScopedFeatureList features;
+  features.InitAndDisableFeature(kDiscoFeedEndpoint);
+
   base::HistogramTester histograms;
   network_.InjectRealFeedQueryResponse();
   TestForYouSurface surface(stream_.get());
@@ -1737,6 +1747,10 @@ TEST_F(FeedApiTest, ReadNetworkResponse) {
 }
 
 TEST_F(FeedApiTest, ReadNetworkResponseWithNoContent) {
+  // InjectRealFeedQueryResponse is only supported in old feed query request.
+  base::test::ScopedFeatureList features;
+  features.InitAndDisableFeature(kDiscoFeedEndpoint);
+
   base::HistogramTester histograms;
   network_.InjectRealFeedQueryResponseWithNoContent();
   TestForYouSurface surface(stream_.get());
@@ -2219,7 +2233,7 @@ TEST_F(FeedApiTest, MetadataLoadedWhenDatabaseInitialized) {
     feedstore::Metadata initial_metadata;
     feedstore::SetSessionId(initial_metadata, "session-id", kExpiry);
     initial_metadata.set_consistency_token("token");
-    initial_metadata.set_gaia(GetAccountInfo().gaia);
+    initial_metadata.set_gaia(GetAccountInfo().gaia.ToString());
     store_->WriteMetadata(initial_metadata, base::DoNothing());
   }
 
@@ -3647,6 +3661,25 @@ TEST_F(FeedApiTest, InvalidateFeedCache_DoesNotRefreshOtherFeed) {
               web_feed_surface.DescribeUpdates());
   }
   EXPECT_TRUE(response_translator_.InjectedResponseConsumed());
+}
+
+TEST_F(FeedApiTest, PassFeedLaunchCuiMetadata) {
+  // Test the case that the metadata is read from the network response.
+  RefreshResponseData response;
+  response.model_update_request = MakeTypicalInitialModelState();
+  response.feed_launch_cui_metadata = "hello";
+  response_translator_.InjectResponse(std::move(response));
+  TestForYouSurface surface(stream_.get());
+  WaitForIdleTaskQueue();
+  EXPECT_EQ("hello", feed_launch_cui_metadata_);
+
+  // Test the case that the metadata should be persisted to the store. It should
+  // be read from the store on restart.
+  feed_launch_cui_metadata_ = "";
+  CreateStream();  // Simulate a Chrome restart.
+  TestForYouSurface surface2(stream_.get());
+  WaitForIdleTaskQueue();
+  EXPECT_EQ("hello", feed_launch_cui_metadata_);
 }
 
 class FeedCloseRefreshTest : public FeedApiTest {

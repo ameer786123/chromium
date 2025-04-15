@@ -59,8 +59,7 @@ _DEVICE_SUBSTITUTIONS = {
 _ANDROID_VULKAN_DEVICES = {
     # Pixel 6 phones map to multiple GPU models.
     "oriole": _gpu_device(vendor = "13b5", device = "92020010,92020000"),
-    "dm1q": _gpu_device(vendor = "5143", device = "43050a01"),
-    "a23": _gpu_device(vendor = "5143", device = "6010001"),
+    "a23xq": _gpu_device(vendor = "5143", device = "6010901"),
 }
 
 def _get_dimensions(spec_value):
@@ -151,7 +150,7 @@ def _gpu_expected_vendor_id(_, settings, spec_value):
     so multiple found vendors is an error.
     """
     if _is_skylab(settings):
-        return _gpu_expected_vendor_id_skylab(settings)
+        return _gpu_expected_vendor_id_skylab(spec_value)
     gpus = _get_gpus(spec_value)
 
     # We don't specify GPU on things like Android and certain CrOS devices, so
@@ -273,6 +272,14 @@ def _gpu_parallel_jobs(builder_name, settings, spec_value):
             if gpu.startswith("10de"):
                 return ["--jobs=1"]
 
+    # trace_test flakily hangs Win NVIDIA GTX 1660 machines crbug.com/406454932.
+    # Speculatively disable parallelism to check if it is related.
+    is_trace_test = test_name == "trace_test" or suite == "trace_test"
+    if settings.os_type == common.os_type.WINDOWS and is_trace_test:
+        for gpu in _get_gpus(spec_value):
+            if gpu.startswith("10de:2184"):
+                return ["--jobs=1"]
+
     if settings.os_type in (
         common.os_type.LACROS,
         common.os_type.LINUX,
@@ -291,7 +298,9 @@ def _gpu_telemetry_no_root_for_unrooted_devices(_, settings, spec_value):
 
     unrooted_devices = (
         "a13",
+        "a13ve",
         "a23",
+        "a23xq",
         "dm1q",  # Samsung S23.
         "devonn",  # Motorola Moto G Power 5G.
     )

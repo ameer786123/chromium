@@ -96,6 +96,7 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "components/prefs/scoped_user_pref_update.h"
 #else
+#include "chrome/browser/accessibility/tree_fixing/pref_names.h"
 #include "chrome/browser/profiles/guest_profile_creation_logger.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -148,9 +149,8 @@ profile_metrics::BrowserProfileType ComputeOffTheRecordProfileType(
 
     case profile_metrics::BrowserProfileType::kIncognito:
     case profile_metrics::BrowserProfileType::kOtherOffTheRecordProfile:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
-  return profile_metrics::BrowserProfileType::kOtherOffTheRecordProfile;
 }
 
 }  // namespace
@@ -170,9 +170,15 @@ OffTheRecordProfileImpl::OffTheRecordProfileImpl(
         profile_, ProfileKeepAliveOrigin::kOffTheRecordProfile);
   }
 
-  prefs_ = CreateIncognitoPrefServiceSyncable(
-      PrefServiceSyncableFromProfile(profile_),
-      CreateExtensionPrefStore(profile_, true));
+  if (otr_profile_id.IsDevTools()) {
+    prefs_ =
+        CreateAutomationPrefService(PrefServiceSyncableFromProfile(profile_),
+                                    CreateExtensionPrefStore(profile_, true));
+  } else {
+    prefs_ = CreateIncognitoPrefServiceSyncable(
+        PrefServiceSyncableFromProfile(profile_),
+        CreateExtensionPrefStore(profile_, true));
+  }
 
   key_->SetPrefs(prefs_.get());
   SimpleKeyMap::GetInstance()->Associate(this, key_.get());
@@ -215,6 +221,12 @@ void OffTheRecordProfileImpl::Init() {
   // AccessibilityLabelsService has a default prefs behavior in incognito.
   AccessibilityLabelsService::InitOffTheRecordPrefs(this);
 
+#if !BUILDFLAG(IS_ANDROID)
+  // To avoid using any server-side tree fixing service, it is disabled in
+  // Incognito profiles.
+  tree_fixing::InitOffTheRecordPrefs(this);
+#endif  // !BUILDFLAG(IS_ANDROID)
+
   // The ad service might not be available for some irregular profiles, like the
   // System Profile.
   if (heavy_ad_intervention::HeavyAdService* heavy_ad_service =
@@ -235,13 +247,11 @@ void OffTheRecordProfileImpl::Init() {
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
-  if (chromeos::features::IsCaptivePortalPopupWindowEnabled()) {
-    if (otr_profile_id_->IsCaptivePortal()) {
-      // Set a pref to indicate that the Profile's PrefService is associated
-      // with a captive portal signin window. We use a pref for this because
-      // proxy configuration is associated with the PrefService, not a Profile.
-      GetPrefs()->SetBoolean(chromeos::prefs::kCaptivePortalSignin, true);
-    }
+  if (otr_profile_id_->IsCaptivePortal()) {
+    // Set a pref to indicate that the Profile's PrefService is associated
+    // with a captive portal signin window. We use a pref for this because
+    // proxy configuration is associated with the PrefService, not a Profile.
+    GetPrefs()->SetBoolean(chromeos::prefs::kCaptivePortalSignin, true);
   }
 #endif
 }
@@ -254,11 +264,6 @@ OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
 #endif
 
   FullBrowserTransitionManager::Get()->OnProfileDestroyed(this);
-
-  // Records the number of active KeyedServices for SystemProfile right before
-  // shutting them down.
-  if (IsSystemProfile())
-    ProfileMetrics::LogSystemProfileKeyedServicesCount(this);
 
   // The SimpleDependencyManager should always be passed after the
   // BrowserContextDependencyManager. This is because the KeyedService instances
@@ -369,7 +374,7 @@ void OffTheRecordProfileImpl::DestroyOffTheRecordProfile(
     Profile* /*otr_profile*/) {
   // OffTheRecord profiles should be destroyed through a request to their
   // original profile.
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 bool OffTheRecordProfileImpl::HasOffTheRecordProfile(
@@ -618,8 +623,13 @@ class GuestSessionProfile : public OffTheRecordProfileImpl {
  public:
   explicit GuestSessionProfile(Profile* real_profile)
       : OffTheRecordProfileImpl(real_profile, OTRProfileID::PrimaryID()) {
-    profile_metrics::SetBrowserProfileType(
-        this, profile_metrics::BrowserProfileType::kGuest);
+    if (new_guest_profile_impl_) {
+      CHECK_EQ(profile_metrics::BrowserProfileType::kGuest,
+               profile_metrics::GetBrowserProfileType(this));
+    } else {
+      profile_metrics::SetBrowserProfileType(
+          this, profile_metrics::BrowserProfileType::kGuest);
+    }
   }
 
   void InitChromeOSPreferences() override {

@@ -79,8 +79,9 @@ class TestComboboxModel : public ui::ComboboxModel {
   std::optional<size_t> GetDefaultIndex() const override {
     // Return the first index that is not a separator.
     for (size_t index = 0; index < kItemCount; ++index) {
-      if (separators_.find(index) == separators_.end())
+      if (separators_.find(index) == separators_.end()) {
         return index;
+      }
     }
     NOTREACHED();
   }
@@ -97,8 +98,9 @@ class TestComboboxModel : public ui::ComboboxModel {
 
  private:
   void OnModelChanged() {
-    for (auto& observer : observers())
+    for (auto& observer : observers()) {
       observer.OnComboboxModelChanged(this);
+    }
   }
 
   std::set<size_t> separators_;
@@ -131,8 +133,9 @@ class VectorComboboxModel : public ui::ComboboxModel {
   }
 
   void ValuesChanged() {
-    for (auto& observer : observers())
+    for (auto& observer : observers()) {
       observer.OnComboboxModelChanged(this);
+    }
   }
 
  private:
@@ -207,8 +210,9 @@ class ComboboxTest : public ViewsTestBase {
   void InitCombobox(const std::set<size_t>* separators) {
     model_ = std::make_unique<TestComboboxModel>();
 
-    if (separators)
+    if (separators) {
       model_->SetSeparators(*separators);
+    }
 
     ASSERT_FALSE(combobox());
     auto box = std::make_unique<TestCombobox>(model_.get());
@@ -829,7 +833,7 @@ TEST_F(ComboboxTest, ConsumingPressKeyEvents) {
 
   ui::KeyEvent return_press(ui::EventType::kKeyPressed, ui::VKEY_RETURN,
                             ui::EF_NONE);
-  if (PlatformStyle::kReturnClicksFocusedControl) {
+  if constexpr (PlatformStyle::kReturnClicksFocusedControl) {
     EXPECT_TRUE(combobox()->OnKeyPressed(return_press));
     EXPECT_EQ(2, menu_show_count_);
   } else {
@@ -1013,7 +1017,7 @@ TEST_F(ComboboxTest, MenuModel) {
 
 // Verifies SetTooltipTextAndAccessibleName will call NotifyAccessibilityEvent.
 TEST_F(ComboboxTest, SetTooltipTextNotifiesAccessibilityEvent) {
-  test::AXEventCounter counter(AXEventManager::Get());
+  test::AXEventCounter counter(AXUpdateNotifier::Get());
   InitCombobox(nullptr);
   std::u16string test_tooltip_text = u"Test Tooltip Text";
   EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
@@ -1042,6 +1046,17 @@ TEST_F(ComboboxTest, SetTooltipTextNotifiesAccessibilityEvent) {
             data.GetString16Attribute(ax::mojom::StringAttribute::kValue));
 }
 
+// Changing the value of the combobox should trigger a kTextChanged event.
+TEST_F(ComboboxTest, SetValueAccessibilityEvents) {
+  InitCombobox(nullptr);
+  std::u16string value = u"hello world";
+  test::AXEventCounter counter(views::AXUpdateNotifier::Get());
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
+  combobox()->GetViewAccessibility().SetValue(value);
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged));
+  EXPECT_EQ(value, combobox()->GetViewAccessibility().GetValue());
+}
+
 // Regression test for crbug.com/1264288.
 // Should fail in ASan build before the fix.
 TEST_F(ComboboxTest, NoCrashWhenComboboxOutlivesModel) {
@@ -1066,15 +1081,17 @@ class ConfigurableComboboxModel final : public ui::ComboboxModel {
  public:
   explicit ConfigurableComboboxModel(bool* destroyed = nullptr)
       : destroyed_(destroyed) {
-    if (destroyed_)
+    if (destroyed_) {
       *destroyed_ = false;
+    }
   }
   ConfigurableComboboxModel(ConfigurableComboboxModel&) = delete;
   ConfigurableComboboxModel& operator=(const ConfigurableComboboxModel&) =
       delete;
   ~ConfigurableComboboxModel() override {
-    if (destroyed_)
+    if (destroyed_) {
       *destroyed_ = true;
+    }
   }
 
   // ui::ComboboxModel:

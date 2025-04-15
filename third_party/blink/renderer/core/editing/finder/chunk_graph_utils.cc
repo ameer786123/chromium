@@ -5,10 +5,11 @@
 #include "third_party/blink/renderer/core/editing/finder/chunk_graph_utils.h"
 
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/text.h"
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/finder/find_buffer.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 
 namespace blink {
@@ -30,7 +31,9 @@ const Node* FindOuterMostRubyContainerInBlockContainer(const Node& node,
     }
     if (const ComputedStyle* style = element->GetComputedStyle()) {
       if (style->Display() == EDisplay::kRuby ||
-          style->Display() == EDisplay::kBlockRuby) {
+          style->Display() == EDisplay::kBlockRuby ||
+          (RuntimeEnabledFeatures::FindOrphanAnnotationFixEnabled() &&
+           style->Display() == EDisplay::kRubyText)) {
         ruby_container = element;
       }
       if (&ancestor == &block) {
@@ -62,7 +65,7 @@ String CreateLevel(
   String delimiter;
   for (const auto [max, current] : depth_context) {
     builder.Append(delimiter);
-    delimiter = String(&kLevelDelimiter, 1u);
+    delimiter = String(base::span_from_ref(kLevelDelimiter));
     builder.AppendNumber(max - current + 1);
   }
   return builder.ToString();
@@ -94,8 +97,21 @@ class ChunkGraphBuilder {
     corpus_chunk_list_.push_back(parent_chunk_);
 
     while (node && node != just_after_block) {
-      if (FindBuffer::ShouldIgnoreContents(*node)) {
+      auto skip_contents = [this, end_node, &did_see_range_end_node,
+                            &next_start](const Node* node) {
         const Node* next = FlatTreeTraversal::NextSkippingChildren(*node);
+        if (next && !FlatTreeTraversal::NextSibling(*node)) {
+          // We must have left some parent elements. We might need to call
+          // HandleAnnotationEnd() and HandleRubyContainerEnd().
+          const Node* next_parent = FlatTreeTraversal::ParentElement(*next);
+          for (const Node* parent = FlatTreeTraversal::ParentElement(*node);
+               parent != next_parent;
+               parent = FlatTreeTraversal::ParentElement(*parent)) {
+            if (HandleLeavingParent(*parent, did_see_range_end_node)) {
+              break;
+            }
+          }
+        }
         if (end_node && (end_node == node ||
                          FlatTreeTraversal::IsDescendantOf(*end_node, *node))) {
           did_see_range_end_node = true;
@@ -103,6 +119,11 @@ class ChunkGraphBuilder {
             next_start = next;
           }
         }
+        return next;
+      };
+
+      if (FindBuffer::ShouldIgnoreContents(*node)) {
+        const Node* next = skip_contents(node);
         if (std::optional<UChar> ch = FindBuffer::CharConstantForNode(*node)) {
           if (did_see_range_start_node && !did_see_range_end_node) {
             chunk_text_list_.push_back(TextOrChar(nullptr, *ch));
@@ -112,17 +133,9 @@ class ChunkGraphBuilder {
         continue;
       }
       const ComputedStyle* style =
-          node->GetComputedStyleForElementOrLayoutObject();
+          GetComputedStyleForElementOrLayoutObject(*node);
       if (!style) {
-        const Node* next = FlatTreeTraversal::NextSkippingChildren(*node);
-        if (end_node && (end_node == node ||
-                         FlatTreeTraversal::IsDescendantOf(*end_node, *node))) {
-          did_see_range_end_node = true;
-          if (!next_start) {
-            next_start = next;
-          }
-        }
-        node = next;
+        node = skip_contents(node);
         continue;
       }
 
@@ -144,7 +157,7 @@ class ChunkGraphBuilder {
           }
         }
       }
-      if (style->UsedVisibility() == EVisibility::kVisible &&
+      if (style->Visibility() == EVisibility::kVisible &&
           node->GetLayoutObject()) {
         // `node` is in its own sub-block separate from our starting position.
         if (last_added_text_node && !FindBuffer::IsInSameUninterruptedBlock(
@@ -191,23 +204,12 @@ class ChunkGraphBuilder {
       while (!FlatTreeTraversal::NextSibling(*node) &&
              node != &block_ancestor) {
         node = FlatTreeTraversal::ParentElement(*node);
-        display = EDisplay::kNone;
-        if ((style = node->GetComputedStyleForElementOrLayoutObject())) {
-          display = style->Display();
-        }
-        if (display == EDisplay::kRubyText) {
-          if (HandleAnnotationEnd(*node, did_see_range_end_node)) {
-            break;
-          }
-        } else if (display == EDisplay::kRuby ||
-                   display == EDisplay::kBlockRuby) {
-          if (HandleRubyContainerEnd(did_see_range_end_node)) {
-            break;
-          }
+        if (HandleLeavingParent(*node, did_see_range_end_node)) {
+          break;
         }
       }
       if (node == &block_ancestor) {
-        node = FlatTreeTraversal::NextSibling(*node);
+        node = FlatTreeTraversal::NextSkippingChildren(*node);
         break;
       }
       node = FlatTreeTraversal::NextSibling(*node);
@@ -215,7 +217,7 @@ class ChunkGraphBuilder {
     if (chunk_text_list_.size() > 0) {
       parent_chunk_->Link(PushChunk(String(kAnyLevel)));
     }
-    return next_start.value_or(node);
+    return next_start.value_or(node ? node : just_after_block);
   }
 
   const HeapVector<Member<CorpusChunk>>& ChunkList() const {
@@ -246,6 +248,19 @@ class ChunkGraphBuilder {
     auto* new_base_chunk = PushBaseChunk();
     parent_chunk_->Link(new_base_chunk);
     parent_chunk_ = new_base_chunk;
+  }
+
+  bool HandleLeavingParent(const Node& node, bool did_see_range_end_node) {
+    EDisplay display = EDisplay::kNone;
+    if (const auto* style = GetComputedStyleForElementOrLayoutObject(node)) {
+      display = style->Display();
+    }
+    if (display == EDisplay::kRubyText) {
+      return HandleAnnotationEnd(node, did_see_range_end_node);
+    } else if (display == EDisplay::kRuby || display == EDisplay::kBlockRuby) {
+      return HandleRubyContainerEnd(did_see_range_end_node);
+    }
+    return false;
   }
 
   void HandleAnnotationStart(const Node& node) {
@@ -394,8 +409,10 @@ const CorpusChunk* CorpusChunk::FindNext(const String& level) const {
   }
   wtf_size_t delimiter_index = level.ReverseFind(kLevelDelimiter);
   if (delimiter_index == kNotFound) {
-    // No link for `level`. It means the graph is incorrect.
-    return nullptr;
+    // No link for `level`. We should apply the base level link.
+    return RuntimeEnabledFeatures::FindNestedAnnotationFixEnabled()
+               ? FindNext(String(kBaseLevel))
+               : nullptr;
   }
   return FindNext(level.Substring(0, delimiter_index));
 }

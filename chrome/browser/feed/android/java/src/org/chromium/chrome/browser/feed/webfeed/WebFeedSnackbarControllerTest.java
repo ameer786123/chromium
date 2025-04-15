@@ -30,7 +30,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
@@ -41,10 +40,9 @@ import org.robolectric.shadows.ShadowLog;
 import org.chromium.base.LocaleUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.feed.FeedServiceBridge;
+import org.chromium.chrome.browser.feed.FeedServiceBridgeJni;
 import org.chromium.chrome.browser.feed.FeedSurfaceTracker;
 import org.chromium.chrome.browser.feed.StreamKind;
 import org.chromium.chrome.browser.feed.test.R;
@@ -74,11 +72,9 @@ import java.util.Locale;
         manifest = Config.NONE,
         shadows = {})
 @DisableFeatures(ChromeFeatureList.FEED_FOLLOW_UI_UPDATE)
-@EnableFeatures(ChromeFeatureList.FEED_LOW_MEMORY_IMPROVEMENT)
 @SmallTest
 public final class WebFeedSnackbarControllerTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
     private static final GURL sTestUrl = JUnitTestGURLs.EXAMPLE_URL;
     private static final GURL sFaviconUrl = JUnitTestGURLs.RED_1;
@@ -114,13 +110,12 @@ public final class WebFeedSnackbarControllerTest {
         LocaleUtils.setDefaultLocalesFromConfiguration(config);
 
         ProfileManager.setLastUsedProfileForTesting(mProfile);
-        MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(WebFeedBridge.getTestHooksForTesting(), mWebFeedBridgeJniMock);
-        mJniMocker.mock(FeedServiceBridge.getTestHooksForTesting(), mFeedServideBridgeJniMock);
+        WebFeedBridgeJni.setInstanceForTesting(mWebFeedBridgeJniMock);
+        FeedServiceBridgeJni.setInstanceForTesting(mFeedServideBridgeJniMock);
         mContext = Robolectric.setupActivity(Activity.class);
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(false);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(false, false));
         when(mTab.getOriginalUrl()).thenReturn(sTestUrl);
@@ -274,9 +269,9 @@ public final class WebFeedSnackbarControllerTest {
 
     @Test
     public void showPromoDialogForFollow_successful_active() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
         WebFeedBridge.FollowResults followResults = getSuccessfulFollowResult();
@@ -306,17 +301,15 @@ public final class WebFeedSnackbarControllerTest {
 
     @Test
     public void showPostSuccessfulFollowHelp_Dialog_FromForYouFeed() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
 
         mWebFeedSnackbarController.showPostSuccessfulFollowHelp(
                 sTitle, true, StreamKind.FOR_YOU, mTab, sTestUrl);
 
-        View currentDialog =
-                mDialogManager.getCurrentDialogForTest().get(ModalDialogProperties.CUSTOM_VIEW);
         assertTrue("Dialog should be showing.", mDialogManager.isShowing());
         // TODO(b/243676323): figure out how to test the positive_button label, which is out of the
         // currentDialog hierarchy.
@@ -328,9 +321,9 @@ public final class WebFeedSnackbarControllerTest {
 
     @Test
     public void showPostSuccessfulFollowHelp_DialogAndSnackbar_FromFollowingFeed() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
 
@@ -338,8 +331,6 @@ public final class WebFeedSnackbarControllerTest {
                 sTitle, true, StreamKind.FOLLOWING, mTab, sTestUrl);
 
         verify(mSnackbarManager, times(0)).showSnackbar(any());
-        View currentDialog =
-                mDialogManager.getCurrentDialogForTest().get(ModalDialogProperties.CUSTOM_VIEW);
         assertTrue("Dialog should be showing.", mDialogManager.isShowing());
         // TODO(b/243676323): figure out how to test the positive_button label, which is out of the
         // currentDialog hierarchy.
@@ -366,9 +357,9 @@ public final class WebFeedSnackbarControllerTest {
 
     @Test
     public void showPromoDialogForFollow_successful_notActive() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
         WebFeedBridge.FollowResults followResults =
@@ -408,9 +399,9 @@ public final class WebFeedSnackbarControllerTest {
 
     @Test
     public void showPromoDialogForFollow_successful_noMetadata() {
-        when(mTracker.shouldTriggerHelpUI(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(true);
-        when(mTracker.shouldTriggerHelpUIWithSnooze(
+        when(mTracker.shouldTriggerHelpUiWithSnooze(
                         FeatureConstants.IPH_WEB_FEED_POST_FOLLOW_DIALOG_FEATURE))
                 .thenReturn(new TriggerDetails(true, false));
         WebFeedBridge.FollowResults followResults =
@@ -478,7 +469,7 @@ public final class WebFeedSnackbarControllerTest {
         assertEquals(sTestUrl, mPageInformationCaptor.getValue().mUrl);
         assertEquals(mTab, mPageInformationCaptor.getValue().mTab);
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN, FeedUserActionType.TAPPED_FOLLOW_TRY_AGAIN_ON_SNACKBAR);
     }
 
@@ -588,7 +579,7 @@ public final class WebFeedSnackbarControllerTest {
                         eq(WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU),
                         any());
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN, FeedUserActionType.TAPPED_FOLLOW_TRY_AGAIN_ON_SNACKBAR);
     }
 
@@ -618,7 +609,7 @@ public final class WebFeedSnackbarControllerTest {
                         eq(WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU),
                         any());
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN,
                         FeedUserActionType.TAPPED_REFOLLOW_AFTER_UNFOLLOW_ON_SNACKBAR);
     }
@@ -649,7 +640,7 @@ public final class WebFeedSnackbarControllerTest {
                         eq(WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU),
                         any());
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN,
                         FeedUserActionType.TAPPED_REFOLLOW_AFTER_UNFOLLOW_ON_SNACKBAR);
     }
@@ -682,7 +673,7 @@ public final class WebFeedSnackbarControllerTest {
                         eq(WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU),
                         any());
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN,
                         FeedUserActionType.TAPPED_UNFOLLOW_TRY_AGAIN_ON_SNACKBAR);
     }
@@ -715,7 +706,7 @@ public final class WebFeedSnackbarControllerTest {
                         eq(WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU),
                         any());
         verify(mFeedServideBridgeJniMock)
-                .reportOtherUserAction(
+                .reportOtherUserActionForStream(
                         StreamKind.UNKNOWN,
                         FeedUserActionType.TAPPED_UNFOLLOW_TRY_AGAIN_ON_SNACKBAR);
     }
@@ -748,7 +739,6 @@ public final class WebFeedSnackbarControllerTest {
                 sTitle,
                 WebFeedBridge.CHANGE_REASON_WEB_PAGE_MENU);
         verify(mSnackbarManager).showSnackbar(mSnackbarCaptor.capture());
-        Snackbar snackbar = mSnackbarCaptor.getValue();
 
         FeedSurfaceTracker.getInstance().surfaceOpened();
         verify(mSnackbarManager).dismissSnackbars(eq(mSnackbarCaptor.getValue().getController()));

@@ -29,6 +29,7 @@
 
 #include "base/check_op.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/to_string.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream_track.h"
@@ -70,6 +71,7 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/webrtc/peer_connection_remote_audio_source.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -217,8 +219,7 @@ WebString GetDisplaySurfaceString(
     case media::mojom::DisplayCaptureSurfaceType::BROWSER:
       return WebString::FromUTF8("browser");
   }
-  NOTREACHED_IN_MIGRATION();
-  return WebString();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -298,6 +299,17 @@ MediaStreamTrackImpl::MediaStreamTrackImpl(
   if (ready_state_ != MediaStreamSource::kReadyStateEnded) {
     EnsureFeatureHandleForScheduler();
   }
+  const std::optional<const MediaStreamDevice> source_device = device();
+  if (source_device && source_device->display_media_info) {
+    zoom_level_ = source_device->display_media_info->initial_zoom_level;
+  }
+
+  if (video_track && GetDisplayCaptureType(component_)) {
+    video_track->RegisterCaptureSurfaceResolutionChangeCallback(
+        WTF::BindRepeating(
+            &MediaStreamTrackImpl::MaybeDispatchConfigurationChange,
+            WrapWeakPersistent(this)));
+  }
 }
 
 MediaStreamTrackImpl::~MediaStreamTrackImpl() = default;
@@ -313,8 +325,7 @@ String MediaStreamTrackImpl::kind() const {
       return video_kind;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return audio_kind;
+  NOTREACHED();
 }
 
 String MediaStreamTrackImpl::id() const {
@@ -336,8 +347,13 @@ void MediaStreamTrackImpl::setEnabled(bool enabled) {
 
   component_->SetEnabled(enabled);
 
-  SendLogMessage(
-      String::Format("%s({enabled=%s})", __func__, enabled ? "true" : "false"));
+  if (base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack)) {
+    // Propagate the enabled state to the underlying platform track.
+    PropagateTrackEnabled(enabled);
+  }
+
+  SendLogMessage(String::Format("%s({enabled=%s})", __func__,
+                                base::ToString(enabled).c_str()));
 }
 
 bool MediaStreamTrackImpl::muted() const {
@@ -455,6 +471,9 @@ MediaStreamTrack* MediaStreamTrackImpl::clone(
 
 MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
   MediaTrackCapabilities* capabilities = MediaTrackCapabilities::Create();
+  MediaStreamTrackPlatform::Settings platform_settings;
+  component_->GetSettings(platform_settings);
+
   if (image_capture_) {
     image_capture_->GetMediaTrackCapabilities(capabilities);
   }
@@ -484,10 +503,6 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
       voice_isolation.push_back(value);
     }
     capabilities->setVoiceIsolation(voice_isolation);
-    Vector<String> echo_cancellation_type;
-    for (String value : platform_capabilities.echo_cancellation_type) {
-      echo_cancellation_type.push_back(value);
-    }
     // Sample size.
     if (platform_capabilities.sample_size.size() == 2) {
       LongRange* sample_size = LongRange::Create();
@@ -522,13 +537,17 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
     if (platform_capabilities.width.size() == 2) {
       LongRange* width = LongRange::Create();
       width->setMin(platform_capabilities.width[0]);
-      width->setMax(platform_capabilities.width[1]);
+      width->setMax(IsCapturedSurfaceResolutionActive(platform_settings)
+                        ? platform_settings.physical_frame_size->width()
+                        : platform_capabilities.width[1]);
       capabilities->setWidth(width);
     }
     if (platform_capabilities.height.size() == 2) {
       LongRange* height = LongRange::Create();
       height->setMin(platform_capabilities.height[0]);
-      height->setMax(platform_capabilities.height[1]);
+      height->setMax(IsCapturedSurfaceResolutionActive(platform_settings)
+                         ? platform_settings.physical_frame_size->height()
+                         : platform_capabilities.height[1]);
       capabilities->setHeight(height);
     }
     if (platform_capabilities.aspect_ratio.size() == 2) {
@@ -657,14 +676,14 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
 
   if (platform_settings.display_surface) {
     settings->setDisplaySurface(
-        GetDisplaySurfaceString(platform_settings.display_surface.value()));
+        GetDisplaySurfaceString(*platform_settings.display_surface));
   }
   if (platform_settings.logical_surface) {
-    settings->setLogicalSurface(platform_settings.logical_surface.value());
+    settings->setLogicalSurface(*platform_settings.logical_surface);
   }
   if (platform_settings.cursor) {
     WTF::String value;
-    switch (platform_settings.cursor.value()) {
+    switch (*platform_settings.cursor) {
       case media::mojom::CursorCaptureType::NEVER:
         value = "never";
         break;
@@ -678,9 +697,15 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
     settings->setCursor(value);
   }
 
+  if (IsCapturedSurfaceResolutionActive(platform_settings)) {
+    if (platform_settings.device_scale_factor) {
+      settings->setScreenPixelRatio(*platform_settings.device_scale_factor);
+    }
+  }
+
   if (suppress_local_audio_playback_setting_.has_value()) {
     settings->setSuppressLocalAudioPlayback(
-        suppress_local_audio_playback_setting_.value());
+        *suppress_local_audio_playback_setting_);
   }
 
   return settings;
@@ -931,6 +956,21 @@ void MediaStreamTrackImpl::SourceChangedCaptureHandle() {
   DispatchEvent(*Event::Create(event_type_names::kCapturehandlechange));
 }
 
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+void MediaStreamTrackImpl::SourceChangedZoomLevel(int zoom_level) {
+  DCHECK(IsMainThread());
+  if (Ended()) {
+    return;
+  }
+
+  const bool zoom_level_changed = (zoom_level_ != zoom_level);
+  zoom_level_ = zoom_level;
+  if (zoom_level_changed) {
+    MaybeDispatchConfigurationChange(true);
+  }
+}
+#endif
+
 void MediaStreamTrackImpl::PropagateTrackEnded() {
   CHECK(!is_iterating_registered_media_streams_);
   is_iterating_registered_media_streams_ = true;
@@ -938,6 +978,34 @@ void MediaStreamTrackImpl::PropagateTrackEnded() {
            registered_media_streams_.begin();
        iter != registered_media_streams_.end(); ++iter) {
     (*iter)->TrackEnded();
+  }
+  is_iterating_registered_media_streams_ = false;
+}
+
+void MediaStreamTrackImpl::PropagateTrackEnabled(bool enabled) {
+  CHECK(
+      base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack));
+  // The enabled state is propagated only when the track belongs to a WebRTC
+  // stream, because in that case, the Audio Media Element receives the stream
+  // directly from the source, bypassing WebMediaStreamAudioSink. Therefore,
+  // volume control must be applied at the source level. Since the volume update
+  // occurs after the source has already sent data to WebMediaStreamAudioSink,
+  // any clients using WebMediaStreamAudioSink will remain unaffected by the
+  // NotifyEnabledStateChangeForWebRtcAudio call below.
+  if (!component_->Source() ||
+      component_->GetSourceType() != MediaStreamSource::kTypeAudio) {
+    return;
+  }
+
+  if (!PeerConnectionRemoteAudioTrack::From(
+          MediaStreamAudioTrack::From(Component()))) {
+    return;
+  }
+
+  CHECK(!is_iterating_registered_media_streams_);
+  is_iterating_registered_media_streams_ = true;
+  for (const auto& stream : registered_media_streams_) {
+    stream->NotifyEnabledStateChangeForWebRtcAudio(enabled);
   }
   is_iterating_registered_media_streams_ = false;
 }
@@ -1039,6 +1107,11 @@ void MediaStreamTrackImpl::UnregisterMediaStream(MediaStream* media_stream) {
   registered_media_streams_.erase(iter);
 }
 
+void MediaStreamTrackImpl::RegisterSink(
+    SpeechRecognitionMediaStreamAudioSink* sink) {
+  registered_sinks_.insert(sink);
+}
+
 const AtomicString& MediaStreamTrackImpl::InterfaceName() const {
   return event_target_names::kMediaStreamTrack;
 }
@@ -1057,6 +1130,7 @@ void MediaStreamTrackImpl::AddedEventListener(
 
 void MediaStreamTrackImpl::Trace(Visitor* visitor) const {
   visitor->Trace(registered_media_streams_);
+  visitor->Trace(registered_sinks_);
   visitor->Trace(component_);
   visitor->Trace(image_capture_);
   visitor->Trace(execution_context_);
@@ -1123,6 +1197,16 @@ void MediaStreamTrackImpl::SendLogMessage(const WTF::String& message) {
           muted() ? "true" : "false", readyState().AsCStr(),
           component_->Remote() ? "true" : "false")
           .Utf8());
+}
+
+bool MediaStreamTrackImpl::IsCapturedSurfaceResolutionActive(
+    const MediaStreamTrackPlatform::Settings& platform_settings) const {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  if (platform_settings.physical_frame_size) {
+    return true;
+  }
+#endif
+  return false;
 }
 
 }  // namespace blink

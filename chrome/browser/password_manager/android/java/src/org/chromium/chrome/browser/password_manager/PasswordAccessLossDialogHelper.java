@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.password_manager;
 
+import static org.chromium.chrome.browser.flags.ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID;
+import static org.chromium.chrome.browser.flags.ChromeFeatureList.UNIFIED_PASSWORD_MANAGER_LOCAL_PASSWORDS_ANDROID_ACCESS_LOSS_WARNING;
+
 import android.content.Context;
 
 import androidx.fragment.app.FragmentActivity;
@@ -11,6 +14,7 @@ import androidx.fragment.app.FragmentActivity;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.access_loss.PasswordAccessLossDialogSettingsCoordinator;
 import org.chromium.chrome.browser.access_loss.PasswordAccessLossPostExportDialogController;
 import org.chromium.chrome.browser.access_loss.PasswordAccessLossWarningType;
@@ -18,6 +22,7 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.password_manager.settings.PasswordAccessLossExportFlowCoordinator;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -26,6 +31,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager;
  * Contains all the logic for showing password access loss dialog when trying to access password
  * settings.
  */
+@NullMarked
 public class PasswordAccessLossDialogHelper {
 
     /**
@@ -36,7 +42,7 @@ public class PasswordAccessLossDialogHelper {
      * @param context used to provide resources and start intents from the dialog.
      * @param referrer indicates where the request to show the password settings UI comes from.
      * @param modalDialogManagerSupplier displays the dialog.
-     * @param customTabIntentHelper needed to show help.
+     * @param settingsCustomTabLauncher used to open help URLs in a custom tab.
      * @param buildInfo needed to extract GMS Core version.
      * @return whether the dialog was displayed or not.
      */
@@ -45,10 +51,18 @@ public class PasswordAccessLossDialogHelper {
             Context context,
             @ManagePasswordsReferrer int referrer,
             Supplier<ModalDialogManager> modalDialogManagerSupplier,
-            CustomTabIntentHelper customTabIntentHelper,
+            SettingsCustomTabLauncher settingsCustomTabLauncher,
             BuildInfo buildInfo) {
         PrefService prefService = UserPrefs.get(profile);
         @PasswordAccessLossWarningType int warningType = getAccessLossWarningType(prefService);
+        if (warningType == PasswordAccessLossWarningType.NO_GMS_CORE
+                && prefService.getBoolean(Pref.EMPTY_PROFILE_STORE_LOGIN_DATABASE)) {
+            new PasswordAccessLossPostExportDialogController(
+                            context, modalDialogManagerSupplier.get(), settingsCustomTabLauncher)
+                    .showPostExportDialog();
+            return true;
+        }
+
         if (warningType != PasswordAccessLossWarningType.NONE) {
             // Always start export flow from Chrome main settings. If this is already being called
             // from main settings, then launch export flow right away.
@@ -63,15 +77,10 @@ public class PasswordAccessLossDialogHelper {
                             warningType,
                             GmsUpdateLauncher::launch,
                             startExportFlow,
-                            customTabIntentHelper);
+                            settingsCustomTabLauncher);
             return true;
         }
-        if (shouldShowAccessLossWarningWhenNoGmsNoPasswords(prefService, buildInfo)) {
-            new PasswordAccessLossPostExportDialogController(
-                            context, modalDialogManagerSupplier.get(), customTabIntentHelper)
-                    .showPostExportDialog();
-            return true;
-        }
+
         return false;
     }
 
@@ -88,7 +97,6 @@ public class PasswordAccessLossDialogHelper {
             Supplier<ModalDialogManager> modalDialogManagerSupplier) {
         FragmentActivity activity = (FragmentActivity) ContextUtils.activityFromContext(context);
         assert activity != null : "Context is expected to be a fragment activity";
-
         new PasswordAccessLossExportFlowCoordinator(activity, profile, modalDialogManagerSupplier)
                 .startExportFlow();
     }
@@ -101,36 +109,15 @@ public class PasswordAccessLossDialogHelper {
      */
     public static @PasswordAccessLossWarningType int getAccessLossWarningType(
             PrefService prefService) {
-        // TODO(crbug.com/323149739): Enable this feature flag in SafetyCheckMediatorTest and
-        // PasswordManagerHelperTest in all tests before launch.
+        // TODO(crbug.com/323149739): Enable the access loss warning feature flag in
+        //  SafetyCheckMediatorTest and PasswordManagerHelperTest in all tests before launch.
         if (!ChromeFeatureList.isEnabled(
-                ChromeFeatureList
-                        .UNIFIED_PASSWORD_MANAGER_LOCAL_PASSWORDS_ANDROID_ACCESS_LOSS_WARNING)) {
+                        UNIFIED_PASSWORD_MANAGER_LOCAL_PASSWORDS_ANDROID_ACCESS_LOSS_WARNING)
+                || ChromeFeatureList.isEnabled(LOGIN_DB_DEPRECATION_ANDROID)) {
+            // If the login db deprecation has started, the warning is no longer relevant.
             return PasswordAccessLossWarningType.NONE;
         }
-        return PasswordManagerUtilBridge.getPasswordAccessLossWarningType(prefService);
-    }
 
-    /**
-     * Check if the warning dialog in settings should be shown even when there are no local
-     * passwords that need to be exported.
-     *
-     * @param prefService used to check if the login database for profile is empty.
-     * @param buildInfo used to check the GMS Core version.
-     * @return whether the warning dialog in settings should be shown.
-     */
-    public static boolean shouldShowAccessLossWarningWhenNoGmsNoPasswords(
-            PrefService prefService, BuildInfo buildInfo) {
-        if (!ChromeFeatureList.isEnabled(
-                ChromeFeatureList
-                        .UNIFIED_PASSWORD_MANAGER_LOCAL_PASSWORDS_ANDROID_ACCESS_LOSS_WARNING)) {
-            return false;
-        }
-        try {
-            Integer.parseInt(buildInfo.getGmsVersionCode());
-            return false;
-        } catch (NumberFormatException exception) {
-            return prefService.getBoolean(Pref.EMPTY_PROFILE_STORE_LOGIN_DATABASE);
-        }
+        return PasswordManagerUtilBridge.getPasswordAccessLossWarningType(prefService);
     }
 }

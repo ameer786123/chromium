@@ -5,10 +5,10 @@
 #ifndef IOS_CHROME_BROWSER_AUTOFILL_UI_BUNDLED_BOTTOM_SHEET_PAYMENTS_SUGGESTION_BOTTOM_SHEET_MEDIATOR_H_
 #define IOS_CHROME_BROWSER_AUTOFILL_UI_BUNDLED_BOTTOM_SHEET_PAYMENTS_SUGGESTION_BOTTOM_SHEET_MEDIATOR_H_
 
+#import <Foundation/Foundation.h>
+
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/payments_suggestion_bottom_sheet_delegate.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/payments_suggestion_bottom_sheet_exit_reason.h"
-
-#import <Foundation/Foundation.h>
 
 namespace autofill {
 class CreditCard;
@@ -51,12 +51,6 @@ class WebStateList;
 // represents the position of the selected card in the list of card suggestions.
 - (void)didSelectCreditCard:(CreditCardData*)creditCardData
                     atIndex:(NSInteger)index;
-
-// Reattaches the listeners on the form that triggered that sheet. This allows
-// showing the sheet again on the same page load when refocusing on a field on
-// that form. Does not reattach listeners on other forms that may have been
-// detached when showing the sheet.
-- (void)reattachListeners;
 
 @end
 

@@ -88,8 +88,7 @@ DocumentMarker::MarkerTypeIndex MarkerTypeToMarkerIndex(
       return DocumentMarker::kCustomHighlightMarkerIndex;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return DocumentMarker::kSpellingMarkerIndex;
+  NOTREACHED();
 }
 
 DocumentMarkerList* CreateListForType(DocumentMarker::MarkerType type) {
@@ -112,8 +111,7 @@ DocumentMarkerList* CreateListForType(DocumentMarker::MarkerType type) {
       return MakeGarbageCollected<CustomHighlightMarkerListImpl>();
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 void InvalidateVisualOverflowForNode(const Node& node,
@@ -306,7 +304,6 @@ void DocumentMarkerController::PrepareForDestruction() {
     marker_map.Clear();
   }
   possibly_existing_marker_types_ = DocumentMarker::MarkerTypes();
-  SetDocument(nullptr);
 }
 
 void DocumentMarkerController::RemoveMarkers(
@@ -383,7 +380,6 @@ void DocumentMarkerController::AddMarkerToNode(const Text& text,
   DCHECK_GE(text.length(), new_marker->EndOffset());
   possibly_existing_marker_types_ = possibly_existing_marker_types_.Add(
       DocumentMarker::MarkerTypes(new_marker->GetType()));
-  SetDocument(document_);
 
   DocumentMarker::MarkerType new_marker_type = new_marker->GetType();
   const DocumentMarker::MarkerTypeIndex type_index =
@@ -469,17 +465,12 @@ void DocumentMarkerController::MoveMarkers(const Text& src_node,
 }
 
 void DocumentMarkerController::DidRemoveNodeFromMap(
-    DocumentMarker::MarkerType type,
-    bool clear_document_allowed) {
+    DocumentMarker::MarkerType type) {
   DocumentMarker::MarkerTypeIndex type_index = MarkerTypeToMarkerIndex(type);
   if (markers_[type_index]->empty()) {
     markers_[type_index] = nullptr;
     possibly_existing_marker_types_ = possibly_existing_marker_types_.Subtract(
         DocumentMarker::MarkerTypes(type));
-  }
-  if (clear_document_allowed &&
-      possibly_existing_marker_types_ == DocumentMarker::MarkerTypes()) {
-    SetDocument(nullptr);
   }
 }
 
@@ -1053,7 +1044,6 @@ void DocumentMarkerController::Trace(Visitor* visitor) const {
   visitor->Trace(markers_);
   visitor->Trace(marker_groups_);
   visitor->Trace(document_);
-  SynchronousMutationObserver::Trace(visitor);
 }
 
 void DocumentMarkerController::RemoveMarkersForNode(
@@ -1212,7 +1202,7 @@ void DocumentMarkerController::RemoveMarkersOfTypes(
     if (!marker_map) {
       continue;
     }
-    CopyKeysToVector(*marker_map, nodes_with_markers);
+    nodes_with_markers.assign(marker_map->Keys());
     for (const auto& node : nodes_with_markers) {
       MarkerMap::iterator iterator = marker_map->find(node);
       if (iterator != marker_map->end()) {
@@ -1323,7 +1313,6 @@ void DocumentMarkerController::ShowMarkers() const {
 }
 #endif
 
-// SynchronousMutationObserver
 void DocumentMarkerController::DidUpdateCharacterData(CharacterData* node,
                                                       unsigned offset,
                                                       unsigned old_length,
@@ -1352,7 +1341,7 @@ void DocumentMarkerController::DidUpdateCharacterData(CharacterData* node,
     if (list->IsEmpty()) {
       InvalidateVisualOverflowForNode(*node, type);
       marker_map->erase(text_node);
-      DidRemoveNodeFromMap(type, false);
+      DidRemoveNodeFromMap(type);
     }
   }
 

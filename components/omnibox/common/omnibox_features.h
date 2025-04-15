@@ -13,7 +13,6 @@ namespace omnibox {
 // Please do not add more features to this "big blob" list.
 // Instead, use the categorized and alphabetized lists below this "big blob".
 // You can create a new category if none of the existing ones fit.
-BASE_DECLARE_FEATURE(kExperimentalKeywordMode);
 BASE_DECLARE_FEATURE(kImageSearchSuggestionThumbnail);
 BASE_DECLARE_FEATURE(kOmniboxRemoveSuggestionsFromClipboard);
 
@@ -21,7 +20,6 @@ BASE_DECLARE_FEATURE(kOmniboxRemoveSuggestionsFromClipboard);
 // deduping or `SortAndCull()`.
 BASE_DECLARE_FEATURE(kGroupingFrameworkForNonZPS);
 BASE_DECLARE_FEATURE(kOmniboxDemoteByType);
-BASE_DECLARE_FEATURE(kPreferNonShortcutMatchesWhenDeduping);
 
 // Features below this line should be sorted alphabetically by their comments.
 
@@ -40,11 +38,9 @@ BASE_DECLARE_FEATURE(kDisambiguateTabMatchingForEntitySuggestions);
 
 // Local history zero-prefix (aka zero-suggest) and prefix suggestions.
 BASE_DECLARE_FEATURE(kAdjustLocalHistoryZeroSuggestRelevanceScore);
-BASE_DECLARE_FEATURE(kClobberTriggersContextualWebZeroSuggest);
-BASE_DECLARE_FEATURE(kClobberTriggersSRPZeroSuggest);
+BASE_DECLARE_FEATURE(kFocusTriggersWebAndSRPZeroSuggest);
+BASE_DECLARE_FEATURE(kHideSuggestionGroupHeaders);
 BASE_DECLARE_FEATURE(kLocalHistoryZeroSuggestBeyondNTP);
-BASE_DECLARE_FEATURE(kNormalizeSearchSuggestions);
-BASE_DECLARE_FEATURE(kOmniboxOnClobberFocusTypeOnContent);
 BASE_DECLARE_FEATURE(kZeroSuggestInMemoryCaching);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetchDebouncing);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetching);
@@ -52,11 +48,20 @@ BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnSRP);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnWeb);
 // Related, kMaxZeroSuggestMatches.
 
+// Contextual zero-prefix (aka zero-suggest). There are suggestions based on the
+// user's current URL. Fullfillment of these suggestions is delegated to Lens
+// since Lens provides additional logic for contextualizing the results to the
+// current page, by using more than the URL, i.e. the page content.
+BASE_DECLARE_FEATURE(kContextualZeroSuggestLensFulfillment);
+
+BASE_DECLARE_FEATURE(kContextualSearchProviderAsyncSuggestInputs);
+
 // On Device Suggest.
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderIncognito);
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderNonIncognito);
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderKorean);
 BASE_DECLARE_FEATURE(kOnDeviceTailModel);
+BASE_DECLARE_FEATURE(kOnDeviceTailEnableEnglishModel);
 
 // Provider-specific - These features change the behavior of specific providers.
 // TODO(crbug.com/40179316): Clean up feature flag used in staged roll-out of
@@ -65,28 +70,22 @@ BASE_DECLARE_FEATURE(kStoreTitleInContentsAndUrlInDescription);
 
 // Document provider and domain suggestions
 BASE_DECLARE_FEATURE(kDocumentProvider);
+BASE_DECLARE_FEATURE(kDocumentProviderPrimaryAccountRequirement);
+BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibility);
+BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibilityWhenUnknown);
 BASE_DECLARE_FEATURE(kDocumentProviderNoSyncRequirement);
 BASE_DECLARE_FEATURE(kDomainSuggestions);
-
-// Consent helper types
-BASE_DECLARE_FEATURE(kPrefBasedDataCollectionConsentHelper);
 
 // Suggestions UI - these affect the UI or function of the suggestions popup.
 BASE_DECLARE_FEATURE(kClipboardSuggestionContentHidden);
 BASE_DECLARE_FEATURE(kSuppressClipboardSuggestionAfterFirstUsed);
 BASE_DECLARE_FEATURE(kMostVisitedTilesHorizontalRenderGroup);
 BASE_DECLARE_FEATURE(kRichAutocompletion);
-BASE_DECLARE_FEATURE(kNtpRealboxPedals);
 BASE_DECLARE_FEATURE(kWebUIOmniboxPopup);
 
 // Omnibox UI - these affect the UI or function of the location bar (not the
 // popup).
 BASE_DECLARE_FEATURE(kOmniboxAssistantVoiceSearch);
-
-// Android only flag that controls whether the new security indicator should be
-// used, on non-Android platforms this is controlled through the
-// ChromeRefresh2023 flag.
-BASE_DECLARE_FEATURE(kUpdatedConnectionSecurityIndicators);
 
 // Navigation experiments.
 BASE_DECLARE_FEATURE(kDefaultTypedNavigationsToHttps);
@@ -107,10 +106,6 @@ BASE_DECLARE_FEATURE(kMlUrlScoring);
 BASE_DECLARE_FEATURE(kMlUrlSearchBlending);
 BASE_DECLARE_FEATURE(kUrlScoringModel);
 
-// Actions in Suggest - Action Chips for Entity Suggestions.
-// Data driven feature; flag helps tune behavior.
-BASE_DECLARE_FEATURE(kActionsInSuggest);
-
 // Animate appearance of suggestions list.
 BASE_DECLARE_FEATURE(kAnimateSuggestionsListAppearance);
 
@@ -129,6 +124,7 @@ BASE_DECLARE_FEATURE(kOmniboxTouchDownTriggerForPrefetch);
 // Site search/Keyword mode related features.
 BASE_DECLARE_FEATURE(kStarterPackExpansion);
 BASE_DECLARE_FEATURE(kStarterPackIPH);
+BASE_DECLARE_FEATURE(kStarterPackPage);
 
 // Search and Suggest requests and params.
 BASE_DECLARE_FEATURE(kAblateSearchProviderWarmup);
@@ -137,14 +133,33 @@ BASE_DECLARE_FEATURE(kReportApplicationLanguageInSearchRequest);
 BASE_DECLARE_FEATURE(kOmniboxAsyncViewInflation);
 BASE_DECLARE_FEATURE(kUseFusedLocationProvider);
 
+// Omnibox suggestions tuning
+BASE_DECLARE_FEATURE(kNumNtpZpsRecentSearches);
+BASE_DECLARE_FEATURE(kNumNtpZpsTrendingSearches);
+BASE_DECLARE_FEATURE(kNumWebZpsRecentSearches);
+BASE_DECLARE_FEATURE(kNumWebZpsRelatedSearches);
+BASE_DECLARE_FEATURE(kNumWebZpsMostVisitedUrls);
+BASE_DECLARE_FEATURE(kNumSrpZpsRecentSearches);
+BASE_DECLARE_FEATURE(kNumSrpZpsRelatedSearches);
+
 #if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kDiagnostics);
 BASE_DECLARE_FEATURE(kRetainOmniboxOnFocus);
 BASE_DECLARE_FEATURE(kJumpStartOmnibox);
+BASE_DECLARE_FEATURE(kSuppressIntermediateACUpdatesOnLowEndDevices);
+BASE_DECLARE_FEATURE(kAndroidHubSearch);
+// Delay focusTab to prioritize navigation (https://crbug.com/374852568).
+BASE_DECLARE_FEATURE(kPostDelayedTaskFocusTab);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 // `ShortcutsProvider` features.
 BASE_DECLARE_FEATURE(kOmniboxShortcutsAndroid);
-BASE_DECLARE_FEATURE(kOmniboxDeleteOldShortcuts);
+
+// Enterprise search aggregators features.
+BASE_DECLARE_FEATURE(kEnableSearchAggregatorPolicy);
+
+// Ipad ZPS matches limit increase.
+BASE_DECLARE_FEATURE(kIpadZeroSuggestMatches);
 
 }  // namespace omnibox
 

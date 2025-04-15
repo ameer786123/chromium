@@ -17,6 +17,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/cookies/cookie_setting_override.h"
+#include "net/cookies/cookie_util.h"
 #include "net/log/net_log_with_source.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
@@ -90,7 +91,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       scoped_refptr<SharedDictionaryStorage> shared_dictionary_storage,
       raw_ptr<mojom::SharedDictionaryAccessObserver> shared_dictionary_observer,
       NetworkContext* context,
-      net::CookieSettingOverrides factory_cookie_setting_overrides);
+      net::CookieSettingOverrides factory_cookie_setting_overrides,
+      net::CookieSettingOverrides devtools_cookie_setting_overrides);
 
   CorsURLLoader(const CorsURLLoader&) = delete;
   CorsURLLoader& operator=(const CorsURLLoader&) = delete;
@@ -109,8 +111,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       const std::optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
 
   // mojom::URLLoaderClient overrides:
   void OnReceiveEarlyHints(mojom::EarlyHintsPtr early_hints) override;
@@ -148,6 +148,10 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       bool tainted);
 
  private:
+  // Helper function to get the `StorageAccessStatus` for the current `request_`
+  // and `isolation_info_`.
+  std::optional<net::cookie_util::StorageAccessStatus> GetStorageAccessStatus();
+
   void StartRequest();
 
   // Helper for `OnPreflightRequestComplete()`.
@@ -241,15 +245,19 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
   // then returns true (as no shared storage response header is required).
   //
   // Otherwise, there is a value for the "Sec-Shared-Storage-Data-Origin"
-  // request header. Parses this request header value into a URL. CHECKs that
-  // the parsed data origin URL is valid and same-origin to the request's URL
-  // (as regular JavaScript is unable modify this forbidden header, and any
-  // modifications modae by extensions will not be propagated back to the
-  // request' sheaders here).
+  // request header. Parses this request header value into a URL. If the parsed
+  // data origin URL is valid and cross-origin to the request's URL, returns
+  // true, as again no shared storage response header is required. (Note that
+  // regular JavaScript is unable to modify the forbidden
+  // "Sec-Shared-Storage-Data-Origin" request header, and any modifications made
+  // by extensions will not be propagated back to the request's headers here).
   //
-  // Parses the "Shared-Storage-Cross-Origin-Worklet-Allowed" response
-  // header into a Structured Fields Boolean, and returns the result. Returns
-  // false if the header does not exist or if the parsing fails.
+  // Finally, in the case where the parsed data origin URL is valid and
+  // same-origin to the request's URL, the
+  // "Shared-Storage-Cross-Origin-Worklet-Allowed" header is required. Parses
+  // the "Shared-Storage-Cross-Origin-Worklet-Allowed" response header into a
+  // Structured Fields Boolean, and returns the result. Returns false if the
+  // header does not exist or if the parsing fails.
   bool CheckSharedStorageCrossOriginWorkletAllowedResponseHeaderIfNeeded(
       const mojom::URLResponseHead& response);
 
@@ -392,6 +400,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CorsURLLoader
       shared_dictionary_data_pipe_writer_;
   std::optional<URLLoaderCompletionStatus> deferred_completion_status_;
   const net::CookieSettingOverrides factory_cookie_setting_overrides_;
+  const net::CookieSettingOverrides devtools_cookie_setting_overrides_;
 
   // Used to provide weak pointers of this class for synchronously calling
   // URLLoaderClient methods. This should be reset any time

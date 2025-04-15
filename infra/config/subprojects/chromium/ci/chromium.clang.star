@@ -27,10 +27,6 @@ ci.defaults.set(
     # Naturally the runtime will be ~4-8h on average, depending on config.
     # CFI builds will take even longer - around 11h.
     execution_timeout = 14 * time.hour,
-    experiments = {
-        # crbug.com/355218109
-        "chromium.use_per_builder_build_dir_name": 100,
-    },
     health_spec = health_spec.modified_default({
         "Unhealthy": health_spec.unhealthy_thresholds(
             fail_rate = struct(),
@@ -42,6 +38,7 @@ ci.defaults.set(
     properties = {
         "perf_dashboard_machine_group": "ChromiumClang",
     },
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -259,7 +256,9 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows|Asan",
         short_name = "asn",
@@ -307,7 +306,9 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows|Asan",
         short_name = "dll",
@@ -333,12 +334,13 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder",
+            "android_with_static_analysis",
             "release_builder",
             "minimal_symbols",
             "strip_debug_info",
@@ -393,12 +395,13 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder_without_codecs",
+            "android_with_static_analysis",
             "clang_tot",
             "shared",
             "debug",
@@ -435,12 +438,13 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder_without_codecs",
+            "android_with_static_analysis",
             "clang_tot",
             "shared",
             "release",
@@ -489,12 +493,13 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder_without_codecs",
+            "android_with_static_analysis",
             "clang_tot",
             "shared",
             "release",
@@ -532,12 +537,13 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder_without_codecs",
+            "android_with_static_analysis",
             "clang_tot",
             "shared",
             "release",
@@ -576,12 +582,13 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "android_builder_without_codecs",
+            "android_with_static_analysis",
             "clang_tot",
             "release",
             "arm64",
@@ -598,67 +605,6 @@ ci.builder(
     console_view_entry = consoles.console_view_entry(
         category = "ToT Android",
         short_name = "a64",
-    ),
-    contact_team_email = "lexan@google.com",
-)
-
-ci.builder(
-    name = "ToTAndroidASan",
-    builder_spec = builder_config.builder_spec(
-        gclient_config = builder_config.gclient_config(
-            config = "chromium",
-            apply_configs = [
-                "clang_tot",
-                "android",
-            ],
-        ),
-        chromium_config = builder_config.chromium_config(
-            config = "clang_tot_android_asan",
-            apply_configs = ["mb"],
-            build_config = builder_config.build_config.RELEASE,
-            target_arch = builder_config.target_arch.ARM,
-            target_bits = 32,
-            target_platform = builder_config.target_platform.ANDROID,
-        ),
-        android_config = builder_config.android_config(config = "asan_symbolize"),
-        build_gs_bucket = "chromium-clang-archive",
-    ),
-    gn_args = gn_args.config(
-        configs = [
-            "android_builder_without_codecs",
-            "clang_tot",
-            "asan",
-            "debug_builder",
-            "strip_debug_info",
-            "arm",
-        ],
-    ),
-    targets = targets.bundle(
-        targets = [
-            "clang_tot_gtests",
-        ],
-        additional_compile_targets = [
-            "all",
-        ],
-        mixins = [
-            targets.mixin(
-                swarming = targets.swarming(
-                    dimensions = {
-                        "device_os": "MMB29Q",
-                        "device_type": "bullhead",
-                        "os": "Android",
-                    },
-                ),
-            ),
-            "has_native_resultdb_integration",
-        ],
-    ),
-    targets_settings = targets.settings(
-        os_type = targets.os_type.ANDROID,
-    ),
-    console_view_entry = consoles.console_view_entry(
-        category = "ToT Android",
-        short_name = "asn",
     ),
     contact_team_email = "lexan@google.com",
 )
@@ -682,7 +628,7 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.ANDROID,
         ),
-        android_config = builder_config.android_config(config = "clang_builder_mb_x64"),
+        android_config = builder_config.android_config(config = "base_config"),
         build_gs_bucket = "chromium-clang-archive",
     ),
     gn_args = gn_args.config(
@@ -731,7 +677,7 @@ ci.builder(
     ),
     gn_args = gn_args.config(
         configs = [
-            "lacros_on_linux",
+            "chromeos_on_linux",
             "release",
             "clang_tot",
             "x64",
@@ -770,7 +716,7 @@ ci.builder(
     ),
     gn_args = gn_args.config(
         configs = [
-            "lacros_on_linux",
+            "chromeos_on_linux",
             "debug",
             "clang_tot",
             "x64",
@@ -965,7 +911,6 @@ clang_tot_linux_builder(
     targets = targets.bundle(
         targets = [
             "clang_tot_gtests",
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1004,7 +949,6 @@ clang_tot_linux_builder(
     ),
     targets = targets.bundle(
         targets = [
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1094,7 +1038,6 @@ clang_tot_linux_builder(
     ),
     targets = targets.bundle(
         targets = [
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1152,7 +1095,6 @@ clang_tot_linux_builder(
     targets = targets.bundle(
         targets = [
             "clang_tot_gtests",
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1233,7 +1175,6 @@ clang_tot_linux_builder(
     targets = targets.bundle(
         targets = [
             "clang_tot_gtests",
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1273,7 +1214,6 @@ clang_tot_linux_builder(
     targets = targets.bundle(
         targets = [
             "clang_tot_gtests",
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1322,6 +1262,7 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
     free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
@@ -1361,7 +1302,6 @@ ci.builder(
             "clang_tot_gtests",
             # Doesn't run win_specific_isolated_scripts because the mini
             # installer isn't hooked up in 32-bit debug builds.
-            "chrome_sizes_suite",
         ],
         additional_compile_targets = [
             "all",
@@ -1371,6 +1311,7 @@ ci.builder(
         ],
     ),
     builderless = False,
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows",
@@ -1418,7 +1359,9 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows",
         short_name = "dll",
@@ -1464,7 +1407,9 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows|x64",
         short_name = "rel",
@@ -1510,6 +1455,7 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
     free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
@@ -1558,6 +1504,7 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
     free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
@@ -1605,6 +1552,7 @@ ci.builder(
         ],
     ),
     builderless = False,
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows|Asan",
@@ -1653,7 +1601,9 @@ ci.builder(
             "win11",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     gardener_rotations = args.ignore_default(None),
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows",
@@ -1675,7 +1625,9 @@ ci.builder(
             "x64",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Code Coverage",
         short_name = "win",
@@ -1721,7 +1673,9 @@ ci.builder(
             "win10",
         ],
     ),
+    cores = "32",
     os = os.WINDOWS_DEFAULT,
+    free_space = builders.free_space.high,
     console_view_entry = consoles.console_view_entry(
         category = "ToT Windows|x64",
         short_name = "pgo",
@@ -1749,6 +1703,7 @@ ci.builder(
             build_config = builder_config.build_config.RELEASE,
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
+            host_platform = builder_config.host_platform.LINUX,
         ),
         build_gs_bucket = "chromium-clang-archive",
     ),
@@ -1865,7 +1820,6 @@ ci.builder(
             "ios_device",
             "arm64",
             "release",
-            "ios_chromium_cert",
             "xctest",
         ],
     ),
@@ -1950,7 +1904,6 @@ clang_mac_builder(
     targets = targets.bundle(
         targets = [
             "clang_tot_gtests",
-            "chromium_mac_rel_isolated_scripts_and_sizes",
         ],
         additional_compile_targets = [
             "all",
@@ -2145,7 +2098,7 @@ clang_mac_builder(
             "use_clang_coverage",
             "minimal_symbols",
             "release",
-            "x64",
+            "arm64",
         ],
     ),
     cores = None,

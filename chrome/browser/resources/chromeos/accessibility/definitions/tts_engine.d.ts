@@ -10,7 +10,7 @@
  * regenerate.
  */
 
-import {ChromeEvent} from '../../../../../../tools/typescript/definitions/chrome_event.js';
+import type {ChromeEvent} from '../../../../../../tools/typescript/definitions/chrome_event.js';
 
 declare global {
   export namespace chrome {
@@ -30,6 +30,10 @@ declare global {
       export enum VoiceGender {
         MALE = 'male',
         FEMALE = 'female',
+      }
+
+      export interface LanguageUninstallOptions {
+        uninstallImmediately: boolean;
       }
 
       export enum LanguageInstallStatus {
@@ -60,7 +64,7 @@ declare global {
       }
 
       export interface AudioBuffer {
-        audioBuffer: ArrayBuffer;
+        audioBuffer: Float32Array;
         charIndex?: number;
         isLastBuffer?: boolean;
       }
@@ -92,6 +96,10 @@ declare global {
 
       export const onInstallLanguageRequest:
           ChromeEvent<(requestor: TtsClient, lang: string) => void>;
+
+      export const onUninstallLanguageRequest: ChromeEvent<
+          (requestor: TtsClient, lang: string,
+           uninstallOptions: LanguageUninstallOptions) => void>;
 
       export const onLanguageStatusRequest:
           ChromeEvent<(requestor: TtsClient, lang: string) => void>;

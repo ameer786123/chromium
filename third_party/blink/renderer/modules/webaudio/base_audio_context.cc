@@ -88,7 +88,7 @@ namespace blink {
 
 // Constructor for rendering to the audio hardware.
 BaseAudioContext::BaseAudioContext(LocalDOMWindow* window,
-                                   enum ContextType context_type)
+                                   ContextType context_type)
     : ActiveScriptWrappable<BaseAudioContext>({}),
       ExecutionContextLifecycleStateObserver(window),
       InspectorHelperMixin(*AudioGraphTracer::FromWindow(*window), String()),
@@ -339,7 +339,7 @@ ScriptPromise<AudioBuffer> BaseAudioContext::decodeAudioData(
         "Cannot decode detached ArrayBuffer");
     // Fall through in order to invoke the error_callback.
   } else if (!audio_data->Transfer(isolate, buffer_contents,
-                                   IGNORE_EXCEPTION)) {
+                                   IgnoreException(isolate))) {
     // Transfer may throw a TypeError, which is not a DOMException. However, the
     // spec requires throwing a DOMException with kDataCloneError. Hence ignore
     // that exception and throw a DOMException instead.
@@ -632,8 +632,7 @@ PeriodicWave* BaseAudioContext::GetPeriodicWave(int type) {
       }
       return periodic_wave_triangle_.Get();
     default:
-      NOTREACHED_IN_MIGRATION();
-      return nullptr;
+      NOTREACHED();
   }
 }
 
@@ -644,23 +643,42 @@ V8AudioContextState BaseAudioContext::state() const {
 void BaseAudioContext::SetContextState(V8AudioContextState::Enum new_state) {
   DCHECK(IsMainThread());
 
+  // The closed AudioContext does not accept any state change.
+  if (control_thread_state_ == V8AudioContextState::Enum::kClosed) {
+    return;
+  }
+
+  if (!RuntimeEnabledFeatures::AudioContextInterruptedStateEnabled() &&
+      new_state == V8AudioContextState::Enum::kInterrupted) {
+    return;
+  }
+
   // If there's no change in the current state, there's nothing that needs to be
   // done.
   if (new_state == control_thread_state_) {
     return;
   }
 
-  // Validate the transitions.  The valid transitions are Suspended->Running,
-  // Running->Suspended, and anything->Closed.
+  // Validate the transitions.  The valid transitions are:
+  // Suspended ---> Running or Interrupted,
+  // Running -----> Suspended or Interrupted,
+  // Interrupted -> Running or Suspended,
+  // anything ----> Closed.
   switch (new_state) {
     case V8AudioContextState::Enum::kSuspended:
-      DCHECK_EQ(control_thread_state_, V8AudioContextState::Enum::kRunning);
+      DCHECK(control_thread_state_ == V8AudioContextState::Enum::kRunning ||
+             control_thread_state_ == V8AudioContextState::Enum::kInterrupted);
       break;
     case V8AudioContextState::Enum::kRunning:
-      DCHECK_EQ(control_thread_state_, V8AudioContextState::Enum::kSuspended);
+      DCHECK(control_thread_state_ == V8AudioContextState::Enum::kSuspended ||
+             control_thread_state_ == V8AudioContextState::Enum::kInterrupted);
       break;
     case V8AudioContextState::Enum::kClosed:
       DCHECK_NE(control_thread_state_, V8AudioContextState::Enum::kClosed);
+      break;
+    case V8AudioContextState::Enum::kInterrupted:
+      DCHECK(control_thread_state_ == V8AudioContextState::Enum::kSuspended ||
+             control_thread_state_ == V8AudioContextState::Enum::kRunning);
       break;
   }
 
@@ -730,9 +748,9 @@ void BaseAudioContext::HandleStoppableSourceNodes() {
     // long as the active nodes eventually get stopped if they're done.
     for (auto handler : *active_source_handlers) {
       switch (handler->GetNodeType()) {
-        case AudioHandler::kNodeTypeAudioBufferSource:
-        case AudioHandler::kNodeTypeOscillator:
-        case AudioHandler::kNodeTypeConstantSource: {
+        case AudioHandler::NodeType::kNodeTypeAudioBufferSource:
+        case AudioHandler::NodeType::kNodeTypeOscillator:
+        case AudioHandler::NodeType::kNodeTypeConstantSource: {
           AudioScheduledSourceHandler* source_handler =
               static_cast<AudioScheduledSourceHandler*>(handler.get());
           source_handler->HandleStoppableSourceNode();
@@ -881,11 +899,12 @@ void BaseAudioContext::NotifyWorkletIsReady() {
       destination()->GetAudioDestinationHandler().RestartRendering();
       break;
     case V8AudioContextState::Enum::kSuspended:
-      // For the suspended context, the destination will use the worklet task
-      // runner for rendering. This also prevents the regular audio thread from
-      // touching worklet-related objects by blocking an invalid transitory
-      // state where the context state is suspended and the destination state is
-      // running. See: crbug.com/1403515
+    case V8AudioContextState::Enum::kInterrupted:
+      // For suspended and interrupted contexts, the destination will use the
+      // worklet task runner for rendering. This also prevents the regular audio
+      // thread from touching worklet-related objects by blocking an invalid
+      // transitory state where the context state is suspended or interrupted
+      // and the destination state is running. See: crbug.com/1403515
       destination()->GetAudioDestinationHandler().PrepareTaskRunnerForWorklet();
       break;
     case V8AudioContextState::Enum::kClosed:

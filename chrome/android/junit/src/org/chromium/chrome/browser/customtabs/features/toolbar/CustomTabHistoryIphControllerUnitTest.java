@@ -69,7 +69,7 @@ public class CustomTabHistoryIphControllerUnitTest {
     @Before
     public void setUp() {
         when(mTracker.isInitialized()).thenReturn(true);
-        when(mTracker.wouldTriggerHelpUI(FeatureConstants.CCT_HISTORY_FEATURE)).thenReturn(true);
+        when(mTracker.wouldTriggerHelpUi(FeatureConstants.CCT_HISTORY_FEATURE)).thenReturn(true);
         TrackerFactory.setTrackerForTests(mTracker);
         when(mMockProfile.isOffTheRecord()).thenReturn(false);
         var profileSupplier = new ObservableSupplierImpl<>(mMockProfile);
@@ -87,7 +87,7 @@ public class CustomTabHistoryIphControllerUnitTest {
     @Test
     public void testShowsIphOnPageLoad() {
         var tabObserver = mController.getTabObserverForTesting();
-        tabObserver.onPageLoadStarted(mTab, JUnitTestGURLs.EXAMPLE_URL);
+        tabObserver.onPageLoadFinished(mTab, JUnitTestGURLs.EXAMPLE_URL);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();

@@ -18,6 +18,7 @@
 #include "base/time/time.h"
 #include "chrome/browser/predictors/loading_data_collector.h"
 #include "chrome/browser/predictors/preconnect_manager.h"
+#include "chrome/browser/predictors/predictors_traffic_annotations.h"
 #include "chrome/browser/predictors/prefetch_manager.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor.h"
 #include "chrome/browser/profiles/profile.h"
@@ -128,15 +129,24 @@ class LoadingPredictor : public KeyedService,
     return active_hints_;
   }
 
-  // May start a preconnect for |url|, if the current profile settings allow to
-  // perform preresolve and preconnect actions.
-  void PreconnectURLIfAllowed(
+  // May start a preconnect for `url`, if the current profile settings allow to
+  // perform preresolve and preconnect actions. When `traffic_annotation` is
+  // set, it will use the value over the default
+  // `kLoadingPredictorPreconnectTrafficAnnotation`, later passed on to //net.
+  // Virtual for testing.
+  virtual void PreconnectURLIfAllowed(
       const GURL& url,
       bool allow_credentials,
-      const net::NetworkAnonymizationKey& network_anonymization_key);
+      const net::NetworkAnonymizationKey& network_anonymization_key,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation =
+          kLoadingPredictorPreconnectTrafficAnnotation,
+      const content::StoragePartitionConfig* storage_partition_config =
+          nullptr);
 
   void MaybePrewarmResources(const std::optional<url::Origin>& initiator_origin,
                              const GURL& top_frame_main_resource_url);
+
+  bool IsLCPPTestingEnabled() const { return is_lcpp_testing_enabled_; }
 
  private:
   // Stores the information necessary to keep track of the active navigations.
@@ -192,6 +202,9 @@ class LoadingPredictor : public KeyedService,
     loading_data_collector_ = std::move(loading_data_collector);
   }
 
+  // For LCPP testing.
+  void EnableLCPPTesting() { is_lcpp_testing_enabled_ = true; }
+
   LoadingPredictorConfig config_;
   raw_ptr<Profile, DanglingUntriaged> profile_;
   std::unique_ptr<ResourcePrefetchPredictor> resource_prefetch_predictor_;
@@ -212,10 +225,13 @@ class LoadingPredictor : public KeyedService,
 
   PreconnectData new_tab_page_preconnect_data_;
 
+  bool is_lcpp_testing_enabled_ = false;
+
   friend class LoadingPredictorTest;
   friend class LoadingPredictorPreconnectTest;
   friend class LoadingPredictorTabHelperTest;
   friend class LoadingPredictorTabHelperTestCollectorTest;
+  friend class LCPPTimingPredictorTestBase;
   FRIEND_TEST_ALL_PREFIXES(LoadingPredictorTest,
                            TestMainFrameResponseCancelsHint);
   FRIEND_TEST_ALL_PREFIXES(LoadingPredictorTest,

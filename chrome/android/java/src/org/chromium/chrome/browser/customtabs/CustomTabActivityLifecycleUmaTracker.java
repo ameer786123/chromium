@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.customtabs;
 
-import static org.chromium.chrome.browser.dependency_injection.ChromeCommonQualifiers.SAVED_INSTANCE_SUPPLIER;
-
 import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
@@ -25,7 +23,6 @@ import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.CustomTabProfileType;
 import org.chromium.chrome.browser.customtabs.features.TabInteractionRecorder;
-import org.chromium.chrome.browser.dependency_injection.ActivityScope;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
 import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
@@ -37,11 +34,7 @@ import org.chromium.chrome.browser.webapps.WebappCustomTabTimeSpentLogger;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-import javax.inject.Inject;
-import javax.inject.Named;
-
 /** Handles recording User Metrics for Custom Tab Activity. */
-@ActivityScope
 public class CustomTabActivityLifecycleUmaTracker
         implements PauseResumeWithNativeObserver, StartStopWithNativeObserver, NativeInitObserver {
     /**
@@ -65,7 +58,6 @@ public class CustomTabActivityLifecycleUmaTracker
     private final BrowserServicesIntentDataProvider mIntentDataProvider;
     private final Supplier<Bundle> mSavedInstanceStateSupplier;
     private final Activity mActivity;
-    private final CustomTabsConnection mConnection;
 
     private WebappCustomTabTimeSpentLogger mWebappTimeSpentLogger;
     private boolean mIsInitialResume = true;
@@ -133,17 +125,14 @@ public class CustomTabActivityLifecycleUmaTracker
         }
     }
 
-    @Inject
     public CustomTabActivityLifecycleUmaTracker(
-            ActivityLifecycleDispatcher lifecycleDispatcher,
-            BrowserServicesIntentDataProvider intentDataProvider,
             Activity activity,
-            @Named(SAVED_INSTANCE_SUPPLIER) Supplier<Bundle> savedInstanceStateSupplier,
-            CustomTabsConnection connection) {
+            BrowserServicesIntentDataProvider intentDataProvider,
+            Supplier<Bundle> savedInstanceStateSupplier,
+            ActivityLifecycleDispatcher lifecycleDispatcher) {
         mIntentDataProvider = intentDataProvider;
         mActivity = activity;
         mSavedInstanceStateSupplier = savedInstanceStateSupplier;
-        mConnection = connection;
 
         lifecycleDispatcher.register(this);
     }
@@ -200,12 +189,14 @@ public class CustomTabActivityLifecycleUmaTracker
 
     @Override
     public void onStartWithNative() {
-        mConnection.setCustomTabIsInForeground(mIntentDataProvider.getSession(), true);
+        CustomTabsConnection.getInstance()
+                .setCustomTabIsInForeground(mIntentDataProvider.getSession(), true);
     }
 
     @Override
     public void onStopWithNative() {
-        mConnection.setCustomTabIsInForeground(mIntentDataProvider.getSession(), false);
+        CustomTabsConnection.getInstance()
+                .setCustomTabIsInForeground(mIntentDataProvider.getSession(), false);
     }
 
     @Override

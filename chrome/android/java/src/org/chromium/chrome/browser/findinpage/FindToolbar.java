@@ -33,6 +33,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.core.view.accessibility.AccessibilityEventCompat;
 import androidx.core.view.inputmethod.EditorInfoCompat;
 
+import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
@@ -44,7 +45,6 @@ import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.text.VerticallyFixedEditText;
@@ -75,6 +75,12 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
         int HIDING = 3;
     }
 
+    private final ObservableSupplierImpl<Boolean> mBackPressStateSupplier =
+            new ObservableSupplierImpl<>();
+    private final Callback<TabModel> mCurrentTabModelObserver = this::onTabModelSelected;
+    private final TabModelObserver mTabModelObserver;
+    private final TabObserver mTabObserver;
+
     // Toolbar UI
     private TextView mFindStatus;
     protected FindQuery mFindQuery;
@@ -86,10 +92,8 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
     private FindResultBar mResultBar;
 
     private TabModelSelector mTabModelSelector;
-    private final TabModelSelectorObserver mTabModelSelectorObserver;
-    private final TabModelObserver mTabModelObserver;
     private Tab mCurrentTab;
-    private final TabObserver mTabObserver;
+    private TabModel mCurrentTabModel;
     private WindowAndroid mWindowAndroid;
     private FindInPageBridge mFindInPageBridge;
     private FindToolbarObserver mObserver;
@@ -107,8 +111,6 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
     private @FindLocationBarState int mDesiredState = FindLocationBarState.HIDDEN;
 
     private Handler mHandler = new Handler();
-    private final ObservableSupplierImpl<Boolean> mBackPressStateSupplier =
-            new ObservableSupplierImpl<>();
 
     /** Subclasses EditText in order to intercept BACK key presses. */
     @SuppressLint("Instantiatable")
@@ -217,15 +219,6 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
                     @Override
                     public void onFindMatchRectsAvailable(FindMatchRectsDetails result) {
                         onFindMatchRects(result);
-                    }
-                };
-
-        mTabModelSelectorObserver =
-                new TabModelSelectorObserver() {
-                    @Override
-                    public void onTabModelSelected(TabModel newModel, TabModel oldModel) {
-                        deactivate();
-                        updateVisualsForTabModel(isIncognito());
                     }
                 };
 
@@ -473,11 +466,10 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
         // cases it looks less broken to show 0 instead of -1 (as desktop does).
         Context context = getContext();
         String text =
-                context.getResources()
-                        .getString(
-                                R.string.find_in_page_count,
-                                Math.max(result.activeMatchOrdinal, 0),
-                                result.numberOfMatches);
+                context.getString(
+                        R.string.find_in_page_count,
+                        Math.max(result.activeMatchOrdinal, 0),
+                        result.numberOfMatches);
         setStatus(text, result.numberOfMatches == 0);
 
         setPrevNextEnabled(result.numberOfMatches > 0);
@@ -511,12 +503,9 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
     private String getAccessibleStatusText(int activeMatchOrdinal, int numberOfMatches) {
         Context context = getContext();
         return (numberOfMatches > 0)
-                ? context.getResources()
-                        .getString(
-                                R.string.accessible_find_in_page_count,
-                                activeMatchOrdinal,
-                                numberOfMatches)
-                : context.getResources().getString(R.string.accessible_find_in_page_no_results);
+                ? context.getString(
+                        R.string.accessible_find_in_page_count, activeMatchOrdinal, numberOfMatches)
+                : context.getString(R.string.accessible_find_in_page_no_results);
     }
 
     /** The find toolbar's container must provide access to its TabModel. */
@@ -580,7 +569,8 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
 
     /** Logic for handling the activation of the find toolbar. */
     protected void handleActivate() {
-        mTabModelSelector.addObserver(mTabModelSelectorObserver);
+        mTabModelSelector.getCurrentTabModelSupplier().addObserver(mCurrentTabModelObserver);
+        mCurrentTabModel = mTabModelSelector.getCurrentModel();
         for (TabModel model : mTabModelSelector.getModels()) {
             model.addObserver(mTabModelObserver);
         }
@@ -622,7 +612,7 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
     protected void handleDeactivation(boolean clearSelection) {
         setResultsBarVisibility(false);
 
-        mTabModelSelector.removeObserver(mTabModelSelectorObserver);
+        mTabModelSelector.getCurrentTabModelSupplier().removeObserver(mCurrentTabModelObserver);
         for (TabModel model : mTabModelSelector.getModels()) {
             model.removeObserver(mTabModelObserver);
         }
@@ -638,6 +628,7 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
         mFindInPageBridge.destroy();
         mFindInPageBridge = null;
         mCurrentTab = null;
+        mCurrentTabModel = null;
 
         setCurrentState(FindLocationBarState.HIDDEN);
     }
@@ -794,6 +785,13 @@ public class FindToolbar extends LinearLayout implements BackPressHandler {
             return;
         }
         mWindowAndroid.getKeyboardDelegate().showKeyboard(mFindQuery);
+    }
+
+    private void onTabModelSelected(@Nullable TabModel newModel) {
+        if (mCurrentTabModel == newModel) return;
+
+        deactivate();
+        updateVisualsForTabModel(isIncognito());
     }
 
     protected boolean isIncognito() {

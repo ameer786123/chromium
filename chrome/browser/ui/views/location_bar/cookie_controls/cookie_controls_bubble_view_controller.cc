@@ -83,7 +83,7 @@ CookieControlsBubbleViewController::CookieControlsBubbleViewController(
       ax::mojom::Role::kAlert);
 }
 
-void CookieControlsBubbleViewController::OnUserClosedContentView() {
+void CookieControlsBubbleViewController::OnUserTriggeredReloadingAction() {
   if (!controller_->HasUserChangedCookieBlockingForSite()) {
     controller_observation_.Reset();
     bubble_view_->CloseWidget();
@@ -100,18 +100,18 @@ void CookieControlsBubbleViewController::OnUserClosedContentView() {
 }
 
 void CookieControlsBubbleViewController::SwitchToReloadingView() {
-  bubble_view_->SwitchToReloadingView();
-  bubble_view_->GetReloadingView()->GetViewAccessibility().AnnounceText(
-      l10n_util::GetStringFUTF16(IDS_COOKIE_CONTROLS_BUBBLE_RELOADING_LABEL,
-                                 GetSubjectUrlName(web_contents_.get())));
-  bubble_view_->GetReloadingView()->RequestFocus();
-
-  // Set a timeout for how long the reloading view is shown for.
+  if (!controller_->ShowActFeatures()) {
+    bubble_view_->SwitchToReloadingView();
+    bubble_view_->GetReloadingView()->GetViewAccessibility().AnnounceText(
+        l10n_util::GetStringFUTF16(IDS_COOKIE_CONTROLS_BUBBLE_RELOADING_LABEL,
+                                   GetSubjectUrlName(web_contents_.get())));
+    bubble_view_->GetReloadingView()->RequestFocus();
+  }
+  // Set a timeout for how long the reloading UI is shown for.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
-      base::BindOnce(
-          &CookieControlsBubbleViewController::OnReloadingViewTimeout,
-          weak_factory_.GetWeakPtr()),
+      base::BindOnce(&CookieControlsBubbleViewController::OnReloadingUiTimeout,
+                     weak_factory_.GetWeakPtr()),
       content_settings::features::kUserBypassUIReloadBubbleTimeout.Get());
 }
 
@@ -125,7 +125,7 @@ void CookieControlsBubbleViewController::ApplyThirdPartyCookiesAllowedState(
     base::Time expiration) {
   bool is_permanent_exception = expiration == base::Time();
   std::u16string label_title;
-  int bubble_title, label_description;
+  int label_description;
   if (is_permanent_exception ||
       enforcement == CookieControlsEnforcement::kEnforcedByCookieSetting) {
     label_title = l10n_util::GetStringUTF16(
@@ -141,15 +141,8 @@ void CookieControlsBubbleViewController::ApplyThirdPartyCookiesAllowedState(
     label_description =
         IDS_TRACKING_PROTECTION_BUBBLE_BLOCKING_RESTART_DESCRIPTION;
   }
-  if (base::FeatureList::IsEnabled(
-          privacy_sandbox::kTrackingProtection3pcdUx) &&
-      blocking_status_ != CookieBlocking3pcdStatus::kNotIn3pcd) {
-    bubble_title = IDS_TRACKING_PROTECTION_BUBBLE_TITLE;
-  } else {
-    bubble_title = IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_ALLOWED_TITLE;
-  }
-
-  bubble_view_->UpdateTitle(l10n_util::GetStringUTF16(bubble_title));
+  bubble_view_->UpdateTitle(l10n_util::GetStringUTF16(
+      IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_ALLOWED_TITLE));
   bubble_view_->GetContentView()->UpdateContentLabels(
       label_title, l10n_util::GetStringUTF16(label_description));
   // ACT feature toggle matches protections state (off when protections off).
@@ -158,15 +151,10 @@ void CookieControlsBubbleViewController::ApplyThirdPartyCookiesAllowedState(
 }
 
 void CookieControlsBubbleViewController::ApplyThirdPartyCookiesBlockedState() {
-  int label_title = IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_BLOCKED_TITLE;
-  if (base::FeatureList::IsEnabled(
-          privacy_sandbox::kTrackingProtection3pcdUx) &&
-      blocking_status_ != CookieBlocking3pcdStatus::kNotIn3pcd) {
-    label_title = IDS_TRACKING_PROTECTION_BUBBLE_TITLE;
-  } else if (blocking_status_ == CookieBlocking3pcdStatus::kLimited) {
-    label_title = IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_LIMITED_TITLE;
-  }
-  bubble_view_->UpdateTitle(l10n_util::GetStringUTF16(label_title));
+  bubble_view_->UpdateTitle(l10n_util::GetStringUTF16(
+      blocking_status_ == CookieBlocking3pcdStatus::kLimited
+          ? IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_LIMITED_TITLE
+          : IDS_COOKIE_CONTROLS_BUBBLE_COOKIES_BLOCKED_TITLE));
   bubble_view_->GetContentView()->UpdateContentLabels(
       l10n_util::GetStringUTF16(
           IDS_COOKIE_CONTROLS_BUBBLE_SITE_NOT_WORKING_TITLE),
@@ -245,9 +233,13 @@ void CookieControlsBubbleViewController::OnStatusChanged(
     CookieBlocking3pcdStatus blocking_status,
     base::Time expiration,
     std::vector<content_settings::TrackingProtectionFeature> features) {
+  // Leave the UI unchanged during reloading; it will update after the page
+  // loads.
+  if (is_reloading_state_) {
+    return;
+  }
   protections_on_ = protections_on;
   blocking_status_ = blocking_status;
-
   if (!controls_visible || features.empty()) {
     bubble_view_->CloseWidget();
     return;
@@ -322,7 +314,7 @@ void CookieControlsBubbleViewController::
   CloseBubble();
 }
 
-void CookieControlsBubbleViewController::OnReloadingViewTimeout() {
+void CookieControlsBubbleViewController::OnReloadingUiTimeout() {
   base::RecordAction(
       base::UserMetricsAction("CookieControls.Bubble.ReloadingTimeout"));
   CloseBubble();
@@ -338,10 +330,11 @@ void CookieControlsBubbleViewController::CloseBubble() {
 }
 
 void CookieControlsBubbleViewController::SetCallbacks() {
-  on_user_closed_content_view_callback_ =
-      bubble_view_->RegisterOnUserClosedContentViewCallback(base::BindRepeating(
-          &CookieControlsBubbleViewController::OnUserClosedContentView,
-          base::Unretained(this)));
+  on_user_triggered_reloading_action_callback_ =
+      bubble_view_->RegisterOnUserTriggeredReloadingActionCallback(
+          base::BindRepeating(&CookieControlsBubbleViewController::
+                                  OnUserTriggeredReloadingAction,
+                              base::Unretained(this)));
 
   toggle_button_callback_ =
       bubble_view_->GetContentView()->RegisterToggleButtonPressedCallback(
@@ -369,9 +362,14 @@ void CookieControlsBubbleViewController::OnToggleButtonPressed(
         "CookieControls.Bubble.BlockThirdPartyCookies"));
   }
   controller_->SetUserChangedCookieBlockingForSite(true);
+  // We should only enter the reloading state in the Incognito ACT UI.
+  if (controller_->ShowActFeatures()) {
+    is_reloading_state_ = true;
+    OnUserTriggeredReloadingAction();
+  }
   // Set the toggle ON when protections are ON (cookies are blocked).
   controller_->OnCookieBlockingEnabledForSite(protections_on);
-  bubble_view_->GetContentView()->NotifyAccessibilityEvent(
+  bubble_view_->GetContentView()->NotifyAccessibilityEventDeprecated(
       ax::mojom::Event::kAlert, true);
 }
 

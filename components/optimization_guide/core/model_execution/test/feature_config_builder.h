@@ -84,6 +84,22 @@ inline proto::OnDeviceModelValidationConfig WillFailValidationConfig() {
   return validation_config;
 }
 
+inline proto::OnDeviceModelExecutionConfig ExecutionConfigWithValidation(
+    proto::OnDeviceModelValidationConfig validation_config) {
+  proto::OnDeviceModelExecutionConfig cfg;
+  *cfg.mutable_validation_config() = std::move(validation_config);
+  return cfg;
+}
+
+inline proto::OnDeviceModelExecutionConfig ExecutionConfigWithCapabilities(
+    const std::vector<proto::OnDeviceModelCapability>& capabilities) {
+  proto::OnDeviceModelExecutionConfig cfg;
+  for (proto::OnDeviceModelCapability c : capabilities) {
+    cfg.add_capabilities(c);
+  }
+  return cfg;
+}
+
 inline auto Int32Proto(int32_t value) {
   proto::Value v;
   v.set_int32_value(value);

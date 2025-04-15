@@ -93,8 +93,7 @@ PermissionRequest::GetDialogAnnotatedMessageText(
       break;
     case RequestType::kDiskQuota:
       // Handled by an override in `QuotaPermissionRequest`.
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case RequestType::kFileSystemAccess:
       NOTREACHED();
     case RequestType::kHandTracking:
@@ -139,8 +138,7 @@ PermissionRequest::GetDialogAnnotatedMessageText(
                   embedding_origin_string_formatted)),
           /*bolded_ranges=*/{});
     case RequestType::kTopLevelStorageAccess:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case RequestType::kVrSession:
       message_id = IDS_VR_INFOBAR_TEXT;
       break;
@@ -206,7 +204,13 @@ std::optional<std::u16string> PermissionRequest::GetRequestChipText(
     ChipTextType type) const {
   static base::NoDestructor<std::map<RequestType, std::vector<int>>> kMessageIds(
       {{RequestType::kArSession,
-        {IDS_AR_PERMISSION_CHIP, -1, -1, -1, -1, -1, -1, -1}},
+        {IDS_AR_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_AR_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_AR_ALLOWED_ONCE_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_AR_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kCameraStream,
         {IDS_MEDIA_CAPTURE_VIDEO_ONLY_PERMISSION_CHIP, -1,
          IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
@@ -287,7 +291,13 @@ std::optional<std::u16string> PermissionRequest::GetRequestChipText(
          IDS_PERMISSIONS_SAA_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT, -1,
          IDS_PERMISSIONS_SAA_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kVrSession,
-        {IDS_VR_PERMISSION_CHIP, -1, -1, -1, -1, -1, -1, -1}},
+        {IDS_VR_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_VR_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_VR_ALLOWED_ONCE_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_VR_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kWebAppInstallation,
         {IDS_WEB_APP_INSTALLATION_PERMISSION_CHIP, -1,
          IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
@@ -343,6 +353,9 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
     case RequestType::kLocalFonts:
       message_id = IDS_FONT_ACCESS_PERMISSION_FRAGMENT;
       break;
+    case RequestType::kLocalNetworkAccess:
+      message_id = IDS_LOCAL_NETWORK_ACCESS_PERMISSION_FRAGMENT;
+      break;
     case RequestType::kMicStream:
       message_id = IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_FRAGMENT;
       break;
@@ -365,13 +378,11 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
 #endif
     case RequestType::kRegisterProtocolHandler:
       // Handled by an override in `RegisterProtocolHandlerPermissionRequest`.
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
 #if BUILDFLAG(IS_CHROMEOS)
     case RequestType::kSmartCard:
       // Handled by an override in `SmartCardPermissionRequest`.
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
 #endif
     case RequestType::kStorageAccess:
     case RequestType::kTopLevelStorageAccess:
@@ -401,6 +412,10 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
 #endif
 
 std::optional<std::u16string> PermissionRequest::GetAllowAlwaysText() const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> PermissionRequest::GetBlockText() const {
   return std::nullopt;
 }
 
@@ -465,8 +480,7 @@ std::u16string PermissionRequest::GetPermissionNameTextFragment() const {
       message_id = IDS_MICROPHONE_PERMISSION_NAME_FRAGMENT;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return std::u16string();
+      NOTREACHED();
   }
   DCHECK_NE(0, message_id);
   return l10n_util::GetStringUTF16(message_id);

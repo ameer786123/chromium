@@ -19,7 +19,6 @@ import org.chromium.payments.mojom.PaymentAddress;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.List;
 import java.util.regex.Pattern;
 
 /** The locally stored autofill address. */
@@ -72,9 +71,9 @@ public class AutofillAddress extends EditableOption {
             Context context, AutofillProfile profile, PersonalDataManager personalDataManager) {
         super(
                 profile.getGUID(),
-                profile.getFullName(),
+                profile.getInfo(FieldType.NAME_FULL),
                 profile.getLabel(),
-                profile.getPhoneNumber(),
+                profile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER),
                 null);
         mContext = context;
         mProfile = profile;
@@ -116,9 +115,9 @@ public class AutofillAddress extends EditableOption {
         mProfile = profile;
         updateIdentifierAndLabels(
                 mProfile.getGUID(),
-                mProfile.getFullName(),
+                mProfile.getInfo(FieldType.NAME_FULL),
                 mProfile.getLabel(),
-                mProfile.getPhoneNumber());
+                mProfile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER));
         checkAndUpdateAddressCompleteness();
     }
 
@@ -230,19 +229,19 @@ public class AutofillAddress extends EditableOption {
             AutofillProfile profile, PersonalDataManager personalDataManager) {
         @CompletionStatus int completionStatus = CompletionStatus.COMPLETE;
 
-        if (TextUtils.isEmpty(profile.getFullName())) {
+        if (TextUtils.isEmpty(profile.getInfo(FieldType.NAME_FULL))) {
             completionStatus |= CompletionStatus.INVALID_RECIPIENT;
         }
 
         if (!PhoneNumberUtils.isGlobalPhoneNumber(
-                PhoneNumberUtils.stripSeparators(profile.getPhoneNumber().toString()))) {
+                PhoneNumberUtils.stripSeparators(
+                        profile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER).toString()))) {
             completionStatus |= CompletionStatus.INVALID_PHONE_NUMBER;
         }
 
-        List<Integer> requiredFields =
+        for (int fieldId :
                 AutofillProfileBridge.getRequiredAddressFields(
-                        AutofillAddress.getCountryCode(profile, personalDataManager));
-        for (int fieldId : requiredFields) {
+                        AutofillAddress.getCountryCode(profile, personalDataManager))) {
             if (fieldId == FieldType.NAME_FULL || fieldId == FieldType.ADDRESS_HOME_COUNTRY) {
                 continue;
             }
@@ -277,15 +276,15 @@ public class AutofillAddress extends EditableOption {
         PaymentAddress result = new PaymentAddress();
 
         result.country = getCountryCode(mProfile, mPersonalDataManager);
-        result.addressLine = mProfile.getStreetAddress().split("\n");
-        result.region = mProfile.getRegion();
-        result.city = mProfile.getLocality();
-        result.dependentLocality = mProfile.getDependentLocality();
-        result.postalCode = mProfile.getPostalCode();
-        result.sortingCode = mProfile.getSortingCode();
-        result.organization = mProfile.getCompanyName();
-        result.recipient = mProfile.getFullName();
-        result.phone = mProfile.getPhoneNumber();
+        result.addressLine = mProfile.getInfo(FieldType.ADDRESS_HOME_STREET_ADDRESS).split("\n");
+        result.region = mProfile.getInfo(FieldType.ADDRESS_HOME_STATE);
+        result.city = mProfile.getInfo(FieldType.ADDRESS_HOME_CITY);
+        result.dependentLocality = mProfile.getInfo(FieldType.ADDRESS_HOME_DEPENDENT_LOCALITY);
+        result.postalCode = mProfile.getInfo(FieldType.ADDRESS_HOME_ZIP);
+        result.sortingCode = mProfile.getInfo(FieldType.ADDRESS_HOME_SORTING_CODE);
+        result.organization = mProfile.getInfo(FieldType.COMPANY_NAME);
+        result.recipient = mProfile.getInfo(FieldType.NAME_FULL);
+        result.phone = mProfile.getInfo(FieldType.PHONE_HOME_WHOLE_NUMBER);
 
         return result;
     }

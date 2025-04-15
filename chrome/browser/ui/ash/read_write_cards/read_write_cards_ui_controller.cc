@@ -10,8 +10,8 @@
 #include "base/check_is_test.h"
 #include "base/check_op.h"
 #include "base/no_destructor.h"
+#include "chrome/browser/ui/ash/editor_menu/utils/pre_target_handler.h"
 #include "chrome/browser/ui/ash/read_write_cards/read_write_cards_view.h"
-#include "chrome/browser/ui/views/editor_menu/utils/pre_target_handler.h"
 #include "ui/aura/window.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
@@ -181,13 +181,8 @@ void ReadWriteCardsUiController::Relayout() {
   ReorderChildViews();
 
   gfx::Rect bounds(widget_origin, widget_size);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // For Ash, convert the position relative to the screen.
-  // For Lacros, `bounds` is already relative to the toplevel window and the
-  // position will be calculated on server side.
+  // Convert the position relative to the screen.
   wm::ConvertRectFromScreen(widget_->GetNativeWindow()->parent(), &bounds);
-#endif
-
   widget_->SetBounds(bounds);
 }
 

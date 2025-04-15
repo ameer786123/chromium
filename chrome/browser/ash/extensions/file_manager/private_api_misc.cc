@@ -6,20 +6,20 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
 
-#include "ash/components/arc/arc_prefs.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/multi_user_window_manager.h"
-#include "ash/public/cpp/new_window_delegate.h"
 #include "ash/webui/settings/public/constants/routes_util.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/i18n/time_formatting.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
@@ -75,6 +75,7 @@
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/drivefs/drivefs_pinning_manager.h"
 #include "chromeos/ash/components/settings/timezone_settings.h"
+#include "chromeos/ash/experiences/arc/arc_prefs.h"
 #include "components/account_id/account_id.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -210,8 +211,7 @@ bool IsAllowedSource(storage::FileSystemType type,
                      fmp::SourceRestriction restriction) {
   switch (restriction) {
     case fmp::SourceRestriction::kNone:
-      NOTREACHED_IN_MIGRATION();
-      return false;
+      NOTREACHED();
 
     case fmp::SourceRestriction::kAnySource:
       return true;
@@ -254,24 +254,52 @@ api::file_manager_private::DefaultLocation GetDefaultLocation(
 }
 
 // Converts the value of LocalUserFilesMigrationDestination policy to
-// api::file_manager_private::CloudProvider. If SkyVault is misconfigured,
-// e.g. local files are enabled returns kNotSpecified, regardless of the policy
-// value.
-api::file_manager_private::CloudProvider GetSkyVaultMigrationDestination() {
+// api::file_manager_private::MigrationDestination. If SkyVault is
+// misconfigured, e.g. local files are enabled returns kNotSpecified, regardless
+// of the policy value.
+api::file_manager_private::MigrationDestination
+GetSkyVaultMigrationDestination() {
   if (policy::local_user_files::LocalUserFilesAllowed()) {
     // If local files are allowed, just return kNotSpecified.
-    return api::file_manager_private::CloudProvider::kNotSpecified;
+    return api::file_manager_private::MigrationDestination::kNotSpecified;
   }
 
-  auto cloud_provider = policy::local_user_files::GetMigrationDestination();
-  switch (cloud_provider) {
-    case policy::local_user_files::CloudProvider::kNotSpecified:
-      return api::file_manager_private::CloudProvider::kNotSpecified;
-    case policy::local_user_files::CloudProvider::kGoogleDrive:
-      return api::file_manager_private::CloudProvider::kGoogleDrive;
-    case policy::local_user_files::CloudProvider::kOneDrive:
-      return api::file_manager_private::CloudProvider::kOnedrive;
+  const auto migration_destination =
+      policy::local_user_files::GetMigrationDestination();
+  switch (migration_destination) {
+    case policy::local_user_files::MigrationDestination::kNotSpecified:
+      return api::file_manager_private::MigrationDestination::kNotSpecified;
+    case policy::local_user_files::MigrationDestination::kGoogleDrive:
+      return api::file_manager_private::MigrationDestination::kGoogleDrive;
+    case policy::local_user_files::MigrationDestination::kOneDrive:
+      return api::file_manager_private::MigrationDestination::kOnedrive;
+    case policy::local_user_files::MigrationDestination::kDelete:
+      return api::file_manager_private::MigrationDestination::kDelete;
   }
+}
+
+// Returns the SkyVault migration start time as a formatted string if the
+// policies are set to disable local storage and delete existing local files.
+std::optional<std::string> GetSkyVaultMigrationStartTime(Profile* profile) {
+  if (policy::local_user_files::LocalUserFilesAllowed()) {
+    return std::nullopt;
+  }
+
+  const auto migration_destination =
+      policy::local_user_files::GetMigrationDestination();
+  if (migration_destination !=
+      policy::local_user_files::MigrationDestination::kDelete) {
+    return std::nullopt;
+  }
+
+  const std::optional<base::Time> start_time =
+      policy::local_user_files::GetMigrationStartTime(profile);
+  if (start_time->is_null()) {
+    LOG(ERROR) << "Could not retrieve SkyVault Migration Start time";
+    return std::nullopt;
+  }
+  return base::UTF16ToUTF8(
+      base::TimeFormatShortDateAndTimeWithTimeZone(start_time.value()));
 }
 
 }  // namespace
@@ -320,6 +348,8 @@ FileManagerPrivateGetPreferencesFunction::Run() {
   result.default_location =
       GetDefaultLocation(prefs->GetString(prefs::kFilesAppDefaultLocation));
   result.sky_vault_migration_destination = GetSkyVaultMigrationDestination();
+  result.sky_vault_migration_start_time =
+      GetSkyVaultMigrationStartTime(profile);
 
   return RespondNow(WithArguments(result.ToValue()));
 }
@@ -385,8 +415,7 @@ ExtensionFunction::ResponseAction FileManagerPrivateZoomFunction::Run() {
       zoom_type = content::PAGE_ZOOM_RESET;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return RespondNow(Error(kUnknownErrorDoNotUse));
+      NOTREACHED();
   }
   zoom::PageZoom::Zoom(GetSenderWebContents(), zoom_type);
   return RespondNow(NoArguments());
@@ -454,10 +483,7 @@ FileManagerPrivateOpenInspectorFunction::Run() {
       }
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
-      return RespondNow(Error(
-          base::StringPrintf("Unexpected inspection type(%d) is specified.",
-                             static_cast<int>(params->type))));
+      NOTREACHED();
   }
   return RespondNow(NoArguments());
 }
@@ -942,7 +968,7 @@ void FileManagerPrivateInternalInstallLinuxPackageFunction::
       response = fmp::InstallLinuxPackageStatus::kInstallAlreadyActive;
       break;
     default:
-      NOTREACHED_IN_MIGRATION();
+      NOTREACHED();
   }
   Respond(ArgumentList(fmpi::InstallLinuxPackage::Results::Create(response)));
 }
@@ -1153,23 +1179,6 @@ ExtensionFunction::ResponseAction
 FileManagerPrivateIsTabletModeEnabledFunction::Run() {
   return RespondNow(
       WithArguments(display::Screen::GetScreen()->InTabletMode()));
-}
-
-ExtensionFunction::ResponseAction FileManagerPrivateOpenURLFunction::Run() {
-  using fmp::OpenURL::Params;
-  const optional<Params> params = Params::Create(args());
-  EXTENSION_FUNCTION_VALIDATE(params);
-  const GURL url(params->url);
-
-  if (!ash::NewWindowDelegate::GetPrimary()) {
-    return RespondNow(
-        Error("Could not get NewWindowDelegate's primary browser"));
-  }
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
-      url, ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
-      ash::NewWindowDelegate::Disposition::kNewForegroundTab);
-
-  return RespondNow(NoArguments());
 }
 
 ExtensionFunction::ResponseAction FileManagerPrivateOpenWindowFunction::Run() {

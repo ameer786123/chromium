@@ -21,8 +21,9 @@ TabSizer CalculateSpaceFractionAvailable(
     const TabLayoutConstants& layout_constants,
     const std::vector<TabWidthConstraints>& tabs,
     std::optional<int> width) {
-  if (!width.has_value())
+  if (!width.has_value()) {
     return TabSizer(LayoutDomain::kInactiveWidthEqualsActiveWidth, 1);
+  }
 
   float minimum_width = 0;
   float crossover_width = 0;
@@ -45,7 +46,7 @@ TabSizer CalculateSpaceFractionAvailable(
   float space_fraction_available;
   if (width < crossover_width) {
     domain = LayoutDomain::kInactiveWidthBelowActiveWidth;
-    // |minimum_width| may equal |crossover_width| when there is only one tab,
+    // `minimum_width` may equal `crossover_width` when there is only one tab,
     // that tab is active, and the tabstrip width is smaller than that width,
     // which will generally happen during startup of a new window. In this case
     // the layout will always be replaced before we paint, so our return value
@@ -56,7 +57,7 @@ TabSizer CalculateSpaceFractionAvailable(
                                          (crossover_width - minimum_width);
   } else {
     domain = LayoutDomain::kInactiveWidthEqualsActiveWidth;
-    // |preferred_width| may equal |crossover_width| when all tabs are pinned.
+    // `preferred_width` may equal `crossover_width` when all tabs are pinned.
     // In this case tabs will have the same width regardless of the space
     // available to them, so our return value is irrelevant.
     space_fraction_available = preferred_width == crossover_width
@@ -88,8 +89,9 @@ int TabSizer::CalculateTabWidth(const TabWidthConstraints& tab) const {
 }
 
 bool TabSizer::TabAcceptsExtraSpace(const TabWidthConstraints& tab) const {
-  if (space_fraction_available_ == 0.0f || space_fraction_available_ == 1.0f)
+  if (space_fraction_available_ == 0.0f || space_fraction_available_ == 1.0f) {
     return false;
+  }
   switch (domain_) {
     case LayoutDomain::kInactiveWidthBelowActiveWidth:
       return tab.GetMinimumWidth() < tab.GetLayoutCrossoverWidth();
@@ -111,8 +113,9 @@ void AllocateExtraSpace(std::vector<gfx::Rect>* bounds,
                         std::optional<int> extra_space,
                         TabSizer tab_sizer) {
   // Don't expand tabs if they are already at their preferred width.
-  if (tab_sizer.IsAlreadyPreferredWidth() || !extra_space.has_value())
+  if (tab_sizer.IsAlreadyPreferredWidth() || !extra_space.has_value()) {
     return;
+  }
 
   int allocated_extra_space = 0;
   for (size_t i = 0; i < tabs.size(); i++) {
@@ -130,8 +133,9 @@ std::vector<gfx::Rect> CalculateTabBounds(
     const TabLayoutConstants& layout_constants,
     const std::vector<TabWidthConstraints>& tabs,
     std::optional<int> width) {
-  if (tabs.empty())
+  if (tabs.empty()) {
     return std::vector<gfx::Rect>();
+  }
 
   TabSizer tab_sizer =
       CalculateSpaceFractionAvailable(layout_constants, tabs, width);

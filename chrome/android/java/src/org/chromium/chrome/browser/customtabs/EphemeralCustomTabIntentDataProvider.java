@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.customtabs;
 
+import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ENABLE_EPHEMERAL_BROWSING;
 
 import android.content.Context;
 import android.content.Intent;
@@ -40,7 +41,6 @@ public class EphemeralCustomTabIntentDataProvider extends CustomTabIntentDataPro
      * apps.
      */
     private void logFeatureUsage() {
-        if (!CustomTabsFeatureUsage.isEnabled()) return;
         CustomTabsFeatureUsage featureUsage = new CustomTabsFeatureUsage();
 
         // Ordering: Log all the features ordered by enum, when they apply.
@@ -52,8 +52,7 @@ public class EphemeralCustomTabIntentDataProvider extends CustomTabIntentDataPro
 
     private static boolean isEphemeralTabRequested(Intent intent) {
         if (!ChromeFeatureList.sCctEphemeralMode.isEnabled()) return false;
-        return IntentUtils.safeGetBooleanExtra(
-                intent, IntentHandler.EXTRA_ENABLE_EPHEMERAL_BROWSING, false);
+        return IntentUtils.safeGetBooleanExtra(intent, EXTRA_ENABLE_EPHEMERAL_BROWSING, false);
     }
 
     public @IntentHandler.IncognitoCctCallerId int getFeatureIdForMetricsCollection() {

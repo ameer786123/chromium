@@ -58,7 +58,7 @@ class ContentPasswordManagerDriver final
 
   // PasswordManagerDriver implementation.
   int GetId() const override;
-  void SetPasswordFillData(
+  void PropagateFillDataOnParsingCompletion(
       const autofill::PasswordFormFillData& form_data) override;
   void InformNoSavedCredentials(
       bool should_show_popup_without_passwords) override;
@@ -69,20 +69,31 @@ class ContentPasswordManagerDriver final
       const autofill::FormData& form_data,
       autofill::FieldRendererId generation_element_id,
       const std::u16string& password) override;
+  void GeneratedPasswordRejected() override;
   void FocusNextFieldAfterPasswords() override;
-  void FillField(const std::u16string& value) override;
+  void FillField(
+      const std::u16string& value,
+      autofill::AutofillSuggestionTriggerSource suggestion_source) override;
+  void SubmitChangePasswordForm(
+      autofill::FieldRendererId password_element_id,
+      autofill::FieldRendererId new_password_element_id,
+      autofill::FieldRendererId confirm_password_element_id,
+      const std::u16string& old_password,
+      const std::u16string& new_password,
+      base::OnceCallback<void(const autofill::FormData&)> form_data_callback)
+      override;
   void FillSuggestion(const std::u16string& username,
                       const std::u16string& password,
                       base::OnceCallback<void(bool)> success_callback) override;
-  void FillSuggestionById(autofill::FieldRendererId username_element_id,
-                          autofill::FieldRendererId password_element_id,
-                          const std::u16string& username,
-                          const std::u16string& password) override;
+  void FillSuggestionById(
+      autofill::FieldRendererId username_element_id,
+      autofill::FieldRendererId password_element_id,
+      const std::u16string& username,
+      const std::u16string& password,
+      autofill::AutofillSuggestionTriggerSource suggestion_source) override;
   void FillIntoFocusedField(bool is_password,
                             const std::u16string& credential) override;
 #if BUILDFLAG(IS_ANDROID)
-  void KeyboardReplacingSurfaceClosed(
-      ToShowVirtualKeyboard show_virtual_keyboard) override;
   void TriggerFormSubmission() override;
 #endif
   void PreviewField(autofill::FieldRendererId field_id,
@@ -117,6 +128,11 @@ class ContentPasswordManagerDriver final
   // Notify the renderer that the user wants to trigger password generation.
   void GeneratePassword(autofill::mojom::PasswordGenerationAgent::
                             TriggeredGeneratePasswordCallback callback);
+
+  // Notify the associated `PasswordAutofillManager` that password suggestions
+  // for the triggering field can be shown.
+  void ShowPasswordSuggestionsForField(
+      const autofill::TriggeringField& triggering_field);
 
   // Returns true if the field is any of the following cases:
   // 1) The field has type="password".
@@ -163,11 +179,6 @@ class ContentPasswordManagerDriver final
                                     bool is_likely_otp) override;
   void ShowPasswordSuggestions(
       const autofill::PasswordSuggestionRequest& request) override;
-#if BUILDFLAG(IS_ANDROID)
-  void ShowKeyboardReplacingSurface(
-      autofill::mojom::SubmissionReadinessState submission_readiness,
-      bool is_webauthn_form) override;
-#endif
   void CheckSafeBrowsingReputation(const GURL& form_action,
                                    const GURL& frame_url) override;
   void FocusedInputChanged(
@@ -187,6 +198,10 @@ class ContentPasswordManagerDriver final
 
   const mojo::AssociatedRemote<autofill::mojom::PasswordGenerationAgent>&
   GetPasswordGenerationAgent();
+
+  void OnChangePasswordFormFilled(
+      base::OnceCallback<void(const autofill::FormData&)> form_data_callback,
+      const autofill::FormData& raw_form);
 
   const raw_ptr<content::RenderFrameHost> render_frame_host_;
   const raw_ptr<PasswordManagerClient> client_;

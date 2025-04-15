@@ -100,7 +100,9 @@ public class OverlayPanelManagerTest {
                     profile,
                     compositorViewHolder,
                     MOCK_TOOLBAR_HEIGHT,
-                    () -> tab);
+                    () -> tab,
+                    /* desktopWindowStateManager= */ null,
+                    /* bottomControlsStacker= */ null);
             mPriority = priority;
             mCanBeSuppressed = canBeSuppressed;
         }
@@ -175,7 +177,8 @@ public class OverlayPanelManagerTest {
                                     mActivity,
                                     /* listenToActivityState= */ true,
                                     IntentRequestTracker.createFromActivity(mActivity),
-                                    mInsetObserver);
+                                    mInsetObserver,
+                                    /* trackOcclusion= */ true);
                         });
     }
 

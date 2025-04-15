@@ -223,7 +223,7 @@ class GetStatusForPolicyResultPromise
     }
 
     Resolve<V8MediaKeyStatus>(
-        EncryptedMediaUtils::ConvertKeyStatusToString(key_status));
+        EncryptedMediaUtils::ConvertKeyStatusToEnum(key_status));
   }
 
   void Trace(Visitor* visitor) const override {
@@ -241,7 +241,7 @@ class GetStatusForPolicyResultPromise
 
 MediaKeys::MediaKeys(
     ExecutionContext* context,
-    const WebVector<WebEncryptedMediaSessionType>& supported_session_types,
+    const std::vector<WebEncryptedMediaSessionType>& supported_session_types,
     std::unique_ptr<WebContentDecryptionModule> cdm,
     const MediaKeysConfig& config)
     : ActiveScriptWrappable<MediaKeys>({}),
@@ -396,6 +396,11 @@ ScriptPromise<V8MediaKeyStatus> MediaKeys::getStatusForPolicy(
     return EmptyPromise();
   }
 
+  if (!media_keys_policy->hasMinHdcpVersion()) {
+    exception_state.ThrowTypeError("MediaKeysPolicy is not present.");
+    return EmptyPromise();
+  }
+
   // TODO(xhwang): Pass MediaKeysPolicy classes all the way to Chromium when
   // we have more than one policy to check.
   String min_hdcp_version = media_keys_policy->minHdcpVersion();
@@ -491,7 +496,7 @@ void MediaKeys::TimerFired(TimerBase*) {
         break;
 
       default:
-        NOTREACHED_IN_MIGRATION();
+        NOTREACHED();
     }
   }
 }

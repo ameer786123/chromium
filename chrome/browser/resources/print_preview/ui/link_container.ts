@@ -13,18 +13,17 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 import type {Destination} from '../data/destination.js';
 // <if expr="is_win">
 import {DestinationOrigin, GooglePromotedDestinationId} from '../data/destination.js';
-
 // </if>
 import {getTemplate} from './link_container.html.js';
 
 export interface PrintPreviewLinkContainerElement {
   $: {
     // <if expr="is_macosx">
-    openPdfInPreviewLink: HTMLDivElement,
-    openPdfInPreviewThrobber: HTMLDivElement,
+    openPdfInPreviewLink: HTMLElement,
+    openPdfInPreviewThrobber: HTMLElement,
     // </if>
-    systemDialogLink: HTMLDivElement,
-    systemDialogThrobber: HTMLDivElement,
+    systemDialogLink: HTMLElement,
+    systemDialogThrobber: HTMLElement,
   };
 }
 
@@ -69,13 +68,13 @@ export class PrintPreviewLinkContainerElement extends PolymerElement {
     };
   }
 
-  appKioskMode: boolean;
-  destination: Destination|null;
-  disabled: boolean;
-  private shouldShowSystemDialogLink_: boolean;
-  private systemDialogLinkDisabled_: boolean;
-  private openingSystemDialog_: boolean;
-  private openingInPreview_: boolean;
+  declare appKioskMode: boolean;
+  declare destination: Destination|null;
+  declare disabled: boolean;
+  declare private shouldShowSystemDialogLink_: boolean;
+  declare private systemDialogLinkDisabled_: boolean;
+  declare private openingSystemDialog_: boolean;
+  declare private openingInPreview_: boolean;
 
   /**
    * @return Whether the system dialog link should be visible.

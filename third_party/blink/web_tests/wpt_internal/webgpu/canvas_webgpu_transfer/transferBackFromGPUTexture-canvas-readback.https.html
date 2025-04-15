@@ -1,14 +1,10 @@
 <!DOCTYPE html>
-<html>
-<head>
 <script src="/resources/testharness.js"></script>
 <script src="/resources/testharnessreport.js"></script>
-<script src="./canvas-test.js"></script>
+<script src="/html/canvas/resources/canvas-promise-test.js"></script>
 <script src="./webgpu-helpers.js"></script>
-</head>
 
 <h1>Canvas2D WebGPU Transfer: transferBackFromGPUTexture-canvas-readback</h1>
-
 <p>
   transferBackFromGPUTexture() should preserve texture changes done by WebGPU
   when transferring it back to the 2D canvas.
@@ -16,7 +12,7 @@
 
 <script>
 
-runCanvasTestsInWorker({dependencies: './webgpu-helpers.js'});
+runCanvasTestsInWorker({dependencies: ['./webgpu-helpers.js']});
 
 /**
  * transferBackFromGPUTexture() should preserve texture changes done by WebGPU
@@ -24,7 +20,7 @@ runCanvasTestsInWorker({dependencies: './webgpu-helpers.js'});
  */
 for (const [pixelFormat, contextOptions] of [
   ['rgb8', {}],
-  ['float16', {colorSpace: 'srgb', pixelFormat: 'float16'}],
+  ['float16', {colorSpace: 'srgb', colorType: 'float16'}],
 ]) {
   canvasPromiseTest(async (canvas) => {
     const adapter = await getWebGPUAdapter();
@@ -44,13 +40,12 @@ for (const [pixelFormat, contextOptions] of [
                         { r: 64 / 255, g: 128 / 255, b: 192 / 255, a: 1.0 });
 
     // Finish our WebGPU pass and restore the canvas.
-    ctx.transferBackFromGPUTexture(tex);
+    ctx.transferBackFromGPUTexture();
 
     // Verify that the canvas contains our chosen color across every pixel.
     checkCanvasColor(ctx, [0x40, 0x80, 0xC0, 0xFF]);
-  },
-  'transferBackFromGPUTexture() should transfer ' + pixelFormat + ' textures ' +
-  'modified by WebGPU back to the 2D canvas.');
+  }, 'transferBackFromGPUTexture() should transfer ' + pixelFormat +
+     ' textures ' + 'modified by WebGPU back to the 2D canvas.');
 }
 
 </script>

@@ -244,13 +244,7 @@ Database::Database(DatabaseContext* database_context,
       database_authorizer_(kInfoTableName),
       transaction_in_progress_(false),
       is_transaction_queue_enabled_(true),
-      did_try_to_count_transaction_(false),
-      feature_handle_for_scheduler_(
-          database_context->GetExecutionContext()
-              ->GetScheduler()
-              ->RegisterFeature(
-                  SchedulingPolicy::Feature::kWebDatabase,
-                  {SchedulingPolicy::DisableBackForwardCache()})) {
+      did_try_to_count_transaction_(false) {
   DCHECK(IsMainThread());
   context_thread_security_origin_ =
       database_context_->GetSecurityOrigin()->IsolatedCopy();
@@ -417,11 +411,6 @@ SQLTransactionClient* Database::TransactionClient() const {
 
 SQLTransactionCoordinator* Database::TransactionCoordinator() const {
   return GetDatabaseContext()->GetDatabaseThread()->TransactionCoordinator();
-}
-
-// static
-const char* Database::DatabaseInfoTableName() {
-  return kInfoTableName;
 }
 
 void Database::CloseDatabase() {
@@ -868,49 +857,6 @@ void Database::ScheduleTransactionCallback(SQLTransaction* transaction) {
       *GetDatabaseTaskRunner(), FROM_HERE,
       CrossThreadBindOnce(&SQLTransaction::PerformPendingCallback,
                           WrapCrossThreadPersistent(transaction)));
-}
-
-Vector<String> Database::PerformGetTableNames() {
-  DisableAuthorizer();
-
-  SQLiteStatement statement(
-      SqliteDatabase(), "SELECT name FROM sqlite_master WHERE type='table';");
-  if (statement.Prepare() != kSQLResultOk) {
-    DLOG(ERROR) << "Unable to retrieve list of tables for database "
-                << DatabaseDebugName();
-    EnableAuthorizer();
-    return Vector<String>();
-  }
-
-  Vector<String> table_names;
-  int result;
-  while ((result = statement.Step()) == kSQLResultRow) {
-    String name = statement.GetColumnText(0);
-    if (name != DatabaseInfoTableName())
-      table_names.push_back(name);
-  }
-
-  EnableAuthorizer();
-
-  if (result != kSQLResultDone) {
-    DLOG(ERROR) << "Error getting tables for database " << DatabaseDebugName();
-    return Vector<String>();
-  }
-
-  return table_names;
-}
-
-Vector<String> Database::TableNames() {
-  Vector<String> result;
-  base::WaitableEvent event;
-  if (!GetDatabaseContext()->DatabaseThreadAvailable())
-    return result;
-
-  auto task = std::make_unique<DatabaseTableNamesTask>(this, &event, result);
-  GetDatabaseContext()->GetDatabaseThread()->ScheduleTask(std::move(task));
-  event.Wait();
-
-  return result;
 }
 
 const SecurityOrigin* Database::GetSecurityOrigin() const {

@@ -8,7 +8,6 @@
 #include <ostream>
 
 #include "base/notreached.h"
-#include "build/chromeos_buildflags.h"
 #include "components/sync/base/data_type.h"
 
 namespace syncer {
@@ -35,14 +34,13 @@ constexpr char kAppsTypeName[] = "apps";
 constexpr char kReadingListTypeName[] = "readingList";
 constexpr char kTabsTypeName[] = "tabs";
 constexpr char kSavedTabGroupsTypeName[] = "savedTabGroups";
-constexpr char kSharedTabGroupDataTypeName[] = "sharedTabGroupData";
 constexpr char kPaymentsTypeName[] = "payments";
 constexpr char kProductComparisonTypeName[] = "productComparison";
 constexpr char kCookiesTypeName[] = "cookies";
 
 UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
-  static_assert(53 == syncer::GetNumDataTypes(),
-                "Almost always when adding a new DataType, you must tie it to "
+  static_assert(55 == syncer::GetNumDataTypes(),
+                "Almost always when adding a new Data, you must tie it to "
                 "a UserSelectableType below (new or existing) so the user can "
                 "disable syncing of that data. Today you must also update the "
                 "UI code yourself; crbug.com/1067282 and related bugs will "
@@ -89,7 +87,7 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
       return {kTabsTypeName,
               SESSIONS,
               {SESSIONS, SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA,
-               COLLABORATION_GROUP}};
+               COLLABORATION_GROUP, SHARED_TAB_GROUP_ACCOUNT_DATA}};
 #else
       return {kTabsTypeName, SESSIONS, {SESSIONS}};
 #endif
@@ -100,30 +98,21 @@ UserSelectableTypeInfo GetUserSelectableTypeInfo(UserSelectableType type) {
       // together with open tabs same as mobile.
       return {kSavedTabGroupsTypeName,
               SAVED_TAB_GROUP,
-              {SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA, COLLABORATION_GROUP}};
-    case UserSelectableType::kSharedTabGroupData:
-      // Note: COLLABORATION_GROUP might be re-used for other
-      // features. If this happens, it should probably be in
-      // AlwaysPreferredUserTypes().
-      // TODO(crbug.com/361625648): Remove kSharedTabGroupData as it's not
-      // needed any more.
-      return {kSharedTabGroupDataTypeName,
-              SHARED_TAB_GROUP_DATA,
-              {SHARED_TAB_GROUP_DATA, COLLABORATION_GROUP}};
+              {SAVED_TAB_GROUP, SHARED_TAB_GROUP_DATA, COLLABORATION_GROUP,
+               SHARED_TAB_GROUP_ACCOUNT_DATA}};
     case UserSelectableType::kPayments:
       return {kPaymentsTypeName,
               AUTOFILL_WALLET_DATA,
               {AUTOFILL_WALLET_CREDENTIAL, AUTOFILL_WALLET_DATA,
                AUTOFILL_WALLET_METADATA, AUTOFILL_WALLET_OFFER,
-               AUTOFILL_WALLET_USAGE}};
+               AUTOFILL_WALLET_USAGE, AUTOFILL_VALUABLE}};
     case UserSelectableType::kProductComparison:
       return {
           kProductComparisonTypeName, PRODUCT_COMPARISON, {PRODUCT_COMPARISON}};
     case UserSelectableType::kCookies:
       return {kCookiesTypeName, COOKIES, {COOKIES}};
   }
-  NOTREACHED_IN_MIGRATION();
-  return {nullptr, UNSPECIFIED, {}};
+  NOTREACHED();
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -194,9 +183,6 @@ std::optional<UserSelectableType> GetUserSelectableTypeFromString(
   if (type == kSavedTabGroupsTypeName) {
     return UserSelectableType::kSavedTabGroups;
   }
-  if (type == kSharedTabGroupDataTypeName) {
-    return UserSelectableType::kSharedTabGroupData;
-  }
   if (type == kProductComparisonTypeName) {
     return UserSelectableType::kProductComparison;
   }
@@ -223,6 +209,22 @@ DataTypeSet UserSelectableTypeToAllDataTypes(UserSelectableType type) {
 
 DataType UserSelectableTypeToCanonicalDataType(UserSelectableType type) {
   return GetUserSelectableTypeInfo(type).canonical_data_type;
+}
+
+std::optional<UserSelectableType> GetUserSelectableTypeFromDataType(
+    DataType data_type) {
+  std::optional<UserSelectableType> selectable_type;
+
+  for (const auto type : UserSelectableTypeSet::All()) {
+    if (GetUserSelectableTypeInfo(type).data_type_group.Has(data_type)) {
+      CHECK(!selectable_type.has_value())
+          << "Data type " << DataTypeToDebugString(data_type)
+          << " corresponds to multiple user selectable types.";
+      selectable_type = type;
+    }
+  }
+
+  return selectable_type;
 }
 
 #if BUILDFLAG(IS_CHROMEOS)

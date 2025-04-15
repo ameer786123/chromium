@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <variant>
 
 #include "base/functional/overloaded.h"
 #include "base/strings/stringprintf.h"
@@ -54,9 +55,9 @@ std::optional<FrameIntervalMatcher::Result> MatchContentIntervalType(
     return std::nullopt;
   }
 
-  return absl::visit(
+  return std::visit(
       base::Overloaded(
-          [&](const absl::monostate& monostate) {
+          [&](const std::monostate& monostate) {
             // If no intervals settings are given, then just return the content
             // interval.
             return content_interval.value();
@@ -154,15 +155,20 @@ void FrameIntervalMatcher::Inputs::WriteIntoTrace(
     perfetto::TracedValue trace_context) const {
   auto dict = std::move(trace_context).WriteDictionary();
   for (const auto& [frame_sink_id, interval_inputs] : inputs_map) {
-    auto frame_sink_dict =
-        dict.AddDictionary(perfetto::DynamicString(frame_sink_id.ToString()));
-    frame_sink_dict.Add(
-        "time_diff_us",
-        (aggregated_frame_time - interval_inputs.frame_time).InMicroseconds());
-    frame_sink_dict.Add("has_input", interval_inputs.has_input);
-    frame_sink_dict.Add(
-        "only_content",
-        interval_inputs.has_only_content_frame_interval_updates);
+    // frame_sink_dict needs to be enclosed in a dedicated code block so that it
+    // would go out of scope and be destructed before content_info_dict is
+    // created. See https://crbug.com/371227621.
+    {
+      auto frame_sink_dict =
+          dict.AddDictionary(perfetto::DynamicString(frame_sink_id.ToString()));
+      frame_sink_dict.Add("time_diff_us",
+                          (aggregated_frame_time - interval_inputs.frame_time)
+                              .InMicroseconds());
+      frame_sink_dict.Add("has_input", interval_inputs.has_input);
+      frame_sink_dict.Add(
+          "only_content",
+          interval_inputs.has_only_content_frame_interval_updates);
+    }
 
     int index = 0;
     for (const ContentFrameIntervalInfo& content_info :
@@ -181,7 +187,7 @@ void FrameIntervalMatcher::Inputs::WriteIntoTrace(
 
 // static
 std::string FrameIntervalMatcher::ResultToString(const Result& result) {
-  return absl::visit(
+  return std::visit(
       base::Overloaded(
           [](FrameIntervalClass frame_interval_class) -> std::string {
             switch (frame_interval_class) {
@@ -244,9 +250,9 @@ std::optional<FrameIntervalMatcher::Result> InputBoostMatcher::Match(
     if (inputs.has_input &&
         (matcher_inputs.aggregated_frame_time - inputs.frame_time) <
             matcher_inputs.settings->ignore_frame_sink_timeout) {
-      return absl::visit(
+      return std::visit(
           base::Overloaded(
-              [](const absl::monostate& monostate) -> Result {
+              [](const std::monostate& monostate) -> Result {
                 return FrameIntervalClass::kBoost;
               },
               [](const FixedIntervalSettings& fixed_interval_settings)
@@ -308,11 +314,9 @@ std::optional<FrameIntervalMatcher::Result> VideoConferenceMatcher::Match(
     return std::nullopt;
   }
 
-  return absl::visit(
+  return std::visit(
       base::Overloaded(
-          [&](const absl::monostate& monostate) {
-            return min_interval.value();
-          },
+          [&](const std::monostate& monostate) { return min_interval.value(); },
           [&](const FixedIntervalSettings& fixed_interval_settings) {
             // Pick closest supported interval amongst discrete list.
             base::TimeDelta closest_supported_interval;

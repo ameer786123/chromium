@@ -49,13 +49,14 @@ void CachedPermissionStatus::Trace(Visitor* visitor) const {
 void CachedPermissionStatus::RegisterClient(
     Client* client,
     const Vector<PermissionDescriptorPtr>& permissions) {
+  HashMap<mojom::blink::PermissionName, mojom::blink::PermissionStatus>
+      initialized_map;
   for (const PermissionDescriptorPtr& descriptor : permissions) {
     auto status_it = permission_status_map_.find(descriptor->name);
     PermissionStatus status = status_it != permission_status_map_.end()
                                   ? status_it->value
                                   : PermissionStatus::ASK;
-    client->OnPermissionStatusInitialized(descriptor->name, status);
-
+    initialized_map.insert(descriptor->name, status);
     auto client_it = clients_.find(descriptor->name);
     if (client_it != clients_.end()) {
       auto inserted = client_it->value.insert(client);
@@ -68,6 +69,8 @@ void CachedPermissionStatus::RegisterClient(
     clients_.insert(descriptor->name, std::move(client_set));
     RegisterPermissionObserver(descriptor, status);
   }
+
+  client->OnPermissionStatusInitialized(std::move(initialized_map));
 }
 
 void CachedPermissionStatus::UnregisterClient(
@@ -75,10 +78,14 @@ void CachedPermissionStatus::UnregisterClient(
     const Vector<PermissionDescriptorPtr>& permissions) {
   for (const PermissionDescriptorPtr& descriptor : permissions) {
     auto it = clients_.find(descriptor->name);
-    CHECK(it != clients_.end());
+    if (it == clients_.end()) {
+      continue;
+    }
     HeapHashSet<WeakMember<Client>>& client_set = it->value;
     auto client_set_it = client_set.find(client);
-    CHECK(client_set_it != client_set.end());
+    if (client_set_it == client_set.end()) {
+      continue;
+    }
     client_set.erase(client_set_it);
     if (!client_set.empty()) {
       continue;
@@ -109,8 +116,16 @@ void CachedPermissionStatus::RegisterPermissionObserver(
 }
 
 void CachedPermissionStatus::OnPermissionStatusChange(PermissionStatus status) {
-  permission_status_map_.Set(permission_observer_receivers_.current_context(),
-                             status);
+  auto permission_name = permission_observer_receivers_.current_context();
+  permission_status_map_.Set(permission_name, status);
+  auto it = clients_.find(permission_name);
+  if (it == clients_.end()) {
+    return;
+  }
+  const auto client_set = it->value;
+  for (auto const& client : client_set) {
+    client->OnPermissionStatusChange(permission_name, status);
+  }
 }
 
 PermissionService* CachedPermissionStatus::GetPermissionService() {

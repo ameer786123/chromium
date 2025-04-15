@@ -78,6 +78,8 @@ class TestFocusRules : public wm::BaseFocusRules {
   bool can_activate_ = true;
 };
 
+}  // namespace
+
 class NativeWidgetAuraTest : public ViewsTestBase {
  public:
   NativeWidgetAuraTest() = default;
@@ -211,8 +213,9 @@ TEST_F(NativeWidgetAuraTest, MouseClickInterruptsGestureScroll) {
     }
 
     *step_count -= 1;
-    if (*step_count)
+    if (*step_count) {
       return;
+    }
 
     // Do not interrupt the gesture scroll until the last gesture update event
     // is handled.
@@ -313,8 +316,9 @@ class TestWindowObserver : public aura::WindowObserver {
   void OnWindowPropertyChanged(aura::Window* window,
                                const void* key,
                                intptr_t old) override {
-    if (key != aura::client::kShowStateKey)
+    if (key != aura::client::kShowStateKey) {
       return;
+    }
     count_++;
     state_ = window_observation_.GetSource()->GetProperty(
         aura::client::kShowStateKey);
@@ -418,10 +422,11 @@ class TestWidget : public Widget {
   }
 
   void OnNativeWidgetSizeChanged(const gfx::Size& new_size) override {
-    if (last_size_.IsEmpty())
+    if (last_size_.IsEmpty()) {
       last_size_ = new_size;
-    else if (!did_size_change_more_than_once_ && new_size != last_size_)
+    } else if (!did_size_change_more_than_once_ && new_size != last_size_) {
       did_size_change_more_than_once_ = true;
+    }
     Widget::OnNativeWidgetSizeChanged(new_size);
   }
 
@@ -487,6 +492,7 @@ TEST_F(NativeWidgetAuraTest, TestPropertiesWhenAddedToLayout) {
   auto delegate_owned = std::make_unique<WidgetDelegate>();
   params.delegate = delegate_owned.get();
   params.delegate->RegisterDeleteDelegateCallback(
+      WidgetDelegate::RegisterDeleteCallbackPassKey(),
       base::DoNothingWithBoundArgs(std::move(delegate_owned)));
   params.delegate->SetHasWindowSizeControls(true);
   params.parent = nullptr;
@@ -530,8 +536,9 @@ class GestureTrackingView : public View {
   // View overrides:
   void OnGestureEvent(ui::GestureEvent* event) override {
     got_gesture_event_ = true;
-    if (consume_gesture_event_)
+    if (consume_gesture_event_) {
       event->StopPropagation();
+    }
   }
 
  private:
@@ -554,7 +561,7 @@ TEST_F(NativeWidgetAuraTest, DontCaptureOnGesture) {
   GestureTrackingView* child = new GestureTrackingView();
   child->set_consume_gesture_event(false);
   content_view->SetLayoutManager(std::make_unique<FillLayout>());
-  content_view->AddChildView(child);
+  content_view->AddChildViewRaw(child);
   auto widget = std::make_unique<TestWidget>();
   Widget::InitParams params(Widget::InitParams::CLIENT_OWNS_WIDGET,
                             Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -858,7 +865,6 @@ TEST_F(NativeWidgetAuraTest, VisibilityOfChildBubbleWindow) {
 TEST_F(NativeWidgetAuraTest, TransientChildModalWindowVisibility) {
   // Create the delegate first so it's destroyed last.
   auto delegate_owned = std::make_unique<WidgetDelegate>();
-  delegate_owned->SetOwnedByWidget(false);
   // Create a parent window.
   auto parent = std::make_unique<Widget>();
   Widget::InitParams parent_params(Widget::InitParams::CLIENT_OWNS_WIDGET,
@@ -877,6 +883,7 @@ TEST_F(NativeWidgetAuraTest, TransientChildModalWindowVisibility) {
 
   child_params.delegate = delegate_owned.get();
   child_params.delegate->RegisterDeleteDelegateCallback(
+      WidgetDelegate::RegisterDeleteCallbackPassKey(),
       base::DoNothingWithBoundArgs(std::move(delegate_owned)));
   child_params.delegate->SetModalType(ui::mojom::ModalType::kWindow);
   child->Init(std::move(child_params));
@@ -1120,5 +1127,4 @@ TEST_F(NativeWidgetAuraWithNoDelegateTest, UpdateVisualStateTest) {
   native_widget_->UpdateVisualState();
 }
 
-}  // namespace
 }  // namespace views

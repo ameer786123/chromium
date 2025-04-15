@@ -43,7 +43,7 @@ class TestUnderlyingSource final : public UnderlyingSourceBase {
   TestUnderlyingSource(SourceType source_type,
                        ScriptState* script_state,
                        Vector<int> sequence,
-                       ScriptPromiseUntyped start_promise)
+                       ScriptPromise<IDLUndefined> start_promise)
       : UnderlyingSourceBase(script_state),
         type_(source_type),
         sequence_(std::move(sequence)),
@@ -57,8 +57,7 @@ class TestUnderlyingSource final : public UnderlyingSourceBase {
                              ToResolvedUndefinedPromise(script_state)) {}
   ~TestUnderlyingSource() override = default;
 
-  ScriptPromiseUntyped Start(ScriptState* script_state,
-                             ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Start(ScriptState* script_state) override {
     started_ = true;
     if (type_ == SourceType::kPush) {
       for (int element : sequence_) {
@@ -69,8 +68,8 @@ class TestUnderlyingSource final : public UnderlyingSourceBase {
     }
     return start_promise_;
   }
-  ScriptPromiseUntyped Pull(ScriptState* script_state,
-                            ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Pull(ScriptState* script_state,
+                                   ExceptionState&) override {
     if (type_ == SourceType::kPush) {
       return ToResolvedUndefinedPromise(script_state);
     }
@@ -82,9 +81,9 @@ class TestUnderlyingSource final : public UnderlyingSourceBase {
     ++index_;
     return ToResolvedUndefinedPromise(script_state);
   }
-  ScriptPromiseUntyped Cancel(ScriptState* script_state,
-                              ScriptValue reason,
-                              ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Cancel(ScriptState* script_state,
+                                     ScriptValue reason,
+                                     ExceptionState&) override {
     cancelled_ = true;
     cancel_reason_ = reason;
     return ToResolvedUndefinedPromise(script_state);
@@ -114,7 +113,7 @@ class TestUnderlyingSource final : public UnderlyingSourceBase {
   const Vector<int> sequence_;
   wtf_size_t index_ = 0;
 
-  const ScriptPromiseUntyped start_promise_;
+  const MemberScriptPromise<IDLUndefined> start_promise_;
   bool started_ = false;
   bool cancelled_ = false;
   ScriptValue cancel_reason_;
@@ -211,9 +210,9 @@ TEST(TransferableStreamsTest, SmokeTest) {
 
   bool got_response = false;
   reader->read(script_state, ASSERT_NO_EXCEPTION)
-      .React(script_state,
-             MakeGarbageCollected<ExpectNullResponse>(&got_response),
-             MakeGarbageCollected<ExpectNotReached>());
+      .Then(script_state,
+            MakeGarbageCollected<ExpectNullResponse>(&got_response),
+            MakeGarbageCollected<ExpectNotReached>());
 
   // Need to run the event loop to pass messages through the MessagePort.
   test::RunPendingTasks();

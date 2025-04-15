@@ -86,6 +86,10 @@ class CONTENT_EXPORT PhysicsModel {
   // request (when there are multiple navigation requests).
   void OnNavigationFinished(bool navigation_committed);
 
+  // Returns true if the current animation is driven by the commit-pending
+  // spring, and the animation has reached the commit-pending position.
+  bool ReachedCommitPending() const;
+
  private:
   // The "state" of the physics model. The animations can be driven by four
   // models:
@@ -128,7 +132,7 @@ class CONTENT_EXPORT PhysicsModel {
   // Interpolates the velocity based off `touch_points_history_`. Used to set
   // the initial velocity of the spring model when the physics model switches
   // from drag cruve to any of the spring models.
-  float CalculateVelocity();
+  float CalculateVelocity(base::TimeTicks time);
 
   // Record `commit_pending_acceleration_start_`, if needed.
   void RecordCommitPendingAccelerationStartIfNeeded(

@@ -71,10 +71,6 @@ V8PermissionState ToV8PermissionState(mojom::blink::PermissionStatus status) {
   return V8PermissionState(ToPermissionStateEnum(status));
 }
 
-String PermissionStatusToString(mojom::blink::PermissionStatus status) {
-  return ToV8PermissionState(status).AsString();
-}
-
 String PermissionNameToString(PermissionName name) {
   // TODO(crbug.com/1395451): Change these strings to match the JS permission
   // strings (dashes instead of underscores).
@@ -137,6 +133,18 @@ String PermissionNameToString(PermissionName name) {
       return "fullscreen";
     case PermissionName::WEB_APP_INSTALLATION:
       return "web-app-installation";
+    case PermissionName::LOCAL_NETWORK_ACCESS:
+      return "local-network-access";
+    case PermissionName::VR:
+      return "vr";
+    case PermissionName::AR:
+      return "ar";
+    case PermissionName::HAND_TRACKING:
+      return "hand-tracking";
+    case PermissionName::WEB_PRINTING:
+      return "web-printing";
+    case PermissionName::SMART_CARD:
+      return "smart-card";
   }
 }
 

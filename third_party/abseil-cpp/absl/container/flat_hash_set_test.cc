@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -335,6 +336,51 @@ TEST(FlatHashSet, MovedFromCleared_EqMustBeValid) {
   s1.clear();
   s1.insert(2);
   EXPECT_THAT(s1, UnorderedElementsAre(2));
+}
+
+TEST(FlatHashSet, Equality) {
+  {
+    flat_hash_set<int> s1 = {1, 2, 3};
+    flat_hash_set<int> s2 = {1, 2, 3};
+    EXPECT_EQ(s1, s2);
+  }
+  {
+    flat_hash_set<std::string> s1 = {"a", "b", "c"};
+    flat_hash_set<std::string> s2 = {"a", "b", "c"};
+    EXPECT_EQ(s1, s2);
+  }
+}
+
+class MoveOnlyInt {
+ public:
+  explicit MoveOnlyInt(int value) : value_(value) {}
+
+  MoveOnlyInt(const MoveOnlyInt& other) = delete;
+  MoveOnlyInt& operator=(const MoveOnlyInt& other) = delete;
+
+  MoveOnlyInt(MoveOnlyInt&& other) = default;
+  MoveOnlyInt& operator=(MoveOnlyInt&& other) = default;
+
+  bool operator==(const MoveOnlyInt& other) const {
+    return value_ == other.value_;
+  }
+  bool operator==(int other) const { return value_ == other; }
+
+ private:
+  template <typename H>
+  friend H AbslHashValue(H h, const MoveOnlyInt& m) {
+    return H::combine(std::move(h), m.value_);
+  }
+
+  int value_;
+};
+
+TEST(FlatHashSet, MoveOnlyKey) {
+  flat_hash_set<MoveOnlyInt> s;
+  s.insert(MoveOnlyInt(1));
+  s.insert(MoveOnlyInt(2));
+  s.insert(MoveOnlyInt(3));
+  EXPECT_THAT(s, UnorderedElementsAre(1, 2, 3));
 }
 
 }  // namespace

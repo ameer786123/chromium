@@ -9,6 +9,7 @@
 #include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame.mojom-shared.h"
 #include "content/common/frame.mojom.h"
 #include "content/public/browser/web_contents.h"
@@ -45,6 +46,43 @@ enum class TestAction {
   kDestroy,
   kDestroyWithJs,
 };
+
+std::string GenerateTestName(const testing::TestParamInfo<TestAction>& info) {
+  std::string test_name;
+  switch (info.param) {
+    case TestAction::kNavigateToSameSitePage:
+      test_name = "NavigateToSameSitePage";
+      break;
+    case TestAction::kNavigateToSameSitePageWithJs:
+      test_name = "NavigateToSameSitePageWithJs";
+      break;
+    case TestAction::kNavigateToCrossSitePage:
+      test_name = "NavigateToCrossSitePage";
+      break;
+    case TestAction::kNavigateToCrossSitePageWithJs:
+      test_name = "NavigateToCrossSitePageWithJs";
+      break;
+    case TestAction::kNavigateToFragment:
+      test_name = "NavigateToFragment";
+      break;
+    case TestAction::kNavigateToFragmentWithJs:
+      test_name = "NavigateToFragmentWithJs";
+      break;
+    case TestAction::kPushHistory:
+      test_name = "PushHistory";
+      break;
+    case TestAction::kReplaceHistory:
+      test_name = "ReplaceHistory";
+      break;
+    case TestAction::kDestroy:
+      test_name = "Destroy";
+      break;
+    case TestAction::kDestroyWithJs:
+      test_name = "DestroyWithJs";
+      break;
+  }
+  return base::StringPrintf("%d_%s", info.index, test_name);
+}
 
 class PartitionedPopinsControllerBrowserTest
     : public ContentBrowserTest,
@@ -127,6 +165,15 @@ class PartitionedPopinsControllerBrowserTest
     // Check that the popin is open and it's partitioned.
     CHECK_EQ(EvalJs(popin_web_contents, "window.popinContextType()"),
              "partitioned");
+
+    // Check that the popin considers itself to be embedded by the origin of
+    // the opener.
+    CHECK_EQ(static_cast<WebContentsImpl*>(popin_web_contents)
+                 ->GetPartitionedPopinEmbedderOriginForTesting(),
+             execution_target.render_frame_host()
+                 ->GetMainFrame()
+                 ->GetLastCommittedOrigin()
+                 .GetURL());
 
     return popin_web_contents;
   }
@@ -257,9 +304,8 @@ IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
   EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
 
   DoAction(GetMainWebContents());
-  FlushRunLoop();
-  // TODO(crbug.com/340606651): The popin should be destroyed.
-  EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
+  popin_destroyed_watcher.Wait();
+  EXPECT_TRUE(popin_destroyed_watcher.IsDestroyed());
 }
 
 IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
@@ -277,9 +323,8 @@ IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
   EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
 
   DoAction(iframe);
-  FlushRunLoop();
-  // TODO(crbug.com/340606651): The popin should be destroyed.
-  EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
+  popin_destroyed_watcher.Wait();
+  EXPECT_TRUE(popin_destroyed_watcher.IsDestroyed());
 }
 
 IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
@@ -297,9 +342,8 @@ IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
   EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
 
   DoAction(GetMainWebContents());
-  FlushRunLoop();
-  // TODO(crbug.com/340606651): The popin should be destroyed.
-  EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
+  popin_destroyed_watcher.Wait();
+  EXPECT_TRUE(popin_destroyed_watcher.IsDestroyed());
 }
 
 IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
@@ -319,9 +363,8 @@ IN_PROC_BROWSER_TEST_P(PartitionedPopinsControllerBrowserTest,
   EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
 
   DoAction(iframe);
-  FlushRunLoop();
-  // TODO(crbug.com/340606651): The popin should be destroyed.
-  EXPECT_FALSE(popin_destroyed_watcher.IsDestroyed());
+  popin_destroyed_watcher.Wait();
+  EXPECT_TRUE(popin_destroyed_watcher.IsDestroyed());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -336,7 +379,8 @@ INSTANTIATE_TEST_SUITE_P(
                       TestAction::kPushHistory,
                       TestAction::kReplaceHistory,
                       TestAction::kDestroy,
-                      TestAction::kDestroyWithJs));
+                      TestAction::kDestroyWithJs),
+    &GenerateTestName);
 
 }  // namespace
 }  // namespace content

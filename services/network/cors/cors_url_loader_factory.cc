@@ -41,6 +41,7 @@
 #include "services/network/shared_dictionary/shared_dictionary_storage.h"
 #include "services/network/url_loader.h"
 #include "services/network/url_loader_factory.h"
+#include "services/network/url_loader_util.h"
 #include "services/network/web_bundle/web_bundle_url_loader_factory.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -231,6 +232,7 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
               ? params->client_security_state->cross_origin_embedder_policy
               : CrossOriginEmbedderPolicy()),
       coep_reporter_(std::move(params->coep_reporter)),
+      dip_reporter_(std::move(params->dip_reporter)),
       client_security_state_(params->client_security_state.Clone()),
       url_loader_network_service_observer_(
           std::move(params->url_loader_network_observer)),
@@ -239,6 +241,8 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
       require_cross_site_request_for_cookies_(
           params->require_cross_site_request_for_cookies),
       factory_cookie_setting_overrides_(params->cookie_setting_overrides),
+      devtools_cookie_setting_overrides_(
+          params->devtools_cookie_setting_overrides),
       origin_access_list_(origin_access_list),
       owner_(owner) {
   TRACE_EVENT("loading", "CorsURLLoaderFactory::CorsURLLoaderFactory",
@@ -415,7 +419,7 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
   DCHECK(inner_url_loader_factory);
 
   const net::IsolationInfo* isolation_info_ptr = &isolation_info_;
-  auto isolation_info = URLLoader::GetIsolationInfo(
+  auto isolation_info = url_loader_util::GetIsolationInfo(
       isolation_info_, automatically_assign_isolation_info_, resource_request);
   if (isolation_info.has_value()) {
     isolation_info_ptr = &isolation_info.value();
@@ -475,7 +479,8 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
           shared_dictionary_storage,
           shared_dictionary_observer_ ? shared_dictionary_observer_.get()
                                       : nullptr,
-          context_, factory_cookie_setting_overrides_);
+          context_, factory_cookie_setting_overrides_,
+          devtools_cookie_setting_overrides_);
     } else {
       loader = std::make_unique<CorsURLLoader>(
           std::move(receiver), process_id_, request_id, options,
@@ -493,7 +498,8 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
           shared_dictionary_storage,
           shared_dictionary_observer_ ? shared_dictionary_observer_.get()
                                       : nullptr,
-          context_, factory_cookie_setting_overrides_);
+          context_, factory_cookie_setting_overrides_,
+          devtools_cookie_setting_overrides_);
     }
     auto* raw_loader = loader.get();
     OnCorsURLLoaderCreated(std::move(loader));
@@ -864,6 +870,16 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
           "set.");
       return false;
     }
+  }
+
+  // The `client_side_content_decoding_enabled` flag is set only when the
+  // RendererSideContentDecoding feature is enabled.
+  if (request.client_side_content_decoding_enabled &&
+      !base::FeatureList::IsEnabled(features::kRendererSideContentDecoding)) {
+    mojo::ReportBadMessage(
+        "CorsURLLoaderFactory: client_side_content_decoding_enabled is set "
+        "unexpectedly.");
+    return false;
   }
 
   // TODO(yhirano): If the request mode is "no-cors", the redirect mode should

@@ -10,9 +10,9 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/time/time.h"
-#import "components/autofill/core/browser/autofill_test_utils.h"
-#import "components/autofill/core/browser/data_model/autofill_profile.h"
+#import "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #import "components/autofill/core/browser/field_types.h"
+#import "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #import "components/autofill/ios/common/features.h"
 #import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/common/password_manager_features.h"
@@ -20,14 +20,14 @@
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_prefs.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
+#import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/passwords/model/password_manager_app_interface.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
+#import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/ui/infobars/banners/infobar_banner_constants.h"
-#import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -183,13 +183,6 @@ void LoginOnUff() {
   AppLaunchConfiguration config;
   if ([self isRunningTest:@selector(testStickySavePromptJourney)]) {
     config.features_enabled.push_back(kAutofillStickyInfobarIos);
-  } else if ([self isRunningTest:@selector
-                   (testSaveCredentialWithAutofilledEmailInUFF)] ||
-             [self isRunningTest:@selector(testSaveTypedCredentialInUff)] ||
-             [self isRunningTest:@selector
-                   (DISABLED_testUpdateTypedCredentialInUff)]) {
-    config.features_enabled.push_back(
-        password_manager::features::kIosDetectUsernameInUff);
   }
 
   // The proactive password suggestion bottom sheet isn't tested here, it
@@ -302,8 +295,8 @@ void LoginOnUff() {
   GREYAssertEqual(1, credentialsCount, @"Wrong number of initial credentials.");
 
   // Sign in with identity where the credential still lives in the local store.
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Load the page again and have a new password value to save.
   [self loadLoginPage];
@@ -415,8 +408,8 @@ void LoginOnUff() {
 #define MAYBE_testPasswordGeneration testPasswordGeneration
 #endif
 - (void)MAYBE_testPasswordGeneration {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/simple_signup_form.html")];
   [ChromeEarlGrey waitForWebStateContainingText:"Signup form."];
@@ -449,10 +442,10 @@ void LoginOnUff() {
   [ChromeEarlGrey waitForJavaScriptCondition:filledFieldCondition];
 }
 
-// Tests that password generation is offered for signed in not syncing users.
+// Tests that password generation is offered for signed in users.
 - (void)testPasswordGenerationForSignedInAccount {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/simple_signup_form.html")];
   [ChromeEarlGrey waitForWebStateContainingText:"Signup form."];
@@ -483,8 +476,8 @@ void LoginOnUff() {
       performAction:grey_tap()];
 }
 
-// Tests that password generation is not offered for signed in not syncing users
-// with passwords toggle disabled.
+// Tests that password generation is not offered for signed in users with
+// passwords toggle disabled.
 // TODO(crbug.com/371189341): Test fails on device.
 #if TARGET_IPHONE_SIMULATOR
 #define MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled \
@@ -494,8 +487,8 @@ void LoginOnUff() {
   DISABLED_testPasswordGenerationWhileSignedInWithPasswordsDisabled
 #endif
 - (void)MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled {
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Disable Passwords toggle in account settings.
   [ChromeEarlGreyUI openSettingsMenu];
@@ -527,8 +520,8 @@ void LoginOnUff() {
       assertWithMatcher:grey_notVisible()];
 }
 
-// Tests that password generation is not offered for signed in not syncing users
-// with an encryption error; missing passphrase.
+// Tests that password generation is not offered for signed in users with an
+// encryption error; missing passphrase.
 // TODO(crbug.com/371189341): Test fails on device.
 #if TARGET_IPHONE_SIMULATOR
 #define MAYBE_testPasswordGenerationWhileSignedInWithError \
@@ -542,16 +535,15 @@ void LoginOnUff() {
   // the signed in account.
   [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
-  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
-  [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
+  [SigninEarlGrey signinAndWaitForSyncTransportStateActive:[FakeSystemIdentity
+                                                               fakeIdentity1]];
 
   // Verify encryption error is showing in in account settings.
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
   // Verify the error section is showing.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_ACCOUNT_TABLE_ERROR_ENTER_PASSPHRASE_BUTTON))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kSyncErrorButtonIdentifier)]
       assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey selectElementWithMatcher:SettingsDoneButton()]
       performAction:grey_tap()];

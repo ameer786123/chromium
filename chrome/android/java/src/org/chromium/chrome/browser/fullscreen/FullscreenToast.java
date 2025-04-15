@@ -92,7 +92,7 @@ interface FullscreenToast {
                             ? R.string.immersive_fullscreen_gesture_navigation_mode_api_notification
                             : R.string.immersive_fullscreen_api_notification;
             if (BuildInfo.getInstance().isAutomotive) {
-                toastTextId = R.string.immersive_fullscreen_api_notification_automotive;
+                toastTextId = R.string.immersive_fullscreen_automotive_toolbar_improvements;
             }
             mNotificationToast =
                     Toast.makeTextWithPriority(

@@ -9,6 +9,7 @@ import androidx.annotation.ColorInt;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.Token;
 import org.chromium.cc.input.OffsetTag;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton;
@@ -36,6 +37,17 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
      */
     public TabStripSceneLayer(float density) {
         mDpToPx = density;
+        TabStripSceneLayerJni.get()
+                .setConstants(
+                        mNativePtr,
+                        Math.round(StripLayoutGroupTitle.REORDER_BACKGROUND_TOP_MARGIN * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_BOTTOM_MARGIN * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_PADDING_START * mDpToPx),
+                        Math.round(StripLayoutGroupTitle.REORDER_BACKGROUND_PADDING_END * mDpToPx),
+                        Math.round(
+                                StripLayoutGroupTitle.REORDER_BACKGROUND_CORNER_RADIUS * mDpToPx));
     }
 
     public static void setTestFlag(boolean testFlag) {
@@ -113,6 +125,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                     leftPaddingPx,
                     rightPaddingPx,
                     topPaddingPx);
+            pushGroupIndicators(stripLayoutGroupTitlesToRender, layerTitleCache);
             pushStripTabs(
                     layoutHelper,
                     layerTitleCache,
@@ -120,7 +133,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                     stripLayoutTabsToRender,
                     selectedTabId,
                     hoveredTabId);
-            pushGroupIndicators(stripLayoutGroupTitlesToRender, layerTitleCache);
         }
         TabStripSceneLayerJni.get().finishBuildingFrame(mNativePtr, TabStripSceneLayer.this);
     }
@@ -164,7 +176,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                         newTabButton.getBackgroundResourceId(),
                         newTabButton.getDrawX() * mDpToPx,
                         newTabButton.getDrawY() * mDpToPx,
-                        topPaddingPx,
                         layoutHelper.getNewTabBtnVisualOffset() * mDpToPx,
                         newTabButtonVisible,
                         newTabButton.getShouldApplyHoverBackground(),
@@ -231,7 +242,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
             boolean isHovered = st.getTabId() == hoveredTabId;
             boolean shouldShowOutline = layoutHelper.shouldShowTabOutline(st);
 
-            // TODO(b/326301060): Update tab outline placeholder color with color picker.
+            // TODO(crbug.com/326301060): Update tab outline placeholder color with color picker.
             TabStripSceneLayerJni.get()
                     .putStripTabLayer(
                             mNativePtr,
@@ -248,7 +259,7 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                             st.getTint(isSelected, isHovered),
                             layoutHelper.getSelectedOutlineGroupTint(
                                     st.getTabId(), shouldShowOutline),
-                            isSelected,
+                            st.isForegrounded(),
                             shouldShowOutline,
                             st.getClosePressed(),
                             layoutHelper.getWidth() * mDpToPx,
@@ -284,16 +295,24 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                             mNativePtr,
                             TabStripSceneLayer.this,
                             gt.isIncognito(),
-                            gt.getRootId(),
+                            gt.isForegrounded(),
+                            gt.shouldShowReorderBackground(),
+                            gt.getNotificationBubbleShown(),
+                            gt.getTabGroupId(),
                             gt.getTint(),
+                            gt.getReorderBackgroundTint(),
+                            gt.getBubbleTint(),
                             gt.getPaddedX() * mDpToPx,
                             gt.getPaddedY() * mDpToPx,
                             gt.getPaddedWidth() * mDpToPx,
                             gt.getPaddedHeight() * mDpToPx,
-                            gt.getTitleTextPadding() * mDpToPx,
+                            gt.getTitleStartPadding() * mDpToPx,
+                            gt.getTitleEndPadding() * mDpToPx,
                             gt.getCornerRadius() * mDpToPx,
                             gt.getBottomIndicatorWidth() * mDpToPx,
                             gt.getBottomIndicatorHeight() * mDpToPx,
+                            gt.getBubblePadding() * mDpToPx,
+                            gt.getBubbleSize() * mDpToPx,
                             layerTitleCache);
         }
     }
@@ -307,6 +326,14 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
     @NativeMethods
     public interface Natives {
         long init(TabStripSceneLayer caller);
+
+        void setConstants(
+                long nativeTabStripSceneLayer,
+                int reorderBackgroundTopMargin,
+                int reorderBackgroundBottomMargin,
+                int reorderBackgroundPaddingStart,
+                int reorderBackgroundPaddingEnd,
+                int reorderBackgroundCornerRadius);
 
         void beginBuildingFrame(
                 long nativeTabStripSceneLayer, TabStripSceneLayer caller, boolean visible);
@@ -336,7 +363,6 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 int backgroundResourceId,
                 float x,
                 float y,
-                float topPadding,
                 float touchTargetOffset,
                 boolean visible,
                 boolean isHovered,
@@ -417,16 +443,24 @@ public class TabStripSceneLayer extends SceneOverlayLayer {
                 long nativeTabStripSceneLayer,
                 TabStripSceneLayer caller,
                 boolean incognito,
-                int id,
+                boolean foreground,
+                boolean showReorderBackground,
+                boolean showBubble,
+                Token groupToken,
                 int tint,
+                int reorderBackgroundTint,
+                int bubbleTint,
                 float x,
                 float y,
                 float width,
                 float height,
-                float titleTextPadding,
+                float titleStartPadding,
+                float titleEndPadding,
                 float cornerRadius,
                 float bottomIndicatorWidth,
                 float bottomIndicatorHeight,
+                float bubblePadding,
+                float bubbleSize,
                 LayerTitleCache layerTitleCache);
 
         void setContentTree(

@@ -42,11 +42,13 @@ export class BuyingOptionsSectionElement extends CrLitElement {
     };
   }
 
-  price: string = '';
-  jackpotUrl: string = '';
+  accessor price: string = '';
+  accessor jackpotUrl: string = '';
 
   protected openJackpotUrl_() {
     OpenWindowProxyImpl.getInstance().openUrl(this.jackpotUrl);
+    chrome.metricsPrivate.recordUserAction(
+        'Commerce.Compare.BuyingOptionsClicked');
   }
 }
 

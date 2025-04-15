@@ -79,6 +79,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
     SITE_IDENTITY_STATUS_CERT,
     // The website provided a valid EV certificate.
     SITE_IDENTITY_STATUS_EV_CERT,
+    // The website provided a valid 1-QWAC certificate.
+    SITE_IDENTITY_STATUS_1QWAC_CERT,
     // Site identity could not be verified because the site did not provide a
     // certificate. This is the expected state for HTTP connections.
     SITE_IDENTITY_STATUS_NO_CERT,
@@ -86,9 +88,6 @@ class PageInfo : private content_settings::CookieControlsObserver,
     SITE_IDENTITY_STATUS_ERROR,
     // The site is a trusted internal chrome page.
     SITE_IDENTITY_STATUS_INTERNAL_PAGE,
-    // The profile has accessed data using an administrator-provided
-    // certificate, so the administrator might be able to intercept data.
-    SITE_IDENTITY_STATUS_ADMIN_PROVIDED_CERT,
     // The website provided a valid certificate, but the certificate or chain
     // is using a deprecated signature algorithm.
     SITE_IDENTITY_STATUS_DEPRECATED_SIGNATURE_ALGORITHM,
@@ -230,6 +229,10 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // current site's fps  and records the event.
   void OpenAllSitesViewFilteredToRws();
 
+  // Handles opening the link to show Chrome Sync settings and records the
+  // event.
+  void OpenSyncSettingsView();
+
   // Handles opening the cookies dialog and records the event.
   void OpenCookiesDialog();
 
@@ -277,6 +280,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
   const SafeBrowsingStatus& safe_browsing_status() const {
     return safe_browsing_status_;
   }
+
+  content::WebContents* web_contents() const { return web_contents_.get(); }
 
   // For most sites, this returns a human-friendly string based on site origin,
   // without scheme, the username and password, the path or trivial subdomains.
@@ -504,6 +509,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
   base::Time cookie_exception_expiration_;
 
   bool is_subscribed_to_permission_change_for_testing = false;
+
+  bool has_recorded_permission_metrics_ = false;
 
   base::WeakPtrFactory<PageInfo> weak_factory_{this};
 };

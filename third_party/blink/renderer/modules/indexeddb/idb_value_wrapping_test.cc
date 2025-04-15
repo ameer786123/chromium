@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "idb_value_wrapping.h"
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
@@ -15,7 +16,9 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
+#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialization_tag.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -478,7 +481,7 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
   ASSERT_LT(3U, wrapped_marker_bytes.size());
   for (wtf_size_t i = 0; i < 3; ++i) {
     auto mutant_value = std::make_unique<IDBValue>(
-        Vector<char>(base::span(wrapped_marker_bytes).subspan(0, i)),
+        Vector<char>(base::span(wrapped_marker_bytes).first(i)),
         std::move(blob_infos));
     mutant_value->SetIsolate(scope.GetIsolate());
 
@@ -528,6 +531,12 @@ TEST(IDBValueUnwrapperTest, Compression) {
   for (const auto& test_case : test_cases) {
     SCOPED_TRACE(testing::Message() << "Testing string " << test_case.bytes);
 
+    base::test::ScopedFeatureList enable_feature_list;
+    enable_feature_list.InitAndEnableFeatureWithParameters(
+        features::kIndexedDBCompressValuesWithSnappy,
+        {{"compression-threshold",
+          base::StringPrintf("%i", test_case.compression_threshold)}});
+
     V8TestingScope scope;
     NonThrowableExceptionState non_throwable_exception_state;
     v8::Local<v8::Value> v8_value =
@@ -552,11 +561,13 @@ TEST(IDBValueUnwrapperTest, Compression) {
       EXPECT_EQ(serialized_bytes[2], 2);
     }
 
-    // Verify whether the decompressed bytes show the standard serialization
-    // marker.
-    Vector<char> decompressed;
-    ASSERT_EQ(test_case.should_compress,
-              IDBValueUnwrapper::Decompress(buffer, &decompressed));
+    {
+      // Verify whether the decompressed bytes show the standard serialization
+      // marker.
+      SerializedScriptValue::DataBufferPtr decompressed;
+      ASSERT_EQ(test_case.should_compress,
+                IDBValueUnwrapper::Decompress(buffer, nullptr, &decompressed));
+    }
 
     // Round trip to v8 value.
     auto value =
@@ -565,12 +576,34 @@ TEST(IDBValueUnwrapperTest, Compression) {
     auto serialized_string = value->CreateSerializedValue();
     EXPECT_TRUE(serialized_string->Deserialize(scope.GetIsolate())
                     ->StrictEquals(v8_value));
+
+    {
+      // The data in `value` is still compressed after
+      // `CreateSerializedValue()`.
+      SerializedScriptValue::DataBufferPtr decompressed;
+      ASSERT_EQ(
+          test_case.should_compress,
+          IDBValueUnwrapper::Decompress(value->Data(), nullptr, &decompressed));
+
+      // ... but not when decompression output overwrites it.
+      base::test::ScopedFeatureList feature_disabler;
+      feature_disabler.InitAndDisableFeature(kIdbDecompressValuesInPlace);
+      serialized_string = value->CreateSerializedValue();
+      EXPECT_FALSE(
+          IDBValueUnwrapper::Decompress(value->Data(), nullptr, &decompressed));
+
+      // Verify round tripping again for good measure, to make sure the code
+      // still works with IdbDecompressValuesInPlace disabled.
+      EXPECT_TRUE(serialized_string->Deserialize(scope.GetIsolate())
+                      ->StrictEquals(v8_value));
+    }
   }
 }
 
 // Verifies that the decompression code should still run and succeed on
-// compressed data. This is required to be able to decompress existing data that
-// has been persisted to disk if/when compression is later disabled.
+// compressed data even if the flag is disabled. This is required to be able to
+// decompress existing data that has been persisted to disk if/when compression
+// is later disabled.
 TEST(IDBValueUnwrapperTest, Decompression) {
   test::TaskEnvironment task_environment;
   Vector<WebBlobInfo> blob_infos;
@@ -578,6 +611,8 @@ TEST(IDBValueUnwrapperTest, Decompression) {
   V8TestingScope scope;
   v8::Local<v8::Value> v8_value;
   {
+    base::test::ScopedFeatureList enable_feature_list{
+        features::kIndexedDBCompressValuesWithSnappy};
     NonThrowableExceptionState non_throwable_exception_state;
     std::string bytes = base::StrCat(std::vector<std::string>(100u, "abcd"));
     v8_value = v8::String::NewFromUtf8(scope.GetIsolate(), bytes.c_str(),
@@ -586,14 +621,19 @@ TEST(IDBValueUnwrapperTest, Decompression) {
     IDBValueWrapper wrapper(scope.GetIsolate(), v8_value,
                             SerializedScriptValue::SerializeOptions::kSerialize,
                             non_throwable_exception_state);
-    wrapper.set_compression_threshold_for_test(100);
     wrapper.DoneCloning();
     blob_infos = wrapper.TakeBlobInfo();
     buffer = wrapper.TakeWireBytes();
   }
 
   {
-    // Complete round trip to v8 value.
+    base::test::ScopedFeatureList disable_feature_list;
+    disable_feature_list.InitAndDisableFeature(
+        features::kIndexedDBCompressValuesWithSnappy);
+    EXPECT_FALSE(base::FeatureList::IsEnabled(
+        features::kIndexedDBCompressValuesWithSnappy));
+
+    // Complete round trip to v8 value with compression disabled.
     auto value =
         std::make_unique<IDBValue>(std::move(buffer), std::move(blob_infos));
     value->SetIsolate(scope.GetIsolate());

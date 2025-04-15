@@ -13,32 +13,32 @@ cargo_crate("lib") {
   epoch = "0.2"
   crate_type = "rlib"
   crate_root =
-      "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/lib.rs"
+      "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/lib.rs"
   sources = [
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/apple-other.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/custom.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/error.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/error_impls.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/espidf.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/fuchsia.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/getentropy.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/getrandom.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/hermit.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/js.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/lazy.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/lib.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/linux_android.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/linux_android_with_fallback.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/netbsd.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/rdrand.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/solaris.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/solid.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/use_file.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/util.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/util_libc.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/vxworks.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/wasi.rs",
-    "//third_party/rust/chromium_crates_io/vendor/getrandom-0.2.15/src/windows.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/apple-other.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/custom.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/error.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/error_impls.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/espidf.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/fuchsia.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/getentropy.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/getrandom.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/hermit.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/js.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/lazy.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/lib.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/linux_android.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/linux_android_with_fallback.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/netbsd.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/rdrand.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/solaris.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/solid.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/use_file.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/util.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/util_libc.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/vxworks.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/wasi.rs",
+    "//third_party/rust/chromium_crates_io/vendor/getrandom-v0_2/src/windows.rs",
   ]
   inputs = []
 
@@ -48,6 +48,7 @@ cargo_crate("lib") {
   cargo_pkg_authors = "The Rand Project Developers"
   cargo_pkg_name = "getrandom"
   cargo_pkg_description = "A small cross-platform library for retrieving random data from system source"
+  library_configs -= [ "//build/config/coverage:default_coverage" ]
   library_configs -= [ "//build/config/compiler:chromium_code" ]
   library_configs += [ "//build/config/compiler:no_chromium_code" ]
   executable_configs -= [ "//build/config/compiler:chromium_code" ]
@@ -59,6 +60,9 @@ cargo_crate("lib") {
     deps += [ "//third_party/rust/libc/v0_2:lib" ]
   }
   features = [ "std" ]
+  rustflags = [
+    "--cap-lints=allow",  # Suppress all warnings in crates.io crates
+  ]
 
   # Only for usage from third-party crates. Add the crate to
   # //third_party/rust/chromium_crates_io/Cargo.toml to use

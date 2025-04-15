@@ -13,8 +13,6 @@
 #include "base/strings/strcat.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/profiles/profile.h"
-#include "ui/base/ime/ash/ime_bridge.h"
-#include "ui/base/ime/input_method.h"
 #include "url/url_constants.h"
 
 namespace ash {
@@ -26,21 +24,6 @@ base::FilePath GetDownloadDirectoryForProfile(Profile* profile) {
       ->GetDefaultDownloadDirectoryForProfile();
 }
 
-ui::TextInputClient* GetFocusedTextInputClient() {
-  if (IMEBridge::Get() == nullptr ||
-      IMEBridge::Get()->GetInputContextHandler() == nullptr) {
-    return nullptr;
-  }
-
-  const ui::InputMethod* input_method =
-      IMEBridge::Get()->GetInputContextHandler()->GetInputMethod();
-  if (!input_method || !input_method->GetTextInputClient()) {
-    return nullptr;
-  }
-
-  return input_method->GetTextInputClient();
-}
-
 bool IsUrlAllowed(const GURL& url) {
   return url.SchemeIs(url::kHttpsScheme) ||
          url.spec().starts_with("chrome://os-settings/systemPreferences");
@@ -50,7 +33,9 @@ bool IsUrlAllowed(const GURL& url) {
 
 LobsterPageHandler::LobsterPageHandler(LobsterSession* active_session,
                                        Profile* profile)
-    : session_(active_session), profile_(profile) {}
+    : session_(active_session), profile_(profile) {
+  CHECK(session_);
+}
 
 LobsterPageHandler::~LobsterPageHandler() = default;
 
@@ -64,27 +49,22 @@ void LobsterPageHandler::BindInterface(
 void LobsterPageHandler::DownloadCandidate(uint32_t candidate_id,
                                            DownloadCandidateCallback callback) {
   // TODO: b:359361699 - Implements smarter file naming
-  session_->DownloadCandidate(
-      candidate_id,
-      GetDownloadDirectoryForProfile(profile_).Append("sample.jpeg"),
-      std::move(callback));
+  session_->DownloadCandidate(candidate_id,
+                              GetDownloadDirectoryForProfile(profile_),
+                              std::move(callback));
 }
 
 void LobsterPageHandler::CommitAsInsert(uint32_t candidate_id,
                                         CommitAsInsertCallback callback) {
-  // TODO: b:348279280 - Adds the logic to re-focus on the text input field,
-  // close the UI and insert the image
-  session_->CommitAsInsert(candidate_id, GetFocusedTextInputClient(),
-                           std::move(callback));
+  session_->CommitAsInsert(candidate_id, std::move(callback));
 }
 
 void LobsterPageHandler::CommitAsDownload(uint32_t candidate_id,
                                           CommitAsDownloadCallback callback) {
   // TODO: b:359361699 - Implements smarter file naming
-  session_->CommitAsDownload(
-      candidate_id,
-      GetDownloadDirectoryForProfile(profile_).Append("sample.jpeg"),
-      std::move(callback));
+  session_->CommitAsDownload(candidate_id,
+                             GetDownloadDirectoryForProfile(profile_),
+                             std::move(callback));
 }
 
 void LobsterPageHandler::RequestCandidates(const std::string& query,

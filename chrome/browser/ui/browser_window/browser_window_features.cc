@@ -10,43 +10,64 @@
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
+#include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
-#include "chrome/browser/data_sharing/data_sharing_service_factory.h"
+#include "chrome/browser/download/bubble/download_bubble_prefs.h"
 #include "chrome/browser/extensions/manifest_v2_experiment_manager.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
+#include "chrome/browser/lens/region_search/lens_region_search_controller.h"
+#include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/commerce/product_specifications_entry_point_controller.h"
 #include "chrome/browser/ui/extensions/mv2_disabled_dialog_controller.h"
 #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
+#include "chrome/browser/ui/performance_controls/memory_saver_bubble_controller.h"
 #include "chrome/browser/ui/performance_controls/memory_saver_opt_in_iph_controller.h"
+#include "chrome/browser/ui/tabs/glic_nudge_controller.h"
 #include "chrome/browser/ui/tabs/organization/tab_declutter_controller.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/most_recent_shared_tab_update_store.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/session_service_tab_group_sync_observer.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/shared_tab_group_feedback_controller.h"
 #include "chrome/browser/ui/toasts/toast_controller.h"
 #include "chrome/browser/ui/toasts/toast_features.h"
 #include "chrome/browser/ui/toasts/toast_service.h"
 #include "chrome/browser/ui/toolbar/chrome_labs/chrome_labs_utils.h"
+#include "chrome/browser/ui/toolbar/pinned_toolbar/tab_search_toolbar_button_controller.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_open_group_helper.h"
+#include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/location_bar/cookie_controls/cookie_controls_bubble_coordinator.h"
+#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "chrome/browser/ui/views/media_router/cast_browser_controller.h"
 #include "chrome/browser/ui/views/send_tab_to_self/send_tab_to_self_toolbar_bubble_controller.h"
 #include "chrome/browser/ui/views/side_panel/extensions/extension_side_panel_manager.h"
+#include "chrome/browser/ui/views/side_panel/history/history_side_panel_coordinator.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
+#include "chrome/browser/ui/views/tabs/glic_button.h"
 #include "chrome/browser/ui/views/toolbar/chrome_labs/chrome_labs_coordinator.h"
-#include "chrome/browser/ui/web_applications/app_browser_controller.h"
-#include "chrome/browser/ui/web_applications/web_app_browser_controller.h"
+#include "chrome/browser/ui/views/translate/translate_bubble_controller.h"
+#include "chrome/common/chrome_features.h"
+#include "components/collaboration/public/collaboration_service.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/feature_utils.h"
 #include "components/commerce/core/shopping_service.h"
-#include "components/data_sharing/public/data_sharing_service.h"
-#include "components/data_sharing/public/features.h"
 #include "components/lens/lens_features.h"
 #include "components/profile_metrics/browser_profile_type.h"
 #include "components/saved_tab_groups/public/features.h"
 
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/browser_ui/glic_button_controller.h"
+#include "chrome/browser/glic/browser_ui/glic_iph_controller.h"
+#include "chrome/browser/glic/glic_enabling.h"
+#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#endif
 namespace {
 
 // This is the generic entry point for test code to stub out browser window
@@ -101,12 +122,16 @@ void BrowserWindowFeatures::Init(BrowserWindowInterface* browser) {
     }
 
     if (browser->GetProfile()->IsRegularProfile() &&
-        tab_groups::IsTabGroupsSaveV2Enabled() &&
-        browser->GetTabStripModel()->SupportsTabGroups()) {
+        browser->GetTabStripModel()->SupportsTabGroups() &&
+        tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+            browser->GetProfile())) {
       session_service_tab_group_sync_observer_ =
           std::make_unique<tab_groups::SessionServiceTabGroupSyncObserver>(
               browser->GetProfile(), browser->GetTabStripModel(),
               browser->GetSessionID());
+
+      most_recent_shared_tab_update_store_ =
+          std::make_unique<tab_groups::MostRecentSharedTabUpdateStore>(browser);
     }
 
     if (features::IsTabstripDeclutterEnabled() &&
@@ -115,6 +140,15 @@ void BrowserWindowFeatures::Init(BrowserWindowInterface* browser) {
       tab_declutter_controller_ =
           std::make_unique<tabs::TabDeclutterController>(browser);
     }
+
+#if BUILDFLAG(ENABLE_GLIC)
+    if (glic::GlicEnabling::IsProfileEligible(browser->GetProfile())) {
+      DCHECK(features::IsTabSearchMoving());
+      glic_nudge_controller_ =
+          std::make_unique<tabs::GlicNudgeController>(browser);
+      glic_iph_controller_ = std::make_unique<glic::GlicIphController>(browser);
+    }
+#endif  // BUILDFLAG(ENABLE_GLIC)
   }
 
   // The LensOverlayEntryPointController is constructed for all browser types
@@ -122,15 +156,19 @@ void BrowserWindowFeatures::Init(BrowserWindowInterface* browser) {
   // logic for code shared by both normal and non-normal windows.
   lens_overlay_entry_point_controller_ =
       std::make_unique<lens::LensOverlayEntryPointController>();
-
-  if (browser->GetAppBrowserController() &&
-      browser->GetAppBrowserController()->AsWebAppBrowserController()) {
-    auto* web_app_browser_controller =
-        browser->GetAppBrowserController()->AsWebAppBrowserController();
-    web_app_browser_controller->InitForBrowserWindowFeatures(browser);
-  }
+  lens_region_search_controller_ =
+      std::make_unique<lens::LensRegionSearchController>();
 
   tab_strip_model_ = browser->GetTabStripModel();
+
+  memory_saver_bubble_controller_ =
+      std::make_unique<memory_saver::MemorySaverBubbleController>(browser);
+
+  translate_bubble_controller_ = std::make_unique<TranslateBubbleController>(
+      browser->GetActions()->root_action_item());
+
+  cookie_controls_bubble_coordinator_ =
+      std::make_unique<CookieControlsBubbleCoordinator>();
 }
 
 void BrowserWindowFeatures::InitPostWindowConstruction(Browser* browser) {
@@ -146,14 +184,23 @@ void BrowserWindowFeatures::InitPostWindowConstruction(Browser* browser) {
     send_tab_to_self_toolbar_bubble_controller_ = std::make_unique<
         send_tab_to_self::SendTabToSelfToolbarBubbleController>(browser);
 
-    // TODO(b/350508658): Ideally, we don't pass in a reference to browser as
-    // per the guidance in the comment above. However, currently, we need
-    // browser to properly determine if the lens overlay is enabled.
+    // TODO(crbug.com/350508658): Ideally, we don't pass in a reference to
+    // browser as per the guidance in the comment above. However, currently,
+    // we need browser to properly determine if the lens overlay is enabled.
     // Cannot be in Init since needs to listen to the fullscreen controller
-    // which is initialized after Init.
+    // and location bar view which are initialized after Init.
     if (lens::features::IsLensOverlayEnabled()) {
+      views::View* location_bar = nullptr;
+      // TODO(crbug.com/360163254): We should really be using
+      // Browser::GetBrowserView, which always returns a non-null BrowserView
+      // in production, but this crashes during unittests using
+      // BrowserWithTestWindowTest; these should eventually be refactored.
+      if (BrowserView* browser_view =
+              BrowserView::GetBrowserViewForBrowser(browser)) {
+        location_bar = browser_view->GetLocationBarView();
+      }
       lens_overlay_entry_point_controller_->Initialize(
-          browser, browser->command_controller());
+          browser, browser->command_controller(), location_bar);
     }
 
     auto* experiment_manager =
@@ -175,8 +222,8 @@ void BrowserWindowFeatures::InitPostWindowConstruction(Browser* browser) {
     toast_service_ = std::make_unique<ToastService>(browser);
   }
 
-  data_sharing::DataSharingService* service =
-      data_sharing::DataSharingServiceFactory::GetForProfile(
+  collaboration::CollaborationService* service =
+      collaboration::CollaborationServiceFactory::GetForProfile(
           browser->profile());
   if (service && service->GetServiceStatus().IsAllowedToJoin() &&
       tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
@@ -198,6 +245,11 @@ void BrowserWindowFeatures::InitPostBrowserViewConstruction(
       std::make_unique<SidePanelCoordinator>(browser_view);
   side_panel_coordinator_->Init(browser_view->browser());
 
+  if (HistorySidePanelCoordinator::IsSupported()) {
+    history_side_panel_coordinator_ =
+        std::make_unique<HistorySidePanelCoordinator>(browser_view->browser());
+  }
+
   extension_side_panel_manager_ =
       std::make_unique<extensions::ExtensionSidePanelManager>(
           browser_view->browser(),
@@ -207,14 +259,56 @@ void BrowserWindowFeatures::InitPostBrowserViewConstruction(
   // The controller relies on performance manager which isn't initialized in
   // some unit tests without browser view.
   if (browser_view->GetIsNormalType()) {
+#if BUILDFLAG(ENABLE_GLIC)
+    if (glic::GlicEnabling::IsProfileEligible(
+            browser_view->browser()->profile())) {
+      glic_button_controller_ = std::make_unique<glic::GlicButtonController>(
+          browser_view->GetProfile(),
+          browser_view->tab_strip_region_view()->GetGlicButton(),
+          glic::GlicKeyedServiceFactory::GetGlicKeyedService(
+              browser_view->GetProfile()));
+    }
+#endif
+
     memory_saver_opt_in_iph_controller_ =
         std::make_unique<MemorySaverOptInIPHController>(
             browser_view->browser());
+
+    if (media_router::MediaRouterEnabled(browser_view->browser()->profile())) {
+      cast_browser_controller_ =
+          std::make_unique<media_router::CastBrowserController>(
+              browser_view->browser());
+    }
+
+    if (features::HasTabSearchToolbarButton()) {
+      tab_search_toolbar_button_controller_ =
+          std::make_unique<TabSearchToolbarButtonController>(browser_view);
+    }
+  }
+
+  if (download::IsDownloadBubbleEnabled()) {
+    download_toolbar_ui_controller_ =
+        std::make_unique<DownloadToolbarUIController>(browser_view);
+  }
+
+  if (browser_view->browser()->GetTabStripModel()->SupportsTabGroups() &&
+      tab_groups::SavedTabGroupUtils::SupportsSharedTabGroups() &&
+      tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+          browser_view->GetProfile())) {
+    shared_tab_group_feedback_controller_ =
+        std::make_unique<tab_groups::SharedTabGroupFeedbackController>(
+            browser_view);
   }
 }
 
 void BrowserWindowFeatures::TearDownPreBrowserViewDestruction() {
   memory_saver_opt_in_iph_controller_.reset();
+  lens_overlay_entry_point_controller_.reset();
+  tab_search_toolbar_button_controller_.reset();
+
+#if BUILDFLAG(ENABLE_GLIC)
+  glic_button_controller_.reset();
+#endif
 
   // TODO(crbug.com/346148093): This logic should not be gated behind a
   // conditional.
@@ -224,6 +318,14 @@ void BrowserWindowFeatures::TearDownPreBrowserViewDestruction() {
 
   if (mv2_disabled_dialog_controller_) {
     mv2_disabled_dialog_controller_->TearDown();
+  }
+
+  if (shared_tab_group_feedback_controller_) {
+    shared_tab_group_feedback_controller_->TearDown();
+  }
+
+  if (chrome_labs_coordinator_) {
+    chrome_labs_coordinator_->TearDown();
   }
 }
 

@@ -105,6 +105,10 @@ PtrPosWithinAlloc IsPtrWithinSameAlloc(uintptr_t orig_address,
 
 namespace partition_alloc {
 
+#if PA_CONFIG(ENABLE_SHADOW_METADATA)
+internal::SharedMutex PartitionRoot::g_shadow_metadata_init_mutex_;
+#endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+
 #if PA_CONFIG(USE_PARTITION_ROOT_ENUMERATOR)
 
 namespace {
@@ -1148,6 +1152,10 @@ void PartitionRoot::Init(PartitionOptions opts) {
     PA_DCHECK(!settings.use_configurable_pool || IsConfigurablePoolAvailable());
     settings.zapping_by_free_flags =
         opts.zapping_by_free_flags == PartitionOptions::kEnabled;
+    settings.eventually_zero_freed_memory =
+        opts.eventually_zero_freed_memory == PartitionOptions::kEnabled;
+    settings.fewer_memory_regions =
+        opts.fewer_memory_regions == PartitionOptions::kEnabled;
 
     settings.scheduler_loop_quarantine =
         opts.scheduler_loop_quarantine == PartitionOptions::kEnabled;
@@ -1204,7 +1212,7 @@ void PartitionRoot::Init(PartitionOptions opts) {
 #if PA_CONFIG(EXTRAS_REQUIRED)
     settings.extras_size = 0;
 
-    if (Settings::use_cookie) {
+    if (settings.use_cookie) {
       settings.extras_size += internal::kPartitionCookieSizeAdjustment;
     }
 
@@ -1212,6 +1220,7 @@ void PartitionRoot::Init(PartitionOptions opts) {
     if (brp_enabled()) {
       settings.in_slot_metadata_size = internal::kInSlotMetadataSizeAdjustment;
       settings.extras_size += internal::kInSlotMetadataSizeAdjustment;
+      settings.extras_size += opts.backup_ref_ptr_extra_extras_size;
 #if PA_CONFIG(MAYBE_ENABLE_MAC11_MALLOC_SIZE_HACK)
       EnableMac11MallocSizeHackIfNeeded();
 #endif
@@ -1264,6 +1273,11 @@ void PartitionRoot::Init(PartitionOptions opts) {
       ThreadCache::Init(this);
     }
 #endif  // !PA_CONFIG(THREAD_CACHE_SUPPORTED)
+
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+    settings.use_cookie =
+        opts.use_cookie_if_supported == PartitionOptions::kEnabled;
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
 
 #if PA_CONFIG(USE_PARTITION_ROOT_ENUMERATOR)
     internal::PartitionRootEnumerator::Instance().Register(this);
@@ -1337,15 +1351,17 @@ void PartitionRoot::EnableThreadCacheIfSupported() {
   // become visible to another thread before the effects of
   // `internal::ThreadCacheInit()` are visible. To prevent that, we fake thread
   // cache creation being in-progress while this is running.
-  //
-  // This synchronizes with the acquire load in `MaybeInitThreadCacheAndAlloc()`
-  // to ensure that we don't create (and thus use) a ThreadCache before
-  // ThreadCache::Init()'s effects are visible.
-  int before =
-      thread_caches_being_constructed_.fetch_add(1, std::memory_order_acquire);
-  PA_CHECK(before == 0);
-  ThreadCache::Init(this);
-  thread_caches_being_constructed_.fetch_sub(1, std::memory_order_release);
+
+  {
+    ::partition_alloc::internal::ScopedGuard construction_guard{
+        thread_cache_construction_lock};
+
+    ThreadCache::Init(this);
+    // Create thread cache for this thread so that we can start using it right
+    // after.
+    ThreadCache::Create(this);
+  }
+
   settings.with_thread_cache = true;
 #endif  // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 }
@@ -1470,10 +1486,12 @@ bool PartitionRoot::TryReallocInPlaceForDirectMap(
   }
 
   // Write a new trailing cookie.
-  if (Settings::use_cookie) {
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+  if (settings.use_cookie) {
     auto* object = static_cast<unsigned char*>(SlotStartToObject(slot_start));
     internal::PartitionCookieWriteValue(object + GetSlotUsableSize(slot_span));
   }
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
 
   return true;
 }
@@ -1519,10 +1537,12 @@ bool PartitionRoot::TryReallocInPlaceForNormalBuckets(
         // PA_BUILDFLAG(DCHECKS_ARE_ON)
     // Write a new trailing cookie only when it is possible to keep track
     // raw size (otherwise we wouldn't know where to look for it later).
-    if (Settings::use_cookie) {
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+    if (settings.use_cookie) {
       internal::PartitionCookieWriteValue(static_cast<unsigned char*>(object) +
                                           GetSlotUsableSize(slot_span));
     }
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
   }
 
   // Always record a realloc() as a free() + malloc(), even if it's in
@@ -1885,17 +1905,9 @@ void PartitionRoot::SetGlobalEmptySlotSpanRingIndexForTesting(int16_t index) {
 
 ThreadCache* PartitionRoot::MaybeInitThreadCache() {
   auto* tcache = ThreadCache::Get();
-  // See comment in `EnableThreadCacheIfSupport()` for why this is an acquire
-  // load.
-  if (ThreadCache::IsTombstone(tcache) ||
-      thread_caches_being_constructed_.load(std::memory_order_acquire)) {
-    // Two cases:
-    // 1. Thread is being terminated, don't try to use the thread cache, and
-    //    don't try to resurrect it.
-    // 2. Someone, somewhere is currently allocating a thread cache. This may
-    //    be us, in which case we are re-entering and should not create a thread
-    //    cache. If it is not us, then this merely delays thread cache
-    //    construction a bit, which is not an issue.
+  if (ThreadCache::IsTombstone(tcache)) {
+    // Thread is being terminated, don't try to use the thread cache, and don't
+    // try to resurrect it.
     return nullptr;
   }
 
@@ -1908,16 +1920,40 @@ ThreadCache* PartitionRoot::MaybeInitThreadCache() {
   // variable. This would end up here again, which is not what we want (and
   // likely is not supported by libc).
   //
-  // To avoid this sort of reentrancy, increase the count of thread caches that
-  // are currently allocating a thread cache.
   //
-  // Note that there is no deadlock or data inconsistency concern, since we do
-  // not hold the lock, and has such haven't touched any internal data.
-  int before =
-      thread_caches_being_constructed_.fetch_add(1, std::memory_order_relaxed);
-  PA_CHECK(before < std::numeric_limits<int>::max());
+  // Note that there is no data inconsistency concern, since we do not hold
+  // the global `lock_`, and has such haven't touched any internal data.
+  if (!thread_cache_construction_lock.TryAcquire()) {
+    // Someone, somewhere is currently allocating a thread cache. This may be
+    // us, in which case we are re-entering and should not create a thread
+    // cache. If it is not us, then this merely delays thread cache
+    // construction a bit, which is not an issue.
+    return nullptr;
+  }
+
   tcache = ThreadCache::Create(this);
-  thread_caches_being_constructed_.fetch_sub(1, std::memory_order_relaxed);
+  thread_cache_construction_lock.Release();
+
+  return tcache;
+}
+
+ThreadCache* PartitionRoot::ForceInitThreadCache() {
+  auto* tcache = ThreadCache::Get();
+  if (ThreadCache::IsTombstone(tcache)) {
+    // Thread is being terminated, don't try to use the thread cache, and don't
+    // try to resurrect it.
+    return nullptr;
+  }
+
+  // As noted in comments for `MaybeInitThreadCache()`, TLS variable creation
+  // may allocate.
+  // Unlike `MaybeInitThreadCache()`, this function `Acquire()`s the lock and
+  // reentrancy means deadlock here (should crash on debug builds).
+  // Therefore (de)allocation code path in PartitionAlloc must not use this
+  // function.
+  ::partition_alloc::internal::ScopedGuard construction_guard{
+      thread_cache_construction_lock};
+  tcache = ThreadCache::Create(this);
 
   return tcache;
 }
@@ -1947,7 +1983,11 @@ PA_NOINLINE void PartitionRoot::QuarantineForBrp(
   if (hook) [[unlikely]] {
     hook(object, usable_size);
   } else {
+// TODO(https://crbug.com/371135823): Enable zapping again once finished
+// investigation.
+#if !PA_BUILDFLAG(IS_IOS)
     internal::SecureMemset(object, internal::kQuarantinedByte, usable_size);
+#endif  // !PA_BUILDFLAG(IS_IOS)
   }
 }
 #endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
@@ -1964,6 +2004,7 @@ void PartitionRoot::EnableShadowMetadata(internal::PoolHandleMask mask) {
   // This is required to enable ShadowMetadata on utility processes.
   { close(memfd_create("module_cache", MFD_CLOEXEC)); }
 #endif
+  internal::UniqueLock unique_lock(g_shadow_metadata_init_mutex_);
 
   internal::ScopedGuard guard(g_root_enumerator_lock);
   // Must lock all PartitionRoot-s and ThreadCache.
@@ -1982,6 +2023,60 @@ void PartitionRoot::EnableShadowMetadata(internal::PoolHandleMask mask) {
       internal::PartitionRootEnumerator::EnumerateOrder::kReverse);
 }
 #endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+
+// static
+void PartitionRoot::CheckMetadataIntegrity(const void* ptr) {
+  uintptr_t address = internal::ObjectInnerPtr2Addr(ptr);
+  if (!IsManagedByPartitionAlloc(address)) {
+    // Not managed by PA; cannot help to determine its integrity.
+    return;
+  } else if (internal::IsManagedByDirectMap(address)) {
+    // OOB for direct-mapped allocations is likely immediate crash.
+    // No extra benefit from additional checks.
+    return;
+  }
+  PA_CHECK(internal::IsManagedByNormalBuckets(address));
+
+  auto* root = FromAddrInFirstSuperpage(address);
+
+  ReadOnlySlotSpanMetadata* slot_span =
+      ReadOnlySlotSpanMetadata::FromAddr(address);
+  PA_CHECK(PartitionRoot::FromSlotSpanMetadata(slot_span) == root);
+
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) || \
+    PA_BUILDFLAG(USE_PARTITION_COOKIE)
+  uintptr_t slot_span_start =
+      ReadOnlySlotSpanMetadata::ToSlotSpanStart(slot_span);
+  size_t offset_in_slot_span = address - slot_span_start;
+
+  auto* bucket = slot_span->bucket;
+  uintptr_t untagged_slot_start =
+      slot_span_start +
+      bucket->slot_size * bucket->GetSlotNumber(offset_in_slot_span);
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) ||
+        // PA_BUILDFLAG(USE_PARTITION_COOKIE)
+
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+  if (root->brp_enabled()) {
+    auto* in_slot_metadata = InSlotMetadataPointerFromSlotStartAndSize(
+        untagged_slot_start, slot_span->bucket->slot_size);
+    in_slot_metadata->EnsureAlive(untagged_slot_start, slot_span);
+  }
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+
+#if PA_BUILDFLAG(USE_PARTITION_COOKIE)
+  if (root->settings.use_cookie) {
+    // Verify the cookie after the allocated region.
+    // If this assert fires, you probably corrupted memory.
+    const size_t usable_size = root->GetSlotUsableSize(slot_span);
+
+    uintptr_t cookie_address = untagged_slot_start + usable_size;
+    internal::PartitionCookieCheckValue(
+        static_cast<const unsigned char*>(internal::TagAddr(cookie_address)),
+        usable_size);
+  }
+#endif  // PA_BUILDFLAG(USE_PARTITION_COOKIE)
+}
 
 // Explicitly define common template instantiations to reduce compile time.
 #define EXPORT_TEMPLATE \

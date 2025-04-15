@@ -17,7 +17,6 @@
 #include "base/atomic_sequence_num.h"
 #include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
-#include "base/hash/md5_constexpr.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -355,8 +354,7 @@ int32_t OverlayTransformToWindowTransform(gfx::OverlayTransform transform) {
       return ANATIVEWINDOW_TRANSFORM_MIRROR_HORIZONTAL |
              ANATIVEWINDOW_TRANSFORM_ROTATE_90;
   };
-  NOTREACHED_IN_MIGRATION();
-  return ANATIVEWINDOW_TRANSFORM_IDENTITY;
+  NOTREACHED();
 }
 
 inline ADataSpace operator|(ADataSpace a, ADataSpace b) {
@@ -421,7 +419,7 @@ bool SetDataSpaceTransfer(const gfx::ColorSpace& color_space,
       skcms_TransferFunction trfn;
       // Detect scaled versions of sRGB and linear for HDR content.
       if (color_space.GetTransferFunction(&trfn)) {
-        if (skia::IsScaledTransferFunction(SkNamedTransferFnExt::kSRGB, trfn,
+        if (skia::IsScaledTransferFunction(SkNamedTransferFn::kSRGB, trfn,
                                            &extended_range_brightness_ratio)) {
           dataspace |= TRANSFER_SRGB;
           return true;
@@ -504,8 +502,11 @@ struct TransactionAckCtx {
 };
 
 uint64_t GetTraceIdForTransaction(int transaction_id) {
-  constexpr uint64_t kMask =
-      base::MD5Hash64Constexpr("SurfaceControl::Transaction");
+  // Xor with a mask to reduce likelihood of flow id collision with non-surface
+  // tasks. First 64-bits of SHA256 hash of "SurfaceControl::Transaction",
+  // interpreted as a big-endian integer. Python snippet:
+  // hashlib.sha256(b'SurfaceControl::Transaction').hexdigest()[:16]
+  constexpr uint64_t kMask = 0x11119f59bb2a2b31;
   return kMask ^ transaction_id;
 }
 
@@ -935,15 +936,19 @@ void SurfaceControl::Transaction::SetColorSpace(
   }
 }
 
-void SurfaceControl::Transaction::SetFrameRate(const Surface& surface,
-                                               float frame_rate) {
+void SurfaceControl::Transaction::SetFrameRate(
+    const Surface& surface,
+    SurfaceControlFrameRate frame_rate) {
   DCHECK(SupportsSetFrameRate());
+  int8_t compatibility = ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
+  switch (frame_rate.compatibility) {
+    case gfx::SurfaceControlFrameRateCompatibility::kFixedSource:
+      compatibility = ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
+      break;
+  }
 
-  // We always used fixed source here since a non-default value is only used for
-  // videos which have a fixed playback rate.
   SurfaceControlMethods::Get().ASurfaceTransaction_setFrameRateFn(
-      transaction_, surface.surface(), frame_rate,
-      ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+      transaction_, surface.surface(), frame_rate.frame_rate, compatibility);
 }
 
 void SurfaceControl::Transaction::SetParent(const Surface& surface,

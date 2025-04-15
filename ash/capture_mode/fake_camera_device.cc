@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -20,6 +21,7 @@
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+#include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "media/base/video_frame.h"
@@ -42,18 +44,23 @@ int g_next_buffer_id = 0;
 
 scoped_refptr<gpu::ClientSharedImage> CreateSharedImage(
     const gfx::Size& frame_size) {
+  auto* sii = aura::Env::GetInstance()
+                  ->context_factory()
+                  ->SharedMainThreadRasterContextProvider()
+                  ->SharedImageInterface();
+
   gpu::SharedImageUsageSet shared_image_usage =
       gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-      gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE |
-      gpu::SHARED_IMAGE_USAGE_SCANOUT;
-  return aura::Env::GetInstance()
-      ->context_factory()
-      ->SharedMainThreadRasterContextProvider()
-      ->SharedImageInterface()
-      ->CreateSharedImage(
-          {viz::SinglePlaneFormat::kBGRA_8888, frame_size, gfx::ColorSpace(),
-           shared_image_usage, "FakeCameraDevice"},
-          gpu::kNullSurfaceHandle, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
+      gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
+
+  if (sii->GetCapabilities().supports_scanout_shared_images) {
+    shared_image_usage |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  }
+
+  return sii->CreateSharedImage(
+      {viz::SinglePlaneFormat::kBGRA_8888, frame_size, gfx::ColorSpace(),
+       shared_image_usage, "FakeCameraDevice"},
+      gpu::kNullSurfaceHandle, gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
 }
 
 SkRect GetCircleRect(const gfx::Point& center, int radius) {
@@ -163,7 +170,7 @@ class SharedMemoryBufferStrategy : public BufferStrategy {
     DCHECK(mapping_.IsValid());
     uint8_t* buffer_ptr = mapping_.GetMemoryAsSpan<uint8_t>().data();
     const int buffer_size = mapping_.size();
-    memset(buffer_ptr, 0, buffer_size);
+    UNSAFE_TODO(memset(buffer_ptr, 0, buffer_size));
     SkBitmap bitmap;
     bitmap.setInfo(
         SkImageInfo::MakeN32Premul(frame_size.width(), frame_size.height()));
@@ -417,6 +424,9 @@ void FakeCameraDevice::CreatePushSubscription(
 
 void FakeCameraDevice::RegisterVideoEffectsProcessor(
     mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor> remote) {}
+
+void FakeCameraDevice::RegisterReadonlyVideoEffectsManager(
+    mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager> remote) {}
 
 void FakeCameraDevice::OnFinishedConsumingBuffer(int32_t buffer_id) {
   auto iter = buffer_pool_.find(buffer_id);

@@ -235,7 +235,7 @@ void WebmEncoderMuxer::EncodeVideo(scoped_refptr<media::VideoFrame> frame) {
 }
 
 void WebmEncoderMuxer::EncodeRgbVideo(RgbVideoFrame rgb_video_frame) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 EncodeAudioCallback WebmEncoderMuxer::GetEncodeAudioCallback() {
@@ -377,7 +377,7 @@ void WebmEncoderMuxer::OnVideoEncoderOutput(
   const auto& encoded_video_params = encoded_video_params_.front();
   const media::Muxer::VideoParameters muxer_params(
       encoded_video_params.visible_rect_size, kMaxFrameRate,
-      media::VideoCodec::kVP8, kColorSpace);
+      media::VideoCodec::kVP8, kColorSpace, media::kNoTransformation);
   const base::TimeTicks timestamp = encoded_video_params.frame_reference_time;
   encoded_video_params_.pop();
 

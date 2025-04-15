@@ -22,6 +22,8 @@ import org.chromium.components.browser_ui.widget.DualControlLayout.DualControlLa
 /** View that wraps history sync consent screen and caches references to UI elements. */
 public class HistorySyncView extends LinearLayout {
     private ImageView mAccountImage;
+    private TextView mTitle;
+    private TextView mSubtitle;
     private Button mDeclineButton;
     private Button mAcceptButton;
     private TextView mDetailsDescription;
@@ -34,13 +36,25 @@ public class HistorySyncView extends LinearLayout {
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        // TODO(crbug.com/41493766): Set up scrollView.
+        // ScrollView sets focusable to true during construction. So setting focusable to false in
+        // xml file doesn't work. It has to be set after the construction of ScrollView.
+        findViewById(R.id.sync_consent_scroll_view).setFocusable(false);
         mAccountImage = findViewById(R.id.history_sync_account_image);
+        mTitle = findViewById(R.id.history_sync_title);
+        mSubtitle = findViewById(R.id.history_sync_subtitle);
         mDetailsDescription = findViewById(R.id.history_sync_footer);
     }
 
     ImageView getAccountImageView() {
         return mAccountImage;
+    }
+
+    TextView getTitle() {
+        return mTitle;
+    }
+
+    TextView getSubtitle() {
+        return mSubtitle;
     }
 
     Button getDeclineButton() {

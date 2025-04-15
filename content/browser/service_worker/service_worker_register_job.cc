@@ -230,8 +230,7 @@ ServiceWorkerVersion* ServiceWorkerRegisterJob::new_version() {
 void ServiceWorkerRegisterJob::SetPhase(Phase phase) {
   switch (phase) {
     case INITIAL:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
     case START:
       DCHECK(phase_ == INITIAL) << phase_;
       break;
@@ -614,6 +613,7 @@ void ServiceWorkerRegisterJob::StartWorkerForUpdate(
 void ServiceWorkerRegisterJob::UpdateAndContinue() {
   SetPhase(UPDATE);
 
+  context_->NotifyWillCreateURLLoaderFactory(scope_);
   scoped_refptr<network::SharedURLLoaderFactory> loader_factory =
       context_->wrapper()->GetLoaderFactoryForUpdateCheck(
           scope_,

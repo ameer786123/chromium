@@ -80,7 +80,11 @@ class CallbackCookieSettings : public CookieSettingsBase {
     return false;
   }
 
-  bool ShouldBlockThirdPartyCookies() const override { return false; }
+  bool ShouldBlockThirdPartyCookies(
+      base::optional_ref<const url::Origin> top_frame_origin,
+      net::CookieSettingOverrides overrides) const override {
+    return Are3pcsForceDisabledByOverride(overrides);
+  }
   bool MitigationsEnabledFor3pcd() const override { return false; }
 
   bool IsThirdPartyCookiesAllowedScheme(
@@ -91,13 +95,11 @@ class CallbackCookieSettings : public CookieSettingsBase {
   bool ShouldIgnoreSameSiteRestrictions(
       const GURL& url,
       const net::SiteForCookies& site_for_cookies) const override {
-    NOTREACHED_IN_MIGRATION();
-    return false;
+    NOTREACHED();
   }
 
  private:
   GetSettingCallback callback_;
-  ContentSettingsType type_;
 };
 
 class CookieSettingsBaseTest : public testing::Test {
@@ -223,6 +225,28 @@ TEST_F(CookieSettingsBaseTest, CookieAccessAllowedWithAllowSetting) {
       url_, site_for_cookies_, origin_, net::CookieSettingOverrides()));
 }
 
+TEST_F(CookieSettingsBaseTest, CookieAccessAllowedWithNonNoncePartitionKey) {
+  CallbackCookieSettings settings(CONTENT_SETTING_ALLOW);
+  net::CookiePartitionKey cookie_partition_key =
+      net::CookiePartitionKey::FromURLForTesting(url_);
+
+  EXPECT_TRUE(settings.IsFullCookieAccessAllowed(
+      url_, site_for_cookies_, origin_, net::CookieSettingOverrides(),
+      cookie_partition_key));
+}
+
+TEST_F(CookieSettingsBaseTest, CookieAccessNotAllowedWithNoncePartitionKey) {
+  CallbackCookieSettings settings(CONTENT_SETTING_ALLOW);
+  net::CookiePartitionKey cookie_partition_key =
+      net::CookiePartitionKey::FromURLForTesting(
+          url_, net::CookiePartitionKey::AncestorChainBit::kCrossSite,
+          base::UnguessableToken::Create());
+
+  EXPECT_FALSE(settings.IsFullCookieAccessAllowed(
+      url_, site_for_cookies_, origin_, net::CookieSettingOverrides(),
+      cookie_partition_key));
+}
+
 TEST_F(CookieSettingsBaseTest, ThirdPartyCookiesOverriden) {
   const GURL kThirdPartyURL = GURL("https://3p.com");
 
@@ -301,6 +325,10 @@ TEST_F(CookieSettingsBaseTest, IsValidLegacyAccessSetting) {
   EXPECT_FALSE(CookieSettingsBase::IsValidSettingForLegacyAccess(
       CONTENT_SETTING_SESSION_ONLY));
 }
+
+// `GetStorageAccessStatus` is tested in
+// components/content_settings/core/browser/cookie_settings_unittest.cc and
+// services/network/cookie_settings_unittest.cc
 
 class CookieSettingsBaseStorageAccessAPITest
     : public testing::TestWithParam<std::tuple<bool, bool>> {

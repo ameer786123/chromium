@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "base/containers/flat_map.h"
 #include "components/viz/common/quads/compositor_frame.h"
@@ -22,6 +23,7 @@
 namespace viz {
 namespace {
 
+using ContinuousRangeSettings = FrameIntervalDecider::ContinuousRangeSettings;
 using FixedIntervalSettings = FrameIntervalDecider::FixedIntervalSettings;
 using FrameIntervalClass = FrameIntervalDecider::FrameIntervalClass;
 using Result = FrameIntervalDecider::Result;
@@ -29,13 +31,13 @@ using Result = FrameIntervalDecider::Result;
 constexpr base::TimeTicks kNow = base::TimeTicks() + base::Seconds(1234);
 
 void ExpectResult(Result result, FrameIntervalClass frame_interval_class) {
-  ASSERT_TRUE(absl::holds_alternative<FrameIntervalClass>(result));
-  EXPECT_EQ(frame_interval_class, absl::get<FrameIntervalClass>(result));
+  ASSERT_TRUE(std::holds_alternative<FrameIntervalClass>(result));
+  EXPECT_EQ(frame_interval_class, std::get<FrameIntervalClass>(result));
 }
 
 void ExpectResult(Result result, base::TimeDelta interval) {
-  ASSERT_TRUE(absl::holds_alternative<base::TimeDelta>(result));
-  EXPECT_EQ(interval, absl::get<base::TimeDelta>(result));
+  ASSERT_TRUE(std::holds_alternative<base::TimeDelta>(result));
+  EXPECT_EQ(interval, std::get<base::TimeDelta>(result));
 }
 
 class TestFrameIntervalMatcher : public FrameIntervalMatcher {
@@ -249,7 +251,7 @@ TEST_F(FrameIntervalDeciderTest, NoMatchFixedIntervals) {
   FixedIntervalSettings fixed_interval_settings;
   fixed_interval_settings.supported_intervals.insert(base::Milliseconds(8));
   fixed_interval_settings.supported_intervals.insert(base::Milliseconds(16));
-  fixed_interval_settings.default_interval = base::Milliseconds(16);
+  fixed_interval_settings.default_interval = base::Milliseconds(0);
   settings_.interval_settings = fixed_interval_settings;
 
   InitializeDecider();
@@ -259,7 +261,24 @@ TEST_F(FrameIntervalDeciderTest, NoMatchFixedIntervals) {
   DrawSurfaces({surface}, kNow);
 
   EXPECT_TRUE(matchers_[1]->has_last_matcher_inputs());
-  ExpectResult(TakeLastResult(), base::Milliseconds(16));
+  ExpectResult(TakeLastResult(), base::Milliseconds(0));
+}
+
+TEST_F(FrameIntervalDeciderTest, NoMatchContinuousRange) {
+  ContinuousRangeSettings continuous_range_settings;
+  continuous_range_settings.min_interval = base::Milliseconds(8);
+  continuous_range_settings.max_interval = base::Milliseconds(16);
+  continuous_range_settings.default_interval = base::Milliseconds(0);
+  settings_.interval_settings = continuous_range_settings;
+
+  InitializeDecider();
+  FrameIntervalInputs inputs;
+  inputs.frame_time = kNow;
+  Surface* surface = CreateSurface(FrameSinkId(0, 1), inputs);
+  DrawSurfaces({surface}, kNow);
+
+  EXPECT_TRUE(matchers_[1]->has_last_matcher_inputs());
+  ExpectResult(TakeLastResult(), base::Milliseconds(0));
 }
 
 TEST_F(FrameIntervalDeciderTest, FirstMatch) {

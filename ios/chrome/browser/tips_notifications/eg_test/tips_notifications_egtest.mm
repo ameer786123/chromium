@@ -5,21 +5,23 @@
 #import "base/strings/stringprintf.h"
 #import "base/test/ios/wait_util.h"
 #import "base/threading/platform_thread.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/new_tab_page_app_interface.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/set_up_list/constants.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_constants.h"
+#import "ios/chrome/browser/push_notification/ui_bundled/scoped_notification_auth_swizzler.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/tips_notifications/model/utils.h"
-#import "ios/chrome/browser/ui/authentication/signin/signin_constants.h"
-#import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
-#import "ios/chrome/browser/ui/content_suggestions/new_tab_page_app_interface.h"
-#import "ios/chrome/browser/ui/content_suggestions/set_up_list/constants.h"
 #import "ios/chrome/common/ui/confirmation_alert/constants.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/chrome/test/earl_grey/earl_grey_scoped_block_swizzler.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 
@@ -41,11 +43,14 @@ void TapText(NSString* text) {
   [[EarlGrey selectElementWithMatcher:item] performAction:grey_tap()];
 }
 
-// Taps "Allow" on notification permissions alert, if it appears.
-void MaybeTapAllowNotifications() {
+// Taps "Allow" on notification permissions popup or Camera popup, if
+// either appears.
+void MaybeTapAllowOnPopup() {
+  [ChromeEarlGreyUI waitForAppToIdle];
   XCUIApplication* springboardApplication = [[XCUIApplication alloc]
       initWithBundleIdentifier:@"com.apple.springboard"];
-  auto button = springboardApplication.buttons[@"Allow"];
+  // Wait for allow or ok button to appear.
+  auto button = [springboardApplication.buttons elementBoundByIndex:1];
   if ([button waitForExistenceWithTimeout:1]) {
     // Wait for the magic stack to settle behind the alert.
     // Otherwise the test flakes when a snackbar is presented right after the
@@ -103,7 +108,16 @@ void MaybeDismissNotification() {
       kIOSTipsNotificationsUnknownTriggerTimeParam, triggerTime.c_str(),
       kIOSTipsNotificationsLessEngagedTriggerTimeParam, triggerTime.c_str(),
       kIOSTipsNotificationsActiveSeekerTriggerTimeParam, triggerTime.c_str());
+
+  if ([self isRunningTest:@selector(testReactivation)]) {
+    std::string enableReactivation =
+        base::StringPrintf(",%s", kIOSReactivationNotifications.name);
+    enableFeatures.append(enableReactivation);
+  } else {
+    config.features_disabled.push_back(kIOSReactivationNotifications);
+  }
   config.additional_args.push_back(enableFeatures);
+
   return config;
 }
 
@@ -157,7 +171,7 @@ void MaybeDismissNotification() {
 
   // Tap the menu item to enable notifications.
   TapText(@"Turn on notifications");
-  MaybeTapAllowNotifications();
+  MaybeTapAllowOnPopup();
 
   // Tap the confirmation snackbar.
   WaitForThenTapText(@"notifications turned on");
@@ -227,8 +241,8 @@ void MaybeDismissNotification() {
     [ChromeEarlGrey waitForUIElementToAppearWithMatcher:omniboxPositionView];
 
     // Dismiss the Omnibox Position view.
-    [[EarlGrey selectElementWithMatcher:
-                   chrome_test_util::PromoStyleSecondaryActionButtonMatcher()]
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                            PromoScreenSecondaryButtonMatcher()]
         performAction:grey_tap()];
   }
 
@@ -276,13 +290,11 @@ void MaybeDismissNotification() {
 }
 
 // Tests that the Lens Promo appears when tapping on the Lens notification.
-// TODO(crbug.com/375031915): Re-enable this test on simulator.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_testLensNotification DISABLED_testLensNotification
-#else
-#define MAYBE_testLensNotification testLensNotification
-#endif
-- (void)MAYBE_testLensNotification {
+- (void)testLensNotification {
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_SKIPPED(@"Skipped for iPad.");
+  }
+
   MaybeDismissNotification();
   [ChromeEarlGreyUI waitForAppToIdle];
   [self optInToTipsNotifications:{}];
@@ -293,22 +305,16 @@ void MaybeDismissNotification() {
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:grey_accessibilityID(
                                                           @"kLensPromoAXID")];
   // Tap "Show me how".
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::PromoStyleSecondaryActionButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          PromoScreenSecondaryButtonMatcher()]
       performAction:grey_tap()];
   id<GREYMatcher> instructions =
       grey_accessibilityID(@"kLensPromoInstructionsAXID");
   // Swipe down to dismiss the instructions.
   [[EarlGrey selectElementWithMatcher:instructions]
       performAction:grey_swipeFastInDirection(kGREYDirectionDown)];
-  // Tap "Show me how" again.
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::PromoStyleSecondaryActionButtonMatcher()]
-      performAction:grey_tap()];
-  // Tap "Go To Lens".
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityID(
-                     kConfirmationAlertPrimaryActionAccessibilityIdentifier)]
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
       performAction:grey_tap()];
 
   // Request the notification a second time.
@@ -316,10 +322,20 @@ void MaybeDismissNotification() {
   TapNotification();
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:grey_accessibilityID(
                                                           @"kLensPromoAXID")];
-  TapText(@"Done");
+  // Tap "Show me how" again.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          PromoScreenSecondaryButtonMatcher()]
+      performAction:grey_tap()];
+  // Tap "Go To Lens".
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kConfirmationAlertPrimaryActionAccessibilityIdentifier)]
+      performAction:grey_tap()];
+  MaybeTapAllowOnPopup();
+  [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"escape" flags:0];
 }
 
-// Tests that the Lens Promo appears when tapping on the Lens notification.
+// Tests that the ESB Promo appears when tapping on the ESB notification.
 - (void)testEnhancedSafeBrowsingNotification {
   MaybeDismissNotification();
   [ChromeEarlGreyUI waitForAppToIdle];
@@ -332,8 +348,8 @@ void MaybeDismissNotification() {
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:
                       grey_accessibilityID(@"kEnhancedSafeBrowsingPromoAXID")];
   // Tap "Show me how".
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::PromoStyleSecondaryActionButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          PromoScreenSecondaryButtonMatcher()]
       performAction:grey_tap()];
   id<GREYMatcher> instructions =
       grey_accessibilityID(@"kEnhancedSafeBrowsingPromoInstructionsAXID");
@@ -341,8 +357,8 @@ void MaybeDismissNotification() {
   [[EarlGrey selectElementWithMatcher:instructions]
       performAction:grey_swipeFastInDirection(kGREYDirectionDown)];
   // Tap "Show me how" again.
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::PromoStyleSecondaryActionButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                          PromoScreenSecondaryButtonMatcher()]
       performAction:grey_tap()];
   // Tap "Go To Settings".
   [[EarlGrey selectElementWithMatcher:
@@ -356,6 +372,37 @@ void MaybeDismissNotification() {
   TapNotification();
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:
                       grey_accessibilityID(@"kEnhancedSafeBrowsingPromoAXID")];
-  TapText(@"Done");
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::NavigationBarDoneButton()]
+      performAction:grey_tap()];
 }
+
+// Tests that the app adds a Reactivation notification request.
+- (void)testReactivation {
+  ScopedNotificationAuthSwizzler auth(YES);
+  [ChromeEarlGrey
+      resetDataForLocalStatePref:prefs::kPushNotificationAuthorizationStatus];
+  [ChromeEarlGrey
+      resetDataForLocalStatePref:kReactivationNotificationsCanceledCount];
+  __block BOOL notificationRequested = NO;
+  auto requestBlock = ^(id center, UNNotificationRequest* request,
+                        void (^completionHandler)(NSError* error)) {
+    XCTAssert(IsTipsNotification(request),
+              @"Requested notification was not recognized.");
+    notificationRequested = YES;
+    completionHandler(nil);
+  };
+  EarlGreyScopedBlockSwizzler addRequest(
+      @"UNUserNotificationCenter",
+      @"addNotificationRequest:withCompletionHandler:", requestBlock);
+
+  // Backgrounding and re-foregrounding the app will force it to re-request
+  // a Reactivation notification.
+  [[AppLaunchManager sharedManager] backgroundAndForegroundApp];
+  [ChromeEarlGreyUI waitForAppToIdle];
+
+  GREYAssert(notificationRequested,
+             @"Reactivation notification request was not added.");
+}
+
 @end

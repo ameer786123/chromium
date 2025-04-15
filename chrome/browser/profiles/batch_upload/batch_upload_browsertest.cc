@@ -5,9 +5,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_feature_list.h"
-#include "chrome/browser/profiles/batch_upload/batch_upload_controller.h"
-#include "chrome/browser/profiles/batch_upload/batch_upload_data_provider.h"
 #include "chrome/browser/profiles/batch_upload/batch_upload_delegate.h"
 #include "chrome/browser/profiles/batch_upload/batch_upload_service.h"
 #include "chrome/browser/profiles/batch_upload/batch_upload_service_factory.h"
@@ -23,9 +20,9 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/signin/public/base/consent_level.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/service/local_data_description.h"
 #include "components/sync/test/mock_sync_service.h"
@@ -34,6 +31,8 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+
+using signin::constants::kNoHostedDomainFound;
 
 namespace {
 
@@ -54,35 +53,8 @@ syncer::LocalDataItemModel MakeDummyLocalDataModel(size_t id) {
 
 }  // namespace
 
-class BatchUploadWithFeatureOffBrowserTest : public InProcessBrowserTest {
- public:
-  BatchUploadWithFeatureOffBrowserTest() {
-    scoped_feature_list_.InitAndDisableFeature(switches::kBatchUploadDesktop);
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_F(BatchUploadWithFeatureOffBrowserTest, BatchUploadNull) {
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  EXPECT_FALSE(batch_upload);
-}
-
-// TODO(crbug.com/374134588): Make these tests as unit tests. No need for
-// browser tests.
 class BatchUploadBrowserTest : public InProcessBrowserTest {
  public:
-  BatchUploadBrowserTest() {
-    scoped_feature_list_.InitWithFeatures(
-        // `switches::kExplicitBrowserSigninUIOnDesktop` is needed for the
-        // SigninPending state.
-        /*enabled_features=*/{switches::kExplicitBrowserSigninUIOnDesktop,
-                              switches::kBatchUploadDesktop},
-        /*disabled_features=*/{});
-  }
-
   void SetUpOnMainThread() override {
     BatchUploadServiceFactory::GetInstance()->SetTestingFactoryAndUse(
         browser()->profile(),
@@ -112,7 +84,7 @@ class BatchUploadBrowserTest : public InProcessBrowserTest {
 
     base::RunLoop run_loop;
     batch_upload_service->OpenBatchUpload(
-        browser,
+        browser, BatchUploadService::EntryPoint::kPasswordManagerSettings,
         base::BindOnce(&BatchUploadBrowserTest::OnBatchUploadShownResult,
                        base::Unretained(this), run_loop.QuitClosure()));
 
@@ -178,7 +150,6 @@ class BatchUploadBrowserTest : public InProcessBrowserTest {
       returned_descriptions_;
 
   bool dialog_shown_ = false;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest, OpenBatchUpload) {
@@ -222,58 +193,6 @@ IN_PROC_BROWSER_TEST_F(
   // We can now display the dialog on the other browser.
   EXPECT_TRUE(OpenBatchUpload(batch_upload, browser()));
   EXPECT_TRUE(batch_upload->IsDialogOpened());
-}
-
-IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest,
-                       SignedOutUserShouldNotBeAbleToOpenTheDialog) {
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(browser()->profile());
-  ASSERT_FALSE(
-      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
-
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  ASSERT_TRUE(batch_upload);
-  EXPECT_FALSE(OpenBatchUpload(batch_upload, browser()));
-  EXPECT_FALSE(batch_upload->IsDialogOpened());
-}
-
-IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest,
-                       SycningUserShouldNotBeAbleToOpenTheDialog) {
-  SigninWithFullInfo(signin::ConsentLevel::kSync);
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  ASSERT_TRUE(batch_upload);
-  EXPECT_FALSE(OpenBatchUpload(batch_upload, browser()));
-  EXPECT_FALSE(batch_upload->IsDialogOpened());
-}
-
-IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest,
-                       SigninPendingUserShouldNotBeAbleToOpenTheDialog) {
-  SigninWithFullInfo();
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(browser()->profile());
-  CoreAccountInfo primary_account =
-      identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
-  ASSERT_FALSE(primary_account.IsEmpty());
-
-  signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager);
-  // Signed in but in Signin Pending state.
-  ASSERT_TRUE(
-      identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
-          primary_account.account_id));
-
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  ASSERT_TRUE(batch_upload);
-  EXPECT_FALSE(OpenBatchUpload(batch_upload, browser()));
-  EXPECT_FALSE(batch_upload->IsDialogOpened());
 }
 
 IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest, OpenedDialogThenSigninPending) {
@@ -336,49 +255,8 @@ IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest, OpenedDialogThenSignout) {
   EXPECT_TRUE(OpenBatchUpload(batch_upload, browser()));
 }
 
-IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest,
-                       EmptyDescriptionsDoNotOpenDialog) {
-  SigninWithFullInfo();
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  ASSERT_TRUE(batch_upload);
-
-  ClearReturnDescriptions();
-  EXPECT_FALSE(OpenBatchUpload(batch_upload, browser()));
-
-  // Setting 1 element should open the dialog now.
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-  EXPECT_TRUE(OpenBatchUpload(batch_upload, browser()));
-}
-
-IN_PROC_BROWSER_TEST_F(BatchUploadBrowserTest,
-                       DescriptionsWithEmptyModelsDoNotOpenDialog) {
-  SigninWithFullInfo();
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-
-  BatchUploadService* batch_upload =
-      BatchUploadServiceFactory::GetForProfile(browser()->profile());
-  ASSERT_TRUE(batch_upload);
-
-  // Set empty return data models per type.
-  ClearReturnDescriptions();
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 0);
-  SetReturnDescriptions(syncer::DataType::CONTACT_INFO, 0);
-  EXPECT_FALSE(OpenBatchUpload(batch_upload, browser()));
-
-  // Setting 1 element should open the dialog now.
-  ClearReturnDescriptions();
-  SetReturnDescriptions(syncer::DataType::PASSWORDS, 1);
-  EXPECT_TRUE(OpenBatchUpload(batch_upload, browser()));
-}
-
 // Used to control the creation of the dialog (not actually creating it), and
 // the expected output without having to deal with the real dialog.
-// TODO(b/359146556): Delegate to be used when dummy implementations are removed
-// and the actual data providers are implemented to better controlled the data
-// that is expected to move.
 class BatchUploadDelegateFake : public BatchUploadDelegate {
  public:
   // No data move requested.
@@ -414,6 +292,7 @@ class BatchUploadDelegateFake : public BatchUploadDelegate {
   void ShowBatchUploadDialog(
       Browser* browser,
       std::vector<syncer::LocalDataDescription> local_data_description_list,
+      BatchUploadService::EntryPoint entry_point,
       BatchUploadSelectedDataTypeItemsCallback complete_callback) override {
     local_data_description_list_ = std::move(local_data_description_list);
     complete_callback_ = std::move(complete_callback);

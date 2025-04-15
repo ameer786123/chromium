@@ -7,6 +7,7 @@
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/browser/webid/test/mock_idp_network_request_manager.h"
+#include "content/public/common/content_features.h"
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_web_contents.h"
 #include "net/http/http_status_code.h"
@@ -38,7 +39,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnown) {
       std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             IdpNetworkRequestManager::Endpoints endpoints;
@@ -53,7 +54,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnown) {
           }));
 
   // Returns a 404 for the fetch of the well-known file.
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -66,7 +67,9 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnown) {
 
   // Asserts that we get a kWellKnownHttpNotFound.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -90,7 +93,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnownButNoEnforcement) {
       std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             IdpNetworkRequestManager::Endpoints endpoints;
@@ -105,7 +108,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnownButNoEnforcement) {
           }));
 
   // Returns a 404 for the fetch of the well-known file.
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -118,7 +121,9 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchWellKnownButNoEnforcement) {
 
   // Asserts that we get no error in the result.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -140,7 +145,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchConfig) {
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
   // Returns a 404 for the fetch of the config file.
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             std::move(callback).Run(
@@ -148,7 +153,7 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchConfig) {
                 /*endpoints=*/{}, /*metadata=*/{});
           }));
 
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -161,7 +166,9 @@ TEST_F(FederatedProviderFetcherTest, FailedToFetchConfig) {
 
   // Asserts that we get a kConfigHttpNotFound.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -183,14 +190,14 @@ TEST_F(FederatedProviderFetcherTest, SucceedsToFetchConfigButInvalidResponse) {
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
   // Returns a 200 but with an empty and invalid response.
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             std::move(callback).Run({ParseStatus::kSuccess, net::HTTP_OK},
                                     /*endpoints=*/{}, /*metadata=*/{});
           }));
 
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -203,7 +210,9 @@ TEST_F(FederatedProviderFetcherTest, SucceedsToFetchConfigButInvalidResponse) {
 
   // Asserts that we get a kConfigHttpNotFound.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -225,7 +234,7 @@ TEST_F(FederatedProviderFetcherTest, SuccessfullAndValidResponse) {
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
   // Returns a 200 but with an empty and invalid response.
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             IdpNetworkRequestManager::Endpoints endpoints;
@@ -239,7 +248,7 @@ TEST_F(FederatedProviderFetcherTest, SuccessfullAndValidResponse) {
                                     endpoints, metadata);
           }));
 
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -252,7 +261,9 @@ TEST_F(FederatedProviderFetcherTest, SuccessfullAndValidResponse) {
 
   // Asserts that we get a kConfigHttpNotFound.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -272,7 +283,7 @@ TEST_F(FederatedProviderFetcherTest,
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
   // Returns a 200 but with an empty and invalid response.
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             IdpNetworkRequestManager::Endpoints endpoints;
@@ -286,7 +297,7 @@ TEST_F(FederatedProviderFetcherTest,
                                     endpoints, metadata);
           }));
 
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -301,7 +312,9 @@ TEST_F(FederatedProviderFetcherTest,
 
   // Asserts that we get a kConfigHttpNotFound.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
@@ -328,7 +341,7 @@ TEST_F(FederatedProviderFetcherTest,
   FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
 
   // Returns a 200 but with an empty and invalid response.
-  EXPECT_CALL(*network_manager, FetchConfig(_, _, _, _, _))
+  EXPECT_CALL(*network_manager, FetchConfig)
       .WillOnce(WithArg<4>(
           [](IdpNetworkRequestManager::FetchConfigCallback callback) {
             IdpNetworkRequestManager::Endpoints endpoints;
@@ -342,7 +355,7 @@ TEST_F(FederatedProviderFetcherTest,
                                     endpoints, metadata);
           }));
 
-  EXPECT_CALL(*network_manager, FetchWellKnown(_, _))
+  EXPECT_CALL(*network_manager, FetchWellKnown)
       .WillOnce(WithArg<1>(
           [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
             IdpNetworkRequestManager::WellKnown well_known;
@@ -356,15 +369,73 @@ TEST_F(FederatedProviderFetcherTest,
 
   base::RunLoop loop;
 
-  // Asserts that we get a kConfigHttpNotFound.
+  // Asserts that we get no error in the result.
   fetcher.Start(
-      {GURL("https://idp.example/fedcm.json")}, blink::mojom::RpMode::kPassive,
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
       /*icon_ideal_size=*/0,
       /*icon_minimum_size=*/0,
       base::BindLambdaForTesting(
           [&loop](std::vector<FederatedProviderFetcher::FetchResult> result) {
             EXPECT_EQ(result.size(), 1ul);
             EXPECT_FALSE(result[0].error);
+            loop.Quit();
+          }));
+
+  loop.Run();
+}
+
+TEST_F(FederatedProviderFetcherTest,
+       ProvidersUrlsCanbeEmptyWhenAuthZIsEnabledAndAccountEndpointsMatch) {
+  // When the AuthZ feature is enabled, the well-known file can have empty
+  // provider_urls.
+  feature_list_.InitAndEnableFeature(features::kFedCmAuthz);
+
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  // Returns a 200 but with an empty and invalid response.
+  EXPECT_CALL(*network_manager, FetchConfig)
+      .WillOnce(WithArg<4>(
+          [](IdpNetworkRequestManager::FetchConfigCallback callback) {
+            IdpNetworkRequestManager::Endpoints endpoints;
+            endpoints.token = GURL("https://idp.example/token.php");
+            endpoints.accounts = GURL("https://idp.example/accounts.php");
+
+            IdentityProviderMetadata metadata;
+            metadata.idp_login_url =
+                GURL("https://idp.example/idp_login_url.php");
+            std::move(callback).Run({ParseStatus::kSuccess, net::HTTP_OK},
+                                    endpoints, metadata);
+          }));
+
+  EXPECT_CALL(*network_manager, FetchWellKnown)
+      .WillOnce(WithArg<1>(
+          [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
+            IdpNetworkRequestManager::WellKnown well_known;
+            well_known.accounts = GURL("https://idp.example/accounts.php");
+            well_known.login_url =
+                GURL("https://idp.example/idp_login_url.php");
+            std::move(callback).Run({ParseStatus::kSuccess, net::HTTP_OK},
+                                    well_known);
+          }));
+
+  base::RunLoop loop;
+
+  // Asserts that we get no error in the result.
+  fetcher.Start(
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/false}},
+      blink::mojom::RpMode::kPassive,
+      /*icon_ideal_size=*/0,
+      /*icon_minimum_size=*/0,
+      base::BindLambdaForTesting(
+          [&loop](std::vector<FederatedProviderFetcher::FetchResult> result) {
+            EXPECT_EQ(result.size(), 1ul);
+            EXPECT_FALSE(result[0].error);
+            EXPECT_TRUE(result[0].wellknown.provider_urls.empty());
             loop.Quit();
           }));
 
@@ -461,8 +532,6 @@ TEST_F(FederatedProviderFetcherTest, InvalidCrossOriginTokenEndpoint) {
 }
 
 TEST_F(FederatedProviderFetcherTest, InvalidCrossOriginSigninUrl) {
-  feature_list_.InitAndEnableFeature(features::kFedCmIdpSigninStatusEnabled);
-
   FederatedProviderFetcher::FetchResult result;
   result.endpoints.accounts = GURL("https://idp.example/accounts");
   result.endpoints.token = GURL("https://idp.example/token");
@@ -671,6 +740,108 @@ TEST_F(FederatedProviderFetcherTest,
   //                                     kConfigInvalidResponse);
 }
 
+TEST_F(FederatedProviderFetcherTest,
+       SuccessResultEvenWithEmptyAccountsEndpointWithLightweightFedCm) {
+  // Validate that when LightweightFedCM is enabled, it's permissible to have an
+  // empty accounts_endpoint set.
+  feature_list_.InitAndEnableFeature(features::kFedCmLightweightMode);
+  FederatedProviderFetcher::FetchResult result;
+  IdentityProviderMetadata metadata;
+  metadata.idp_login_url = GURL("https://idp.example/sign-in");
+  result.metadata = metadata;
+  result.endpoints.accounts = GURL();
+  result.endpoints.token = GURL("https://idp.example/token");
+  result.wellknown.login_url = GURL("https://idp.example/sign-in");
+  result.wellknown.accounts = GURL();
+
+  result.wellknown.provider_urls = {GURL("https://idp.example/fedcm.json")};
+  result.identity_provider_config_url = GURL("https://idp.example/fedcm.json");
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  fetcher.ValidateAndMaybeSetError(result);
+
+  EXPECT_FALSE(result.error);
+}
+
+TEST_F(FederatedProviderFetcherTest,
+       ProvidersUrlsCanbeEmptyWhenAuthZAndLightweightAreEnabled) {
+  // Validate that when LightweightFedCM and FedCmAuthz are enabled,
+  // it's permissible to have an empty accounts_endpoint set and
+  // no provider_config_urls, so long as the accounts url is empty in both the
+  // wellknown and config.
+  feature_list_.InitWithFeatures(
+      {features::kFedCmLightweightMode, features::kFedCmAuthz}, {});
+  FederatedProviderFetcher::FetchResult result;
+  IdentityProviderMetadata metadata;
+  metadata.idp_login_url = GURL("https://idp.example/sign-in");
+  result.metadata = metadata;
+  result.endpoints.accounts = GURL();
+  result.endpoints.token = GURL("https://idp.example/token");
+  result.wellknown.login_url = GURL("https://idp.example/sign-in");
+  result.wellknown.accounts = GURL();
+
+  result.wellknown.provider_urls = {};
+  result.identity_provider_config_url = GURL("https://idp.example/fedcm.json");
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  fetcher.ValidateAndMaybeSetError(result);
+
+  EXPECT_FALSE(result.error);
+}
+
+TEST_F(FederatedProviderFetcherTest,
+       FailureResultWithMismatchingAccountsEndpointWithLightweightFedCm) {
+  // Validate that when LightweightFedCM is enabled, it's still an error to have
+  // a non-same-origin accounts endpoint.
+  feature_list_.InitAndEnableFeature(features::kFedCmLightweightMode);
+  FederatedProviderFetcher::FetchResult result;
+  IdentityProviderMetadata metadata;
+  metadata.idp_login_url = GURL("https://idp.example/sign-in");
+  result.metadata = metadata;
+  result.endpoints.accounts = GURL("https://not-the-idp.example/accounts");
+  result.endpoints.token = GURL("https://idp.example/token");
+  result.wellknown.login_url = GURL();
+  result.wellknown.accounts = GURL();
+
+  result.wellknown.provider_urls = {GURL("https://idp.example/fedcm.json")};
+  result.identity_provider_config_url = GURL("https://idp.example/fedcm.json");
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  fetcher.ValidateAndMaybeSetError(result);
+
+  EXPECT_TRUE(result.error);
+}
+
+TEST_F(FederatedProviderFetcherTest,
+       FailureResultWithEmptyAccountsEndpointWithoutLightweightFedCm) {
+  // Validate that when LightweightFedCM is disabled, it's still an error to not
+  // define an accounts endpoint.
+  FederatedProviderFetcher::FetchResult result;
+  IdentityProviderMetadata metadata;
+  metadata.idp_login_url = GURL("https://idp.example/sign-in");
+  result.metadata = metadata;
+  result.endpoints.accounts = GURL();
+  result.endpoints.token = GURL("https://idp.example/token");
+  result.wellknown.login_url = GURL();
+  result.wellknown.accounts = GURL();
+
+  result.wellknown.provider_urls = {GURL("https://idp.example/fedcm.json")};
+  result.identity_provider_config_url = GURL("https://idp.example/fedcm.json");
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  fetcher.ValidateAndMaybeSetError(result);
+
+  EXPECT_TRUE(result.error);
+}
+
 TEST_F(FederatedProviderFetcherTest, InvalidEmptyConfig) {
   FederatedProviderFetcher::FetchResult result;
 
@@ -701,6 +872,56 @@ TEST_F(FederatedProviderFetcherTest, InvalidNetworkError) {
   EXPECT_TRUE(result.error);
   EXPECT_EQ(result.error->result,
             blink::mojom::FederatedAuthRequestResult::kConfigHttpNotFound);
+}
+
+TEST_F(FederatedProviderFetcherTest, RegisteredIdpSkipsWellKnownCheck) {
+  base::test::ScopedFeatureList list;
+  list.InitAndEnableFeature(features::kFedCmIdPRegistration);
+  auto network_manager =
+      std::make_unique<StrictMock<MockIdpNetworkRequestManager>>();
+  FederatedProviderFetcher fetcher(*main_rfh(), network_manager.get());
+
+  EXPECT_CALL(*network_manager, FetchConfig)
+      .WillOnce(WithArg<4>(
+          [](IdpNetworkRequestManager::FetchConfigCallback callback) {
+            IdpNetworkRequestManager::Endpoints endpoints;
+            endpoints.token = GURL("https://idp.example/token.php");
+            endpoints.accounts = GURL("https://idp.example/accounts.php");
+
+            IdentityProviderMetadata metadata;
+            metadata.idp_login_url =
+                GURL("https://idp.example/idp_login_url.php");
+            std::move(callback).Run({ParseStatus::kSuccess, net::HTTP_OK},
+                                    endpoints, metadata);
+          }));
+
+  // Returns a 404 for the fetch of the well-known file.
+  EXPECT_CALL(*network_manager, FetchWellKnown)
+      .WillOnce(WithArg<1>(
+          [](IdpNetworkRequestManager::FetchWellKnownCallback callback) {
+            IdpNetworkRequestManager::WellKnown well_known;
+            std::move(callback).Run(
+                {ParseStatus::kHttpNotFoundError, net::HTTP_NOT_FOUND},
+                well_known);
+          }));
+
+  base::RunLoop loop;
+
+  // Asserts that we get success despite well-known failing.
+  fetcher.Start(
+      {{GURL("https://idp.example/fedcm.json"),
+        /*force_skip_well_known_enforcement=*/true}},
+      blink::mojom::RpMode::kPassive,
+      /*icon_ideal_size=*/0,
+      /*icon_minimum_size=*/0,
+      base::BindLambdaForTesting(
+          [&loop](std::vector<FederatedProviderFetcher::FetchResult> result) {
+            EXPECT_EQ(result.size(), 1ul);
+            EXPECT_FALSE(result[0].error);
+            loop.Quit();
+          }));
+
+  loop.Run();
 }
 
 }  // namespace content

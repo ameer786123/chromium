@@ -7,6 +7,14 @@
 
 #import <Foundation/Foundation.h>
 
+// Possible info messages to be shown in the bottom sheets.
+enum class LensOverlayBottomSheetInfoMessageType {
+  // Informs the user that there was an error detecting the text in the image
+  kNoTranslatableTextWarning,
+  // Informs the user that a translation was executed on the given image.
+  kImageTranslatedIndication,
+};
+
 // Presentation delegate for the bottom sheet.
 // Bottom sheet content may request the container to be maximized or minimized,
 // e.g. when the user selects a result that opens an image viewer.
@@ -18,8 +26,20 @@
 // Request resizing the bottom sheet to minimum size.
 - (void)requestMinimizeBottomSheet;
 
-// Whether to restrict sheet to stay into the large detent.
-- (void)restrictSheetToLargeDetent:(BOOL)restrictToLargeDetent;
+// Handle a selection result loaded in the bottom sheet.
+- (void)didLoadSelectionResult;
+
+// Handle a translation result loaded in the bottom sheet.
+- (void)didLoadTranslateResult;
+
+// Hides the bottom sheet without destroying the presentation.
+- (void)hideBottomSheetWithCompletion:(void (^)(void))completion;
+
+// Reveals the hidden bottom sheet.
+- (void)revealBottomSheetIfHidden;
+
+// Hides the results UI and shows the given informational message.
+- (void)showInfoMessage:(LensOverlayBottomSheetInfoMessageType)infoMessageType;
 
 @end
 

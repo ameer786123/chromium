@@ -10,6 +10,8 @@ import android.view.MotionEvent;
 
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.ui.util.MotionEventUtils;
+
 /**
  * A {@link AreaMotionEventFilter} intercepts all events that start in a specific Rect on the
  * screen.
@@ -28,34 +30,12 @@ public class AreaMotionEventFilter extends MotionEventFilter {
 
     /**
      * Creates a {@link AreaMotionEventFilter}.
-     * @param context       The context to build the gesture handler under.
-     * @param handler       The handler to be notified of gesture events.
-     * @param triggerRect   The area that events should be stolen from in dp.
-     */
-    public AreaMotionEventFilter(Context context, MotionEventHandler handler, RectF triggerRect) {
-        this(context, handler, triggerRect, true);
-    }
-
-    /**
-     * Creates a {@link AreaMotionEventFilter}.
-     * @param context       The context to build the gesture handler under.
-     * @param handler       The handler to be notified of gesture events.
-     * @param triggerRect   The area that events should be stolen from in dp.
-     * @param autoOffset    Whether or not to offset touch events.
-     */
-    public AreaMotionEventFilter(
-            Context context, MotionEventHandler handler, RectF triggerRect, boolean autoOffset) {
-        super(context, handler, autoOffset);
-        setEventArea(triggerRect);
-    }
-
-    /**
-     * Creates a {@link AreaMotionEventFilter}.
-     * @param context               The context to build the gesture handler under.
-     * @param handler               The handler to be notified of gesture events.
-     * @param triggerRect           The area that events should be stolen from in dp.
-     * @param autoOffset            Whether or not to offset touch events.
-     * @param useDefaultLongPress   Whether or not to use the default long press behavior.
+     *
+     * @param context The context to build the gesture handler under.
+     * @param handler The handler to be notified of gesture events.
+     * @param triggerRect The area that events should be stolen from in dp.
+     * @param autoOffset Whether or not to offset touch events.
+     * @param useDefaultLongPress Whether or not to use the default long press behavior.
      */
     public AreaMotionEventFilter(
             Context context,
@@ -145,6 +125,21 @@ public class AreaMotionEventFilter extends MotionEventFilter {
                 mHasHoverEnterOrMoveEventInArea = false;
                 mHoverExitedArea = true;
                 return super.onInterceptHoverEventInternal(e);
+            }
+        }
+        return false;
+    }
+
+    @Override
+    protected boolean onGenericMotionEventInternal(MotionEvent e) {
+        // Prevent action generating motion events from leaking to underlying layers.
+        if ((MotionEventUtils.isMouseEvent(e) || MotionEventUtils.isTrackpadEvent(e))
+                && isMotionEventInArea(e)) {
+            int action = e.getActionMasked();
+            if (action == MotionEvent.ACTION_BUTTON_PRESS
+                    || action == MotionEvent.ACTION_BUTTON_RELEASE
+                    || action == MotionEvent.ACTION_SCROLL) {
+                return true;
             }
         }
         return false;

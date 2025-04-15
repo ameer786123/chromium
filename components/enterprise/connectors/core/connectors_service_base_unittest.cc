@@ -56,6 +56,14 @@ class TestConnectorsService : public ConnectorsServiceBase {
     }
   }
 
+  std::optional<std::string> GetBrowserDmToken() const override {
+    return std::nullopt;
+  }
+
+  std::unique_ptr<ClientMetadata> BuildClientMetadata(bool is_cloud) override {
+    return nullptr;
+  }
+
   bool ConnectorsEnabled() const override { return connectors_enabled_; }
 
   bool IsConnectorEnabled(AnalysisConnector connector) const override {
@@ -92,11 +100,17 @@ TEST(ConnectorsServiceBaseTest, RealTimeUrlCheck_NoTokenOrPolicies) {
   TestConnectorsService service;
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(service.GetDMTokenForRealTimeUrlCheck().error(),
+            ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::
+                kConnectorsDisabled);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 
   service.set_connectors_enabled(true);
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(service.GetDMTokenForRealTimeUrlCheck().error(),
+            ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::
+                kPolicyDisabled);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 }
 
@@ -108,16 +122,25 @@ TEST(ConnectorsServiceBaseTest, RealTimeUrlCheck_InvalidProfilePolicy) {
                                  policy::POLICY_SCOPE_USER);
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(service.GetDMTokenForRealTimeUrlCheck().error(),
+            ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::
+                kConnectorsDisabled);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 
   service.set_connectors_enabled(true);
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(
+      service.GetDMTokenForRealTimeUrlCheck().error(),
+      ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::kNoDmToken);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 
   service.set_machine_dm_token();
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(
+      service.GetDMTokenForRealTimeUrlCheck().error(),
+      ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::kNoDmToken);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 }
 
@@ -129,16 +152,25 @@ TEST(ConnectorsServiceBaseTest, RealTimeUrlCheck_InvalidMachinePolicy) {
                                  policy::POLICY_SCOPE_MACHINE);
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(service.GetDMTokenForRealTimeUrlCheck().error(),
+            ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::
+                kConnectorsDisabled);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 
   service.set_connectors_enabled(true);
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(
+      service.GetDMTokenForRealTimeUrlCheck().error(),
+      ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::kNoDmToken);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 
   service.set_profile_dm_token();
 
   ASSERT_FALSE(service.GetDMTokenForRealTimeUrlCheck().has_value());
+  ASSERT_EQ(
+      service.GetDMTokenForRealTimeUrlCheck().error(),
+      ConnectorsServiceBase::NoDMTokenForRealTimeUrlCheckReason::kNoDmToken);
   ASSERT_EQ(service.GetAppliedRealTimeUrlCheck(), REAL_TIME_CHECK_DISABLED);
 }
 
@@ -175,11 +207,9 @@ TEST(ConnectorsServiceBaseTest, RealTimeUrlCheck_ValidMachinePolicy) {
 class ConnectorsServiceBaseReportingSettingsTest
     : public TestConnectorsService,
       public testing::Test,
-      public testing::WithParamInterface<
-          std::tuple<ReportingConnector, const char*>> {
+      public testing::WithParamInterface<const char*> {
  public:
-  ReportingConnector connector() const { return std::get<0>(GetParam()); }
-  const char* pref_value() const { return std::get<1>(GetParam()); }
+  const char* pref_value() const { return GetParam(); }
 
   const char* pref() const { return kOnSecurityEventPref; }
 
@@ -192,33 +222,24 @@ class ConnectorsServiceBaseReportingSettingsTest
 
 TEST_P(ConnectorsServiceBaseReportingSettingsTest, Test) {
   TestConnectorsService service;
-  // TODO(b/344593927): Re-enable this test for Android
-#if BUILDFLAG(IS_ANDROID)
-  ASSERT_FALSE(service.GetPrefs()->FindPreference(
-      "enterprise_connectors.on_security_event"));
-#else
   service.set_connectors_manager_base();
   if (pref_value()) {
     service.GetPrefs()->Set(pref(), *base::JSONReader::Read(pref_value()));
     service.GetPrefs()->SetInteger(scope_pref(), policy::POLICY_SCOPE_MACHINE);
   }
 
-  auto settings =
-      service.GetConnectorsManagerBase()->GetReportingSettings(connector());
+  auto settings = service.GetConnectorsManagerBase()->GetReportingSettings();
   EXPECT_EQ(reporting_enabled(), settings.has_value());
   EXPECT_EQ(pref_value() == kNormalReportingSettingsPref,
             !service.GetConnectorsManagerBase()
                  ->GetReportingConnectorsSettingsForTesting()
                  .empty());
-#endif
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    ,
-    ConnectorsServiceBaseReportingSettingsTest,
-    testing::Combine(testing::Values(ReportingConnector::SECURITY_EVENT),
-                     testing::Values(nullptr,
-                                     kNormalReportingSettingsPref,
-                                     kEmptySettingsPref)));
+INSTANTIATE_TEST_SUITE_P(,
+                         ConnectorsServiceBaseReportingSettingsTest,
+                         testing::Values(nullptr,
+                                         kNormalReportingSettingsPref,
+                                         kEmptySettingsPref));
 
 }  // namespace enterprise_connectors

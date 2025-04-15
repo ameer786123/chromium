@@ -6,8 +6,8 @@
 #import "ios/chrome/browser/find_bar/ui_bundled/find_bar_constants.h"
 #import "ios/chrome/browser/find_in_page/model/find_in_page_app_interface.h"
 #import "ios/chrome/browser/find_in_page/model/find_in_page_egtest_util.h"
+#import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
@@ -308,11 +308,15 @@ constexpr char kFindInPagePreviousButtonID[] = "find.previousButton";
 // Tests that FIP exit fullscreen when done.
 - (void)testWhenFullscreenIsDisable {
   AppLaunchConfiguration config = self.appConfigurationForTestCase;
-  config.features_enabled.push_back(kDisableFullscreenScrolling);
   // Relaunch the app to take the configuration into account.
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 
   [_helper helperTestFindInPageExitFullscreen];
+}
+
+// Tests that FIP works properly with bottom omnibox.
+- (void)testWithBottomOmnibox {
+  [_helper helperTestFindInPageWithBottomOmnibox];
 }
 
 @end

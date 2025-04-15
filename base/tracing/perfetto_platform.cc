@@ -14,22 +14,21 @@
 #include "build/build_config.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/apk_info.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if !BUILDFLAG(IS_NACL)
 #include "third_party/perfetto/include/perfetto/ext/base/thread_task_runner.h"
 #endif
 
-namespace base {
-namespace tracing {
+namespace base::tracing {
 
-namespace {
-constexpr char kProcessNamePrefix[] = "org.chromium-";
-}  // namespace
-
-PerfettoPlatform::PerfettoPlatform(PerfettoTaskRunner* task_runner)
-    : task_runner_(task_runner), thread_local_object_([](void* object) {
+PerfettoPlatform::PerfettoPlatform(
+    scoped_refptr<base::SequencedTaskRunner> task_runner,
+    Options options)
+    : process_name_prefix_(std::move(options.process_name_prefix)),
+      task_runner_(std::move(task_runner)),
+      thread_local_object_([](void* object) {
         delete static_cast<ThreadLocalObject*>(object);
       }) {}
 
@@ -48,8 +47,19 @@ PerfettoPlatform::GetOrCreateThreadLocalObject() {
 std::unique_ptr<perfetto::base::TaskRunner> PerfettoPlatform::CreateTaskRunner(
     const CreateTaskRunnerArgs&) {
   // TODO(b/242965112): Add support for the builtin task runner
-  return std::make_unique<PerfettoTaskRunner>(
-      task_runner_->GetOrCreateTaskRunner());
+  DCHECK(!perfetto_task_runner_);
+  auto perfetto_task_runner =
+      std::make_unique<PerfettoTaskRunner>(task_runner_);
+  perfetto_task_runner_ = perfetto_task_runner->GetWeakPtr();
+  return perfetto_task_runner;
+}
+
+void PerfettoPlatform::ResetTaskRunner(
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  task_runner_ = task_runner;
+  if (perfetto_task_runner_) {
+    perfetto_task_runner_->ResetTaskRunner(task_runner);
+  }
 }
 
 // This method is used by the SDK to determine the producer name.
@@ -58,7 +68,7 @@ std::unique_ptr<perfetto::base::TaskRunner> PerfettoPlatform::CreateTaskRunner(
 std::string PerfettoPlatform::GetCurrentProcessName() {
   const char* host_package_name = nullptr;
 #if BUILDFLAG(IS_ANDROID)
-  host_package_name = android::BuildInfo::GetInstance()->host_package_name();
+  host_package_name = android::apk_info::host_package_name();
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // On Android we want to include if this is webview inside of an app or
@@ -67,19 +77,19 @@ std::string PerfettoPlatform::GetCurrentProcessName() {
   std::string process_name;
   if (host_package_name) {
     process_name = StrCat(
-        {kProcessNamePrefix, host_package_name, "-",
+        {process_name_prefix_, host_package_name, "-",
          NumberToString(trace_event::TraceLog::GetInstance()->process_id())});
   } else {
     process_name = StrCat(
-        {kProcessNamePrefix,
+        {process_name_prefix_,
          NumberToString(trace_event::TraceLog::GetInstance()->process_id())});
   }
   return process_name;
 }
 
 perfetto::base::PlatformThreadId PerfettoPlatform::GetCurrentThreadId() {
-  return base::PlatformThread::CurrentId();
+  return base::strict_cast<perfetto::base::PlatformThreadId>(
+      base::PlatformThread::CurrentId().raw());
 }
 
-}  // namespace tracing
-}  // namespace base
+}  // namespace base::tracing

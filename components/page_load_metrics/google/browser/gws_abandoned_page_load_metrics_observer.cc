@@ -11,8 +11,8 @@
 #include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "components/page_load_metrics/browser/page_load_metrics_util.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
+#include "components/page_load_metrics/google/browser/google_url_util.h"
 #include "content/public/browser/navigation_handle.h"
 
 namespace internal {
@@ -94,6 +94,17 @@ bool GWSAbandonedPageLoadMetricsObserver::IsAllowedToLogMetrics() const {
 bool GWSAbandonedPageLoadMetricsObserver::IsAllowedToLogUKM() const {
   // Only log UKMs for navigations that involve SRP.
   return involved_srp_url_;
+}
+
+bool GWSAbandonedPageLoadMetricsObserver::DidLogAllLoadingMilestones() const {
+  // We've logged all loading milestones if the map contains all the loading
+  // milestones. Since the keys are unique in the map, we only need to check if
+  // we have amount of entries is the same as the amount of loading milestones.
+  return loading_milestones().size() ==
+         (static_cast<int>(NavigationMilestone::kLastGwsEssentialLoadingEvent) -
+          static_cast<int>(
+              NavigationMilestone::kFirstGwsEssentialLoadingEvent) +
+          1);
 }
 
 std::string GWSAbandonedPageLoadMetricsObserver::GetHistogramPrefix() const {

@@ -1,0 +1,12 @@
+name: Release
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    uses: dtolnay/.github/.github/workflows/release_tgz.yml@master

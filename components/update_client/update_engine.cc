@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/check.h"
+#include "base/barrier_callback.h"
 #include "base/check_op.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -271,26 +271,28 @@ void UpdateEngine::UpdateCheckResultsAvailable(
 
   update_context->update_check_error = error;
 
+  auto complete = base::BarrierCallback<bool>(
+      update_context->components_to_check_for_updates.size(),
+      base::BindOnce([](const std::vector<bool>&) {})
+          .Then(base::BindOnce(&UpdateEngine::UpdateCheckComplete, this,
+                               update_context)));
   if (error) {
     CHECK(!results);
     for (const auto& id : update_context->components_to_check_for_updates) {
       CHECK_EQ(1u, update_context->components.count(id));
       auto& component = update_context->components.at(id);
       component->SetUpdateCheckResult(std::nullopt, ErrorCategory::kUpdateCheck,
-                                      error);
+                                      error, complete);
     }
-    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(&UpdateEngine::UpdateCheckComplete, this,
-                                  update_context));
     return;
   }
 
   CHECK(results);
   CHECK_EQ(0, error);
 
-  std::map<std::string, ProtocolParser::Result> id_to_result;
-  for (const auto& result : results->list) {
-    id_to_result[result.extension_id] = result;
+  std::map<std::string, ProtocolParser::App> id_to_result;
+  for (const auto& result : results->apps) {
+    id_to_result[result.app_id] = result;
   }
 
   for (const auto& id : update_context->components_to_check_for_updates) {
@@ -300,8 +302,11 @@ void UpdateEngine::UpdateCheckResultsAvailable(
     if (it != id_to_result.end()) {
       const auto& result = it->second;
       const auto& [category, protocol_error] = [](const std::string& status) {
-        // First, handle app status literals which can be folded down as an
-        // updatecheck status
+        // "ok" and "noupdate" are non-error cases.
+        if (status == "ok" || status == "noupdate") {
+          return std::make_pair(ErrorCategory::kNone, ProtocolError::NONE);
+        }
+        // Some app status literals can be folded down as an updatecheck status.
         if (status == "error-unknownApplication") {
           return std::make_pair(ErrorCategory::kUpdateCheck,
                                 ProtocolError::UNKNOWN_APPLICATION);
@@ -334,22 +339,22 @@ void UpdateEngine::UpdateCheckResultsAvailable(
           return std::make_pair(ErrorCategory::kUpdateCheck,
                                 ProtocolError::INTERNAL);
         }
-        // If the parser has return a valid result and the status is not one of
-        // the literals above, then this must be a success an not a parse error.
-        return std::make_pair(ErrorCategory::kNone, ProtocolError::NONE);
+        if (status == "error-inexpressible") {
+          return std::make_pair(ErrorCategory::kUpdateCheck,
+                                ProtocolError::INEXPRESSIBLE);
+        }
+        // Otherwise, this is an unknown status.
+        return std::make_pair(ErrorCategory::kUpdateCheck,
+                              ProtocolError::UNKNOWN_ERROR);
       }(result.status);
-      component->SetUpdateCheckResult(result, category,
-                                      static_cast<int>(protocol_error));
+      component->SetUpdateCheckResult(
+          result, category, static_cast<int>(protocol_error), complete);
     } else {
       component->SetUpdateCheckResult(
           std::nullopt, ErrorCategory::kUpdateCheck,
-          static_cast<int>(ProtocolError::UPDATE_RESPONSE_NOT_FOUND));
+          static_cast<int>(ProtocolError::UPDATE_RESPONSE_NOT_FOUND), complete);
     }
   }
-
-  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&UpdateEngine::UpdateCheckComplete, this, update_context));
 }
 
 void UpdateEngine::UpdateCheckComplete(

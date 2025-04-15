@@ -73,8 +73,8 @@ public class FeedManagementMediator {
 
     private PropertyModel generateListItem(
             int titleResource, int descriptionResource, OnClickListener listener) {
-        String title = mContext.getResources().getString(titleResource);
-        String description = mContext.getResources().getString(descriptionResource);
+        String title = mContext.getString(titleResource);
+        String description = mContext.getString(descriptionResource);
         return new PropertyModel.Builder(FeedManagementItemProperties.ALL_KEYS)
                 .with(FeedManagementItemProperties.TITLE_KEY, title)
                 .with(FeedManagementItemProperties.DESCRIPTION_KEY, description)
@@ -125,7 +125,7 @@ public class FeedManagementMediator {
     void handleFollowingClick(View view) {
         Log.d(TAG, "Following click caught.");
         FeedServiceBridge.reportOtherUserAction(
-                mInitiatingStreamKind, FeedUserActionType.TAPPED_MANAGE_INTERESTS);
+                mInitiatingStreamKind, FeedUserActionType.TAPPED_MANAGE_FOLLOWING);
         launchUriActivity("https://www.google.com/preferences/interests/yourinterests?sh=n");
     }
 
@@ -133,7 +133,7 @@ public class FeedManagementMediator {
     void handleHiddenClick(View view) {
         Log.d(TAG, "Hidden click caught.");
         FeedServiceBridge.reportOtherUserAction(
-                mInitiatingStreamKind, FeedUserActionType.TAPPED_MANAGE_INTERESTS);
+                mInitiatingStreamKind, FeedUserActionType.TAPPED_MANAGE_HIDDEN);
         launchUriActivity("https://www.google.com/preferences/interests/hidden?sh=n");
     }
 }

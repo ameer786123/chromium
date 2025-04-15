@@ -18,18 +18,12 @@
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
+#include "ui/gl/startup_trace.h"
 
 namespace gl {
 
 void DriverGL::InitializeStaticBindings() {
-#if DCHECK_IS_ON()
-  // Ensure struct has been zero-initialized.
-  auto bytes = base::byte_span_from_ref(*this);
-  for (auto byte : bytes) {
-    DCHECK_EQ(0, byte);
-  };
-#endif
-
+  GPU_STARTUP_TRACE_EVENT("DriverGL::InitializeStaticBindings");
   fn.glActiveTextureFn = reinterpret_cast<glActiveTextureProc>(
       GetGLProcAddress("glActiveTexture"));
   fn.glAttachShaderFn =
@@ -2566,8 +2560,7 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
 }
 
 void DriverGL::ClearBindings() {
-  auto bytes = base::byte_span_from_ref(*this);
-  std::ranges::fill(bytes, 0);
+  *this = {};
 }
 
 void GLApiBase::glAcquireTexturesANGLEFn(GLuint numTextures,
@@ -14519,10 +14512,8 @@ void LogGLApi::glWindowRectanglesEXTFn(GLenum mode,
 
 namespace {
 void NoContextHelper(const char* method_name) {
-  NOTREACHED_IN_MIGRATION()
-      << "Trying to call " << method_name << " without current GL context";
-  LOG(ERROR) << "Trying to call " << method_name
-             << " without current GL context";
+  NOTREACHED() << "Trying to call " << method_name
+               << " without current GL context";
 }
 }  // namespace
 

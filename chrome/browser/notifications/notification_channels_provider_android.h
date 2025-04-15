@@ -87,7 +87,7 @@ class NotificationChannelsProviderAndroid
   // UserModifiableProvider methods.
   std::unique_ptr<content_settings::RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
-      bool incognito,
+      bool off_the_record,
       const content_settings::PartitionKey& partition_key) const override;
   bool SetWebsiteSetting(
       const ContentSettingsPattern& primary_pattern,
@@ -183,7 +183,9 @@ class NotificationChannelsProviderAndroid
       const std::vector<NotificationChannel>& channels);
 
   // Create notification channel if required.
-  void CreateChannelIfRequired(const std::string& origin_string,
+  void CreateChannelIfRequired(const ContentSettingsPattern& primary_pattern,
+                               const ContentSettingsPattern& secondary_pattern,
+                               const std::string& origin_string,
                                NotificationChannelStatus new_channel_status);
 
   // Create notification channel for a given rule

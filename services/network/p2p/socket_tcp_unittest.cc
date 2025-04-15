@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "services/network/p2p/socket_tcp.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <string_view>
 
@@ -40,6 +36,7 @@
 #include "services/network/proxy_resolving_client_socket_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/webrtc/rtc_base/time_utils.h"
 
 using ::testing::_;
 using ::testing::DeleteArg;
@@ -138,7 +135,7 @@ class P2PSocketStunTcpTest : public P2PSocketTcpTestBase {
 TEST_F(P2PSocketTcpTest, SendStunNoAuth) {
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(3);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
   socket_impl_->Send(packet1, P2PPacketInfo(dest_.ip_address, options, 0));
@@ -169,7 +166,7 @@ TEST_F(P2PSocketTcpTest, SendStunNoAuth) {
 TEST_F(P2PSocketTcpTest, ReceiveStun) {
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(3);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
   socket_impl_->Send(packet1, P2PPacketInfo(dest_.ip_address, options, 0));
@@ -196,7 +193,7 @@ TEST_F(P2PSocketTcpTest, ReceiveStun) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(packet3), _));
 
   size_t pos = 0;
-  size_t step_sizes[] = {3, 2, 1};
+  auto step_sizes = std::to_array<size_t>({3, 2, 1});
   size_t step = 0;
   while (pos < received_data.size()) {
     size_t step_size = std::min(step_sizes[step], received_data.size() - pos);
@@ -212,7 +209,7 @@ TEST_F(P2PSocketTcpTest, ReceiveStun) {
 // Verify that we can't send data before we've received STUN response
 // from the other side.
 TEST_F(P2PSocketTcpTest, SendDataNoAuth) {
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet;
   CreateRandomPacket(&packet);
 
@@ -245,7 +242,7 @@ TEST_F(P2PSocketTcpTest, SendAfterStunRequest) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(request_packet), _));
   socket_->AppendInputData(&received_data[0], received_data.size());
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   // Now we should be able to send any data to |dest_|.
   std::vector<uint8_t> packet;
   CreateRandomPacket(&packet);
@@ -266,7 +263,7 @@ TEST_F(P2PSocketTcpTest, AsyncWrites) {
 
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(2);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
 
@@ -294,13 +291,13 @@ TEST_F(P2PSocketTcpTest, PacketIdIsPropagated) {
 
   const int32_t kRtcPacketId = 1234;
 
-  int64_t now = rtc::TimeMillis();
+  int64_t now = webrtc::TimeMillis();
 
   EXPECT_CALL(*fake_client_.get(),
               SendComplete(MatchSendPacketMetrics(kRtcPacketId, now)))
       .Times(1);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   options.packet_id = kRtcPacketId;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
@@ -329,7 +326,7 @@ TEST_F(P2PSocketTcpTest, SendDataWithPacketOptions) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(request_packet), _));
   socket_->AppendInputData(&received_data[0], received_data.size());
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   options.packet_time_params.rtp_sendtime_extension_id = 3;
   // Now we should be able to send any data to |dest_|.
   std::vector<uint8_t> packet;
@@ -372,7 +369,7 @@ TEST_F(P2PSocketTcpTest, IgnoreEmptyFrame) {
 TEST_F(P2PSocketStunTcpTest, SendStunNoAuth) {
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(3);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
   socket_impl_->Send(packet1, P2PPacketInfo(dest_.ip_address, options, 0));
@@ -400,7 +397,7 @@ TEST_F(P2PSocketStunTcpTest, SendStunNoAuth) {
 TEST_F(P2PSocketStunTcpTest, ReceiveStun) {
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(3);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
   socket_impl_->Send(packet1, P2PPacketInfo(dest_.ip_address, options, 0));
@@ -424,7 +421,7 @@ TEST_F(P2PSocketStunTcpTest, ReceiveStun) {
   EXPECT_CALL(*this, SinglePacketReceptionHelper(_, SpanEq(packet3), _));
 
   size_t pos = 0;
-  size_t step_sizes[] = {3, 2, 1};
+  auto step_sizes = std::to_array<size_t>({3, 2, 1});
   size_t step = 0;
   while (pos < received_data.size()) {
     size_t step_size = std::min(step_sizes[step], received_data.size() - pos);
@@ -440,7 +437,7 @@ TEST_F(P2PSocketStunTcpTest, ReceiveStun) {
 // Verify that we can't send data before we've received STUN response
 // from the other side.
 TEST_F(P2PSocketStunTcpTest, SendDataNoAuth) {
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet;
   CreateRandomPacket(&packet);
 
@@ -462,7 +459,7 @@ TEST_F(P2PSocketStunTcpTest, AsyncWrites) {
 
   EXPECT_CALL(*fake_client_.get(), SendComplete(_)).Times(2);
 
-  rtc::PacketOptions options;
+  webrtc::AsyncSocketPacketOptions options;
   std::vector<uint8_t> packet1;
   CreateStunRequest(&packet1);
   socket_impl_->Send(packet1, P2PPacketInfo(dest_.ip_address, options, 0));

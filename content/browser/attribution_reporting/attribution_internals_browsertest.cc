@@ -16,6 +16,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregation_keys.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/os_registration.h"
@@ -57,6 +58,7 @@
 #include "content/shell/browser/shell.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom.h"
 #include "url/origin.h"
@@ -347,6 +349,11 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
                   *attribution_reporting::AttributionScopesData::Create(
                       attribution_reporting::AttributionScopesSet({"a"}),
                       /*attribution_scope_limit=*/3, /*max_event_states=*/3))
+              .SetAggregatableNamedBudgetDefs(
+                  *attribution_reporting::AggregatableNamedBudgetDefs::
+                      FromBudgetMap({
+                          {"a", 65536},
+                      }))
               .BuildStored(),
           SourceBuilder(now + base::Hours(1))
               .SetSourceId(StoredSource::Id(2))
@@ -433,8 +440,8 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
       obs.observe(regTable, {childList: true, subtree: true, characterData: true});
     }
   )";
-  ASSERT_TRUE(ExecJsInWebUI(
-      JsReplace(kScript, kMaxUint64String, kCompleteTitle)));
+  ASSERT_TRUE(
+      ExecJsInWebUI(JsReplace(kScript, kMaxUint64String, kCompleteTitle)));
 
   TitleWatcher title_watcher(shell()->web_contents(), kCompleteTitle);
   manager()->NotifySourcesChanged();
@@ -471,11 +478,13 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
         tds[18]?.children[0]?.children[1]?.innerText === '17' &&
         // Remaining Aggregatable Attribution Budget
         tds[20]?.innerText === '1300 / 65536' &&
+        // Aggregatable Named Budgets
+        tds[21]?.innerText === '{\n   \"a\": {\n      \"original_budget\": 65536,\n      \"remaining_budget\": 65536\n   }\n}\n' &&
         // Aggregation Keys
-        tds[21]?.innerText === '{\n "a": "0x1"\n}' &&
+        tds[22]?.innerText === '{\n "a": "0x1"\n}' &&
         // Aggregatable Dedup Keys
-        tds[22]?.children[0]?.children[0]?.innerText === '14' &&
-        tds[22]?.children[0]?.children[1]?.innerText === '18'
+        tds[23]?.children[0]?.children[0]?.innerText === '14' &&
+        tds[23]?.children[0]?.children[1]?.innerText === '18'
       ) {
         if (obs) {
           obs.disconnect();
@@ -1157,11 +1166,18 @@ IN_PROC_BROWSER_TEST_F(
           .SetReportTime(now + base::Hours(4))
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
-      /*is_debug_report=*/false, SendResult(SendResult::Dropped()));
+      /*is_debug_report=*/false, SendResult(SendResult::Expired()));
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
           .SetReportTime(now + base::Hours(5))
+          .SetAggregatableHistogramContributions(contributions)
+          .BuildAggregatableAttribution(),
+      /*is_debug_report=*/false, SendResult(SendResult::Dropped()));
+  manager()->NotifyReportSent(
+      ReportBuilder(AttributionInfoBuilder().Build(),
+                    SourceBuilder(now).BuildStored())
+          .SetReportTime(now + base::Hours(6))
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/false,
@@ -1169,7 +1185,7 @@ IN_PROC_BROWSER_TEST_F(
   manager()->NotifyReportSent(
       ReportBuilder(AttributionInfoBuilder().Build(),
                     SourceBuilder(now).BuildStored())
-          .SetReportTime(now + base::Hours(6))
+          .SetReportTime(now + base::Hours(7))
           .SetAggregatableHistogramContributions(contributions)
           .BuildAggregatableAttribution(),
       /*is_debug_report=*/false,
@@ -1200,7 +1216,7 @@ IN_PROC_BROWSER_TEST_F(
       const table = document.querySelector('#aggregatable-report-panel attribution-internals-table')
           .shadowRoot.querySelector('tbody');
       const setTitleIfDone = (_, obs) => {
-        if (table.rows.length === 6 &&
+        if (table.rows.length === 7 &&
             table.rows[0].cells[1]?.innerText ===
               'https://report.test/.well-known/attribution-reporting/report-aggregate-attribution' &&
             table.rows[0].cells[0]?.innerText === 'Pending' &&
@@ -1208,11 +1224,12 @@ IN_PROC_BROWSER_TEST_F(
             table.rows[0].cells[5]?.innerText === 'https://aws.example.test' &&
             table.rows[0].cells[6]?.innerText === 'false' &&
             table.rows[1].cells[0]?.innerText === 'Sent: HTTP 200' &&
-            table.rows[2].cells[0]?.innerText === 'Prohibited by browser policy' &&
-            table.rows[3].cells[0]?.innerText === 'Dropped due to assembly failure' &&
-            table.rows[4].cells[0]?.innerText === 'Network error: ERR_INVALID_REDIRECT' &&
-            table.rows[5].cells[4]?.innerText === '[ {  "key": "0x0",  "value": 0,  "filteringId": "0" }]' &&
-            table.rows[5].cells[6]?.innerText === 'true') {
+            table.rows[2].cells[0]?.innerText === 'Expired' &&
+            table.rows[3].cells[0]?.innerText === 'Prohibited by browser policy' &&
+            table.rows[4].cells[0]?.innerText === 'Dropped due to assembly failure' &&
+            table.rows[5].cells[0]?.innerText === 'Network error: ERR_INVALID_REDIRECT' &&
+            table.rows[6].cells[4]?.innerText === '[ {  "key": "0x0",  "value": 0,  "filteringId": "0" }]' &&
+            table.rows[6].cells[6]?.innerText === 'true') {
           if (obs) {
             obs.disconnect();
           }
@@ -1238,14 +1255,13 @@ IN_PROC_BROWSER_TEST_F(AttributionInternalsWebUiBrowserTest,
                        TriggersDisplayed) {
   NavigateAndWaitForObserver();
 
-  const auto create_trigger =
-      []() {
-        return AttributionTrigger(
-            /*reporting_origin=*/*SuitableOrigin::Deserialize("https://r.test"),
-            attribution_reporting::TriggerRegistration(),
-            *SuitableOrigin::Deserialize("https://d.test"),
-            /*is_within_fenced_frame=*/false);
-      };
+  const auto create_trigger = []() {
+    return AttributionTrigger(
+        /*reporting_origin=*/*SuitableOrigin::Deserialize("https://r.test"),
+        attribution_reporting::TriggerRegistration(),
+        *SuitableOrigin::Deserialize("https://d.test"),
+        /*is_within_fenced_frame=*/false, ukm::kInvalidSourceId);
+  };
 
   static constexpr char kScript[] = R"(
 

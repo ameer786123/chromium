@@ -6,11 +6,13 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/base64.h"
@@ -25,7 +27,6 @@
 #include "base/logging.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/ranges/algorithm.h"
 #include "base/sequence_checker.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -45,18 +46,17 @@
 #include "components/attribution_reporting/attribution_scopes_data.h"
 #include "components/attribution_reporting/eligibility.h"
 #include "components/attribution_reporting/event_level_epsilon.h"
-#include "components/attribution_reporting/features.h"
 #include "components/attribution_reporting/privacy_math.h"
 #include "components/attribution_reporting/registration_eligibility.mojom-forward.h"
 #include "components/attribution_reporting/source_type.mojom-forward.h"
 #include "components/attribution_reporting/test_utils.h"
 #include "content/browser/aggregation_service/aggregatable_report.h"
-#include "content/browser/aggregation_service/aggregation_service_features.h"
 #include "content/browser/aggregation_service/aggregation_service_impl.h"
 #include "content/browser/aggregation_service/aggregation_service_test_utils.h"
 #include "content/browser/aggregation_service/public_key.h"
 #include "content/browser/attribution_reporting/attribution_background_registrations_id.h"
 #include "content/browser/attribution_reporting/attribution_data_host_manager.h"
+#include "content/browser/attribution_reporting/attribution_features.h"
 #include "content/browser/attribution_reporting/attribution_manager_impl.h"
 #include "content/browser/attribution_reporting/attribution_os_level_manager.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
@@ -66,19 +66,20 @@
 #include "content/browser/attribution_reporting/attribution_suitable_context.h"
 #include "content/browser/attribution_reporting/interop/parser.h"
 #include "content/browser/storage_partition_impl.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/test_content_browser_client.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
-#include "services/network/public/cpp/features.h"
+#include "services/network/network_service.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/attribution.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "url/gurl.h"
@@ -167,7 +168,7 @@ class Adjuster : public ReportBodyAdjuster {
       *payload_str =
           base::Base64Encode(EncryptAggregatableReportPayloadWithHpke(
               decrypted_payload, hpke_key_->GetPublicKey().key,
-              base::as_bytes(base::make_span(authenticated_info_str))));
+              base::as_byte_span(authenticated_info_str)));
     }
 
     *shared_info = std::move(adjusted_shared_info);
@@ -214,7 +215,7 @@ class AttributionInteropContentBrowserClient : public TestContentBrowserClient {
     std::vector<base::Time> times;
     for (const auto& event : events) {
       if (const auto* data =
-              absl::get_if<AttributionSimulationEvent::Response>(&event.data);
+              std::get_if<AttributionSimulationEvent::Response>(&event.data);
           data && data->debug_permission) {
         times.push_back(event.time);
       }
@@ -267,7 +268,7 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
         null_aggregatable_reports_days;
     for (auto& event : run.events) {
       if (auto* data =
-              absl::get_if<AttributionSimulationEvent::Response>(&event.data)) {
+              std::get_if<AttributionSimulationEvent::Response>(&event.data)) {
         if (data->randomized_response.has_value()) {
           responses.emplace_back(
               event.time,
@@ -351,13 +352,14 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
 };
 
 void Handle(const AttributionSimulationEvent::StartRequest& event,
-            AttributionDataHostManager& data_host_manager) {
+            AttributionManager& manager) {
   std::optional<RegistrationEligibility> eligibility =
       attribution_reporting::GetRegistrationEligibility(event.eligibility);
   if (!eligibility.has_value()) {
     return;
   }
 
+  auto& data_host_manager = *manager.GetDataHostManager();
   auto suitable_context = AttributionSuitableContext::CreateForTesting(
       event.context_origin, event.fenced, kFrameId,
       /*last_navigation_id=*/kNavigationId);
@@ -382,16 +384,21 @@ void Handle(const AttributionSimulationEvent::StartRequest& event,
 }
 
 void Handle(const AttributionSimulationEvent::Response& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationData(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationData(
       BackgroundRegistrationsId(event.request_id), event.response_headers.get(),
       event.url);
 }
 
 void Handle(const AttributionSimulationEvent::EndRequest& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationCompleted(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationCompleted(
       BackgroundRegistrationsId(event.request_id));
+}
+
+void Handle(const AttributionSimulationEvent::Navigation& event,
+            AttributionManager& manager) {
+  manager.UpdateLastNavigationTime(base::Time::Now());
 }
 
 void FastForwardUntilReportsConsumed(AttributionManager& manager,
@@ -403,8 +410,8 @@ void FastForwardUntilReportsConsumed(AttributionManager& manager,
     manager.GetPendingReportsForInternalUse(
         /*limit=*/-1,
         base::BindLambdaForTesting([&](std::vector<AttributionReport> reports) {
-          auto it = base::ranges::max_element(reports, /*comp=*/{},
-                                              &AttributionReport::report_time);
+          auto it = std::ranges::max_element(reports, /*comp=*/{},
+                                             &AttributionReport::report_time);
           if (it != reports.end()) {
             delta = it->report_time() - base::Time::Now();
           }
@@ -414,6 +421,7 @@ void FastForwardUntilReportsConsumed(AttributionManager& manager,
     run_loop.Run();
 
     if (delta.is_negative()) {
+      task_environment.FastForwardBy(base::TimeDelta());
       break;
     }
     task_environment.FastForwardBy(delta);
@@ -430,8 +438,8 @@ RunAttributionInteropSimulation(
     return AttributionInteropOutput();
   }
 
-  DCHECK(base::ranges::is_sorted(run.events, /*comp=*/{},
-                                 &AttributionSimulationEvent::time));
+  DCHECK(std::ranges::is_sorted(run.events, /*comp=*/{},
+                                &AttributionSimulationEvent::time));
 
   std::vector<base::test::FeatureRef> enabled_features(
       {blink::features::kKeepAliveInBrowserMigration,
@@ -440,43 +448,16 @@ RunAttributionInteropSimulation(
   std::optional<AttributionOsLevelManager::ScopedApiStateForTesting>
       scoped_api_state;
   if (run.config.needs_cross_app_web) {
-    enabled_features.emplace_back(
-        network::features::kAttributionReportingCrossAppWeb);
     scoped_api_state.emplace(AttributionOsLevelManager::ApiState::kEnabled);
   }
-  if (run.config.needs_aggregatable_debug) {
-    enabled_features.emplace_back(attribution_reporting::features::
-                                      kAttributionAggregatableDebugReporting);
-  }
 
-  if (run.config.needs_source_destination_limit) {
-    enabled_features.emplace_back(
-        attribution_reporting::features::kAttributionSourceDestinationLimit);
-  }
-
-  if (run.config.needs_aggregatable_filtering_ids) {
-    enabled_features.emplace_back(
-        attribution_reporting::features::
-            kAttributionReportingAggregatableFilteringIds);
-    enabled_features.emplace_back(
-        kPrivacySandboxAggregationServiceFilteringIds);
-  }
-
-  if (run.config.needs_attribution_scopes) {
-    enabled_features.emplace_back(
-        attribution_reporting::features::kAttributionScopes);
+  if (run.config.needs_delivery_after_new_navigation) {
+    enabled_features.emplace_back(kAttributionReportDeliveryOnNewNavigation);
   }
 
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      enabled_features,
-      /*disabled_features=*/{
-          // This UMA records a sample every 30s via a periodic task which
-          // interacts poorly with TaskEnvironment::FastForward using day long
-          // delays (we need to run the uma update every 30s for that
-          // interval)
-          network::features::kGetCookiesStringUma,
-      });
+  scoped_feature_list.InitWithFeatures(enabled_features,
+                                       /*disabled_features=*/{});
 
   attribution_reporting::ScopedMaxEventLevelEpsilonForTesting
       scoped_max_event_level_epsilon(run.config.max_event_level_epsilon);
@@ -489,6 +470,13 @@ RunAttributionInteropSimulation(
   BrowserTaskEnvironment task_environment(
       base::test::TaskEnvironment::TimeSource::MOCK_TIME);
   TestBrowserContext browser_context;
+
+  GetNetworkService();
+  // Wait for the Network Service to initialize on the IO thread.
+  RunAllPendingInMessageLoop(content::BrowserThread::IO);
+  // Disable metrics updater to avoid test timeouts.
+  network::NetworkService::GetNetworkServiceForTesting()
+      ->ResetMetricsUpdaterForTesting();  // IN-TEST
 
   // Ensure that `time_origin` has a whole number of days to make
   // `AdjustEventLevelBody()` and `AdjustAggregatableReportSharedInfo()` time
@@ -575,10 +563,7 @@ RunAttributionInteropSimulation(
 
   for (const auto& event : run.events) {
     task_environment.FastForwardBy(event.time - base::Time::Now());
-
-    absl::visit(
-        [&](const auto& data) { Handle(data, *manager->GetDataHostManager()); },
-        event.data);
+    std::visit([&](const auto& data) { Handle(data, *manager); }, event.data);
   }
 
   FastForwardUntilReportsConsumed(*manager, task_environment);

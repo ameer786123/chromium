@@ -4,26 +4,28 @@
 
 package org.chromium.chrome.browser.signin.services;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Log;
 import org.chromium.base.Promise;
 import org.chromium.base.lifetime.Destroyable;
-import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.signin.services.SigninManager.DataWipeOption;
 import org.chromium.chrome.browser.signin.services.SigninManager.SignInCallback;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.AccountUtils;
 import org.chromium.components.signin.AccountsChangeObserver;
+import org.chromium.components.signin.SigninFeatureMap;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
+import org.chromium.components.signin.metrics.SignoutReason;
 
 import java.util.List;
 
 /** This class regroups sign-in checks when chrome starts up and when accounts change on device */
+@NullMarked
 public class SigninChecker implements AccountsChangeObserver, Destroyable {
     private static final String TAG = "SigninChecker";
     private final AccountManagerFacade mAccountManagerFacade;
@@ -57,8 +59,7 @@ public class SigninChecker implements AccountsChangeObserver, Destroyable {
         assert coreAccountInfosPromise.isFulfilled();
         List<CoreAccountInfo> coreAccountInfos = coreAccountInfosPromise.getResult();
         // In the FRE, supervised accounts are signed in by the SigninManager
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)
-                || !FirstRunStatus.isFirstRunTriggered()) {
+        if (!FirstRunStatus.isFirstRunTriggered()) {
             checkChildAccount(coreAccountInfos);
         }
     }
@@ -68,8 +69,13 @@ public class SigninChecker implements AccountsChangeObserver, Destroyable {
     }
 
     private void checkChildAccount(List<CoreAccountInfo> coreAccountInfos) {
-        AccountUtils.checkChildAccountStatus(
-                mAccountManagerFacade, coreAccountInfos, this::onChildAccountStatusReady);
+        if (SigninFeatureMap.isEnabled(SigninFeatures.FORCE_SUPERVISED_SIGNIN_WITH_CAPABILITIES)) {
+            AccountUtils.checkIsSubjectToParentalControls(
+                    mAccountManagerFacade, coreAccountInfos, this::onChildAccountStatusReady);
+        } else {
+            AccountUtils.checkChildAccountStatus(
+                    mAccountManagerFacade, coreAccountInfos, this::onChildAccountStatusReady);
+        }
     }
 
     private void onChildAccountStatusReady(boolean isChild, @Nullable CoreAccountInfo childInfo) {
@@ -81,37 +87,44 @@ public class SigninChecker implements AccountsChangeObserver, Destroyable {
         assert childInfo != null;
         mSigninManager.runAfterOperationInProgress(
                 () -> {
-                    if (!mSigninManager.isSigninAllowed()) {
-                        return;
-                    }
-                    Log.d(TAG, "The child account sign-in starts.");
+                    if (SigninFeatureMap.isEnabled(
+                            SigninFeatures.FORCE_SUPERVISED_SIGNIN_WITH_CAPABILITIES)) {
+                        CoreAccountInfo accountInfo =
+                                mSigninManager
+                                        .getIdentityManager()
+                                        .getPrimaryAccountInfo(ConsentLevel.SIGNIN);
 
-                    final SignInCallback signInCallback =
-                            new SignInCallback() {
-                                @Override
-                                public void onSignInComplete() {
-                                    ++mNumOfChildAccountChecksDone;
-                                }
-
-                                @Override
-                                public void onSignInAborted() {}
-                            };
-                    if (ChromeFeatureList.isEnabled(
-                            ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
-                        mSigninManager.signin(
-                                childInfo, SigninAccessPoint.FORCED_SIGNIN, signInCallback);
+                        if (accountInfo == null || childInfo.getId().equals(accountInfo.getId())) {
+                            signInSupervisedUser(childInfo);
+                        } else {
+                            mSigninManager.signOut(
+                                    SignoutReason.SIGNOUT_BEFORE_SUPERVISED_SIGNIN,
+                                    () -> onChildAccountStatusReady(isChild, childInfo),
+                                    /* forceWipeUserData= */ false);
+                        }
                     } else {
-                        mSigninManager.wipeSyncUserData(
-                                () -> {
-                                    RecordUserAction.record(
-                                            "Signin_Signin_WipeDataOnChildAccountSignin2");
-                                    mSigninManager.signin(
-                                            childInfo,
-                                            SigninAccessPoint.FORCED_SIGNIN,
-                                            signInCallback);
-                                },
-                                DataWipeOption.WIPE_SYNC_DATA);
+                        signInSupervisedUser(childInfo);
                     }
                 });
+    }
+
+    private void signInSupervisedUser(CoreAccountInfo childInfo) {
+        assert childInfo != null;
+        if (!mSigninManager.isSigninAllowed()) {
+            return;
+        }
+        Log.d(TAG, "The child account sign-in starts.");
+
+        final SignInCallback signInCallback =
+                new SignInCallback() {
+                    @Override
+                    public void onSignInComplete() {
+                        ++mNumOfChildAccountChecksDone;
+                    }
+
+                    @Override
+                    public void onSignInAborted() {}
+                };
+        mSigninManager.signin(childInfo, SigninAccessPoint.FORCED_SIGNIN, signInCallback);
     }
 }

@@ -66,18 +66,14 @@ class CORE_EXPORT SVGElement : public Element {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  ~SVGElement() override;
-
   bool IsOutermostSVGSVGElement() const;
 
   bool HasTagName(const SVGQualifiedName& name) const {
+    DCHECK_EQ(name.NamespaceURI(), namespaceURI());
     return HasLocalName(name.LocalName());
   }
 
   String title() const override;
-  bool HasRelativeLengths() const {
-    return !elements_with_relative_lengths_.empty();
-  }
   static bool IsAnimatableCSSProperty(const QualifiedName&);
 
   bool HasMotionTransform() const { return HasSVGRareData(); }
@@ -98,17 +94,7 @@ class CORE_EXPORT SVGElement : public Element {
   };
   virtual AffineTransform LocalCoordinateSpaceTransform(CTMScope) const;
 
-  // Records the SVG element as having a Web Animation on an SVG attribute that
-  // needs applying.
-  void SetWebAnimationsPending();
-  void ApplyActiveWebAnimations();
-
   void BaseValueChanged(const SVGAnimatedPropertyBase&);
-  void EnsureAttributeAnimValUpdated();
-
-  void SetWebAnimatedAttribute(const QualifiedName& attribute,
-                               SVGPropertyBase*);
-  void ClearWebAnimatedAttributes();
 
   ElementSMILAnimations* GetSMILAnimations() const;
   ElementSMILAnimations& EnsureSMILAnimations();
@@ -119,7 +105,7 @@ class CORE_EXPORT SVGElement : public Element {
   void SetAnimatedMotionTransform(const AffineTransform&);
   void ClearAnimatedMotionTransform();
 
-  bool HasNonCSSPropertyAnimations() const;
+  bool HasSMILAnimations() const;
 
   SVGSVGElement* ownerSVGElement() const;
   SVGElement* viewportElement() const;
@@ -186,8 +172,6 @@ class CORE_EXPORT SVGElement : public Element {
   virtual void BuildPendingResource() {}
   virtual bool HaveLoadedRequiredResources();
 
-  void InvalidateRelativeLengthClients();
-
   SVGAnimatedString* className() { return class_name_.Get(); }
 
   bool InUseShadowTree() const;
@@ -219,6 +203,8 @@ class CORE_EXPORT SVGElement : public Element {
 
   bool HasFocusEventListeners() const;
 
+  virtual bool SelfHasRelativeLengths() const { return false; }
+
  protected:
   SVGElement(const QualifiedName&,
              Document&,
@@ -236,17 +222,17 @@ class CORE_EXPORT SVGElement : public Element {
   void CollectStyleForPresentationAttribute(
       const QualifiedName&,
       const AtomicString&,
-      MutableCSSPropertyValueSet*) override;
+      HeapVector<CSSPropertyValue, 8>&) override;
   void AddPropertyToPresentationAttributeStyleWithCache(
-      MutableCSSPropertyValueSet*,
+      HeapVector<CSSPropertyValue, 8>&,
       CSSPropertyID,
       const AtomicString& value);
   void AddAnimatedPropertyToPresentationAttributeStyle(
       const SVGAnimatedPropertyBase& property,
-      MutableCSSPropertyValueSet* style);
+      HeapVector<CSSPropertyValue, 8>&);
   void AddAnimatedPropertiesToPresentationAttributeStyle(
       const base::span<const SVGAnimatedPropertyBase*> properties,
-      MutableCSSPropertyValueSet* style);
+      HeapVector<CSSPropertyValue, 8>&);
 
   InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
@@ -256,14 +242,8 @@ class CORE_EXPORT SVGElement : public Element {
 
   static CSSPropertyID CssPropertyIdForSVGAttributeName(const ExecutionContext*,
                                                         const QualifiedName&);
-  void UpdateRelativeLengthsInformation() {
-    UpdateRelativeLengthsInformation(SelfHasRelativeLengths(), this);
-  }
-  void UpdateRelativeLengthsInformation(bool has_relative_lengths, SVGElement*);
   static void MarkForLayoutAndParentResourceInvalidation(LayoutObject&);
   void NotifyResourceClients() const;
-
-  virtual bool SelfHasRelativeLengths() const { return false; }
 
   SVGElementSet* SetOfIncomingReferences() const;
 
@@ -301,16 +281,8 @@ class CORE_EXPORT SVGElement : public Element {
 
   void WillRecalcStyle(const StyleRecalcChange) override;
   static SVGElementSet& GetDependencyTraversalVisitedSet();
-  void UpdateWebAnimatedAttributeOnBaseValChange(
-      const SVGAnimatedPropertyBase&);
 
   SMILTimeContainer* GetTimeContainer() const;
-
-  HeapHashSet<WeakMember<SVGElement>> elements_with_relative_lengths_;
-
-#if DCHECK_IS_ON()
-  bool in_relative_length_clients_invalidation_ = false;
-#endif
 
   Member<SVGElementRareData> svg_rare_data_;
   Member<SVGAnimatedString> class_name_;

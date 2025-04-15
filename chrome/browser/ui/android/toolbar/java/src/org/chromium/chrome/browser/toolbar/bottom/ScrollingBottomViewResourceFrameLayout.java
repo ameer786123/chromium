@@ -10,16 +10,17 @@ import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.os.Looper;
 import android.util.AttributeSet;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.toolbar.ConstraintsChecker;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.chrome.browser.toolbar.ToolbarCaptureType;
-import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 import org.chromium.components.browser_ui.widget.ViewResourceFrameLayout;
 import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
 
@@ -41,9 +42,17 @@ public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLay
 
     private @Nullable ConstraintsChecker mConstraintsChecker;
 
+    private View mShadow;
+
     public ScrollingBottomViewResourceFrameLayout(Context context, AttributeSet attrs) {
         super(context, attrs);
         mTopShadowHeightPx = getResources().getDimensionPixelOffset(R.dimen.toolbar_shadow_height);
+    }
+
+    @Override
+    protected void onFinishInflate() {
+        super.onFinishInflate();
+        mShadow = findViewById(R.id.bottom_container_top_shadow);
     }
 
     @Override
@@ -51,28 +60,35 @@ public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLay
         return new ViewResourceAdapter(this) {
             @Override
             public boolean isDirty() {
-                if (ToolbarFeatures.shouldSuppressCaptures()) {
-                    // Dirty rect tracking will claim changes more often than token differences due
-                    // to model changes. It is also cheaper to simply check a boolean, so do it
-                    // first.
-                    if (!super.isDirty()) {
-                        return false;
-                    }
-
-                    if (mConstraintsChecker != null && mConstraintsChecker.areControlsLocked()) {
-                        mConstraintsChecker.scheduleRequestResourceOnUnlock();
-                        return false;
-                    }
-
-                    return mCurrentSnapshotToken != null
-                            && !mCurrentSnapshotToken.equals(mLastCaptureSnapshotToken);
-                } else {
-                    return super.isDirty();
+                // Dirty rect tracking will claim changes more often than token differences due
+                // to model changes. It is also cheaper to simply check a boolean, so do it
+                // first.
+                if (!super.isDirty()) {
+                    return false;
                 }
+
+                if (mConstraintsChecker != null && mConstraintsChecker.areControlsLocked()) {
+                    mConstraintsChecker.scheduleRequestResourceOnUnlock();
+                    return false;
+                }
+
+                return mCurrentSnapshotToken != null
+                        && !mCurrentSnapshotToken.equals(mLastCaptureSnapshotToken);
             }
 
             @Override
             public void onCaptureStart(Canvas canvas, Rect dirtyRect) {
+                // The android and composited views both have a shadow. The default state is to
+                // to show only the android shadow. When the bottom controls begin to scroll off,
+                // the android view is hidden, and the composited shadow is made visible. However,
+                // showing the composited shadow incurs a compositor frame. We want to avoid this
+                // with BCIV, so we change the default state to only show the composited shadow.
+                // Since the shadow is a UIResourceLayer, we need to make the android shadow
+                // visible for the capture so that the layer gets the correct resource.
+                if (ChromeFeatureList.sBcivBottomControls.isEnabled()) {
+                    mShadow.setVisibility(View.VISIBLE);
+                }
+
                 RecordHistogram.recordEnumeratedHistogram(
                         "Android.Toolbar.BitmapCapture",
                         ToolbarCaptureType.BOTTOM,
@@ -94,6 +110,13 @@ public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLay
 
                 super.onCaptureStart(canvas, dirtyRect);
                 mLastCaptureSnapshotToken = mCurrentSnapshotToken;
+            }
+
+            @Override
+            public void onCaptureEnd() {
+                if (ChromeFeatureList.sBcivBottomControls.isEnabled()) {
+                    mShadow.setVisibility(View.INVISIBLE);
+                }
             }
         };
     }

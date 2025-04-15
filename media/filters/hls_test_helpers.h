@@ -46,10 +46,7 @@ class MockDataSource : public CrossOriginDataSource {
   MOCK_METHOD(int64_t, GetMemoryUsage, (), (override));
   MOCK_METHOD(void, SetPreload, (DataSource::Preload preload), (override));
   MOCK_METHOD(GURL, GetUrlAfterRedirects, (), (const, override));
-  MOCK_METHOD(void,
-              OnBufferingHaveEnough,
-              (bool must_cancel_netops),
-              (override));
+  MOCK_METHOD(void, StopPreloading, (), (override));
   MOCK_METHOD(void,
               OnMediaPlaybackRateChanged,
               (double playback_rate),
@@ -151,8 +148,10 @@ class MockHlsRenditionHost : public HlsRenditionHost {
 
   MOCK_METHOD(void,
               UpdateRenditionManifestUri,
-              (std::string, GURL, base::OnceCallback<void(bool)>),
+              (std::string, GURL, HlsDemuxerStatusCallback),
               (override));
+
+  MOCK_METHOD(void, Quit, (HlsDemuxerStatus), (override));
 
   MOCK_METHOD(void,
               ReadStream,

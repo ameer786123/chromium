@@ -30,19 +30,6 @@ targets.legacy_compound_suite(
 )
 
 targets.legacy_compound_suite(
-    name = "chromium_mac_rel_isolated_scripts_and_sizes",
-    basic_suites = [
-        "chrome_sizes_suite",
-        "chromedriver_py_tests_isolated_scripts",
-        "components_perftests_isolated_scripts",
-        "desktop_chromium_isolated_scripts",
-        "mac_specific_isolated_scripts",
-        "mojo_python_unittests_isolated_scripts",
-        "telemetry_perf_unittests_isolated_scripts",
-    ],
-)
-
-targets.legacy_compound_suite(
     name = "devtools_gtests",
     basic_suites = [
         "devtools_browser_tests_suite",
@@ -101,19 +88,12 @@ targets.legacy_compound_suite(
 )
 
 targets.legacy_compound_suite(
-    name = "gpu_nexus5x_telemetry_tests_v8",
+    name = "gpu_telemetry_tests_v8",
     basic_suites = [
         "gpu_common_and_optional_telemetry_tests",
         "gpu_validating_telemetry_tests",
         "gpu_webgl_conformance_gles_passthrough_telemetry_tests",
         "gpu_webgl_conformance_validating_telemetry_tests",
-    ],
-)
-
-targets.legacy_compound_suite(
-    name = "gpu_swangle_telemetry_tests",
-    basic_suites = [
-        "gpu_webgl_conformance_swangle_passthrough_telemetry_tests",
     ],
 )
 

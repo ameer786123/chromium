@@ -10,6 +10,7 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/containers/circular_deque.h"
@@ -24,6 +25,8 @@
 #include "components/attribution_reporting/data_host.mojom.h"
 #include "components/attribution_reporting/registration_eligibility.mojom-forward.h"
 #include "components/attribution_reporting/registration_header_error.h"
+#include "components/attribution_reporting/source_registration_error.mojom-forward.h"
+#include "components/attribution_reporting/trigger_registration_error.mojom-forward.h"
 #include "content/browser/attribution_reporting/attribution_background_registrations_id.h"
 #include "content/browser/attribution_reporting/attribution_beacon_id.h"
 #include "content/browser/attribution_reporting/attribution_data_host_manager.h"
@@ -33,7 +36,6 @@
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "net/http/structured_headers.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-forward.h"
 
@@ -106,9 +108,10 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
       attribution_reporting::mojom::RegistrationEligibility,
       std::optional<blink::AttributionSrcToken> attribution_src_token,
       std::optional<std::string> devtools_request_id) override;
-  bool NotifyBackgroundRegistrationData(BackgroundRegistrationsId id,
-                                        const net::HttpResponseHeaders* headers,
-                                        GURL reporting_url) override;
+  bool NotifyBackgroundRegistrationData(
+      BackgroundRegistrationsId id,
+      scoped_refptr<net::HttpResponseHeaders> headers,
+      GURL reporting_url) override;
   void NotifyBackgroundRegistrationCompleted(
       BackgroundRegistrationsId id) override;
 
@@ -160,7 +163,7 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
   // info to process them.
   class Registrations;
 
-  using RegistrationsId = absl::
+  using RegistrationsId = std::
       variant<blink::AttributionSrcToken, BeaconId, BackgroundRegistrationsId>;
 
   // attribution_reporting::mojom::DataHost:
@@ -173,39 +176,28 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
       attribution_reporting::TriggerRegistration,
       bool was_fetched_via_service_worker) override;
   void OsSourceDataAvailable(
-      attribution_reporting::SuitableOrigin reporting_origin,
       std::vector<attribution_reporting::OsRegistrationItem>,
       bool was_fetched_via_service_worker) override;
   void OsTriggerDataAvailable(
-      attribution_reporting::SuitableOrigin reporting_origin,
       std::vector<attribution_reporting::OsRegistrationItem>,
       bool was_fetched_via_service_worker) override;
   void ReportRegistrationHeaderError(
       attribution_reporting::SuitableOrigin reporting_origin,
-      const attribution_reporting::RegistrationHeaderError&) override;
+      attribution_reporting::RegistrationHeaderError) override;
 
   const RegistrationContext* GetReceiverRegistrationContextForSource();
   const RegistrationContext* GetReceiverRegistrationContextForTrigger();
 
-  void OsDataAvailable(
-      const attribution_reporting::SuitableOrigin& reporting_origin,
-      std::vector<attribution_reporting::OsRegistrationItem>,
-      bool was_fetched_via_service_worker,
-      const char* data_available_call_metric,
-      const RegistrationContext*,
-      attribution_reporting::mojom::RegistrationType);
-
-  [[nodiscard]] static bool CheckRegistrarSupport(
-      attribution_reporting::Registrar,
-      attribution_reporting::mojom::RegistrationType,
-      const RegistrationContext&,
-      const attribution_reporting::SuitableOrigin& reporting_origin);
+  void OsDataAvailable(std::vector<attribution_reporting::OsRegistrationItem>,
+                       bool was_fetched_via_service_worker,
+                       const char* data_available_call_metric,
+                       const RegistrationContext*,
+                       attribution_reporting::mojom::RegistrationType);
 
   void OnReceiverDisconnected();
 
   struct HeaderPendingDecode;
-  struct RegistrationDataHeaders;
-  struct PendingRegistrationData;
+  class PendingRegistrationData;
 
   void HandleRegistrationData(base::flat_set<Registrations>::iterator,
                               PendingRegistrationData);
@@ -221,27 +213,29 @@ class CONTENT_EXPORT AttributionDataHostManagerImpl final
                    HeaderPendingDecode,
                    attribution_reporting::Registrar);
   void HandleNextWebDecode(const Registrations&);
-  void OnWebHeaderParsed(
-      RegistrationsId,
-      data_decoder::DataDecoder::ValueOrError result);
-  void HandleParsedWebSource(const Registrations&,
-                             HeaderPendingDecode&,
-                             data_decoder::DataDecoder::ValueOrError result);
-  void HandleParsedWebTrigger(const Registrations&,
-                              HeaderPendingDecode&,
-                              data_decoder::DataDecoder::ValueOrError result);
+  void OnWebHeaderParsed(RegistrationsId,
+                         data_decoder::DataDecoder::ValueOrError result);
+
+  base::expected<void, attribution_reporting::mojom::SourceRegistrationError>
+  HandleParsedWebSource(const Registrations&,
+                        HeaderPendingDecode&,
+                        data_decoder::DataDecoder::ValueOrError);
+
+  base::expected<void, attribution_reporting::mojom::TriggerRegistrationError>
+  HandleParsedWebTrigger(const Registrations&,
+                         HeaderPendingDecode&,
+                         data_decoder::DataDecoder::ValueOrError);
 
   void HandleNextOsDecode(const Registrations&);
 
   void MaybeLogAuditIssueAndReportHeaderError(
       const Registrations&,
-      const HeaderPendingDecode&,
+      HeaderPendingDecode,
       attribution_reporting::RegistrationHeaderErrorDetails);
 
   using OsParseResult =
       base::expected<net::structured_headers::List, std::string>;
-  void OnOsHeaderParsed(RegistrationsId,
-                        OsParseResult);
+  void OnOsHeaderParsed(RegistrationsId, OsParseResult);
 
   void MaybeOnRegistrationsFinished(
       base::flat_set<Registrations>::const_iterator);

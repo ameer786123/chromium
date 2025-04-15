@@ -58,8 +58,8 @@ public class SiteSettingsTestUtils {
                         () -> {
                             Context context =
                                     InstrumentationRegistry.getInstrumentation().getContext();
-                            return context.getResources()
-                                    .getString(ContentSettingsResources.getTitleForCategory(type));
+                            return context.getString(
+                                    ContentSettingsResources.getTitleForCategory(type));
                         });
         fragmentArgs.putString(SingleCategorySettings.EXTRA_TITLE, title);
         return startSiteSettings(SingleCategorySettings.class, fragmentArgs);
@@ -88,15 +88,6 @@ public class SiteSettingsTestUtils {
         Bundle fragmentArgs = new Bundle();
         fragmentArgs.putString(
                 AllSiteSettings.EXTRA_CATEGORY, SiteSettingsCategory.preferenceKey(type));
-        return startSiteSettings(AllSiteSettings.class, fragmentArgs);
-    }
-
-    public static SettingsActivity startAllSitesSettingsForRws(
-            @SiteSettingsCategory.Type int type, String rwsPage) {
-        Bundle fragmentArgs = new Bundle();
-        fragmentArgs.putString(
-                AllSiteSettings.EXTRA_CATEGORY, SiteSettingsCategory.preferenceKey(type));
-        fragmentArgs.putString(AllSiteSettings.EXTRA_SEARCH, rwsPage);
         return startSiteSettings(AllSiteSettings.class, fragmentArgs);
     }
 

@@ -41,6 +41,7 @@
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "build/buildflag.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/data_transfer_policy/mock_data_transfer_policy_controller.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
@@ -66,6 +67,7 @@
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/layout/layout_types.h"
 #include "ui/views/test/button_test_api.h"
 #include "ui/views/test/views_test_utils.h"
 
@@ -355,7 +357,7 @@ class AshNotificationViewTestBase : public AshTestBase,
 
     // Force frames and wait for all throughput trackers to be gone to allow
     // animation throughput data to be passed from cc to ui.
-    while (compositor->has_throughput_trackers_for_testing()) {
+    while (compositor->has_compositor_metrics_trackers_for_testing()) {
       compositor->ScheduleFullRedraw();
       std::ignore = ui::WaitForNextFrameToBePresented(compositor,
                                                       base::Milliseconds(500));
@@ -1376,6 +1378,19 @@ TEST_F(AshNotificationViewTest, LeftContentAndTitleRowHeightMatches) {
             GetTitleRow(notification_view())->height());
 }
 
+TEST_F(AshNotificationViewTest, ProgressBarDoesNotOverpaint) {
+  std::unique_ptr<Notification> notification = CreateTestNotification(
+      /*has_image=*/false, /*show_snooze_button=*/false, /*has_message=*/true,
+      message_center::NOTIFICATION_TYPE_PROGRESS);
+  notification_view()->UpdateWithNotification(*notification);
+
+  EXPECT_EQ(notification_view()
+                ->progress_bar_view_for_testing()
+                ->CalculatePreferredSize(views::SizeBounds())
+                .height(),
+            4);
+}
+
 // AshNotificationLimitTest ----------------------------------------------------
 
 class AshNotificationLimitTest : public AshNotificationViewTestBase,
@@ -1663,9 +1678,6 @@ class AshNotificationViewDragTestBase : public AshNotificationViewTestBase {
  public:
   // AshNotificationViewTestBase:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatureStates(
-        {{features::kNotificationImageDrag, true}});
-
     AshNotificationViewTestBase::SetUp();
     notification_test_api_ = std::make_unique<NotificationCenterTestApi>();
 

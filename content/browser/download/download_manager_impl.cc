@@ -238,7 +238,7 @@ CreatePendingSharedURLLoaderFactory(StoragePartitionImpl* storage_partition,
     // Also allow the Content embedder to inject itself if it wants to.
     GetContentClient()->browser()->WillCreateURLLoaderFactory(
         rfh->GetSiteInstance()->GetBrowserContext(), rfh,
-        rfh->GetProcess()->GetID(),
+        rfh->GetProcess()->GetDeprecatedID(),
         ContentBrowserClient::URLLoaderFactoryType::kDownload, url::Origin(),
         net::IsolationInfo(), /*navigation_id=*/std::nullopt,
         ukm::kInvalidSourceIdObj, factory_builder, /*header_client=*/nullptr,
@@ -1207,8 +1207,7 @@ void DownloadManagerImpl::PostInitialization(
       break;
     case DOWNLOAD_INITIALIZATION_DEPENDENCY_NONE:
     default:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   // Download manager is only initialized if both history db and in progress
@@ -1359,7 +1358,7 @@ void DownloadManagerImpl::InterceptNavigationOnChecksComplete(
   if (ftn) {
     render_frame_host = ftn->current_frame_host();
     if (render_frame_host) {
-      render_process_id = render_frame_host->GetProcess()->GetID();
+      render_process_id = render_frame_host->GetProcess()->GetDeprecatedID();
       render_frame_id = render_frame_host->GetRoutingID();
       storage_partition_config =
           render_frame_host->GetSiteInstance()->GetStoragePartitionConfig();
@@ -1448,7 +1447,7 @@ void DownloadManagerImpl::BeginResourceDownloadOnChecksComplete(
     pending_url_loader_factory =
         std::make_unique<network::WrapperPendingSharedURLLoaderFactory>(
             CreateFileSystemURLLoaderFactory(
-                rfh->GetProcess()->GetID(), rfh->GetFrameTreeNodeId(),
+                rfh->GetProcess()->GetDeprecatedID(), rfh->GetFrameTreeNodeId(),
                 storage_partition->GetFileSystemContext(),
                 storage_partition->GetPartitionDomain(),
                 static_cast<RenderFrameHostImpl*>(rfh)->GetStorageKey()));
@@ -1506,16 +1505,6 @@ void DownloadManagerImpl::BeginDownloadInternal(
 
   auto* rfh = RenderFrameHost::FromID(params->render_process_host_id(),
                                       params->render_frame_host_routing_id());
-
-  // Untrusted network access is revoked, download request is interrupted.
-  if (rfh && rfh->IsUntrustedNetworkDisabled()) {
-    // TODO(crbug.com/365033308): Create a new download interrupt reason for
-    // fenced frame network revocation.
-    CreateInterruptedDownload(
-        std::move(params), download::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED,
-        weak_factory_.GetWeakPtr());
-    return;
-  }
 
   StoragePartitionConfig storage_partition_config;
   if (rfh && serialized_embedder_download_data.empty()) {

@@ -6,7 +6,7 @@
 
 #include <string_view>
 
-#include "ui/native_theme/native_theme_features.h"
+#include "ui/native_theme/features/native_theme_features.h"
 
 namespace ui {
 
@@ -22,14 +22,16 @@ std::string_view NativeThemeColorSchemeName(
     case NativeTheme::ColorScheme::kPlatformHighContrast:
       return "kPlatformHighContrast";
     default:
-      NOTREACHED_IN_MIGRATION() << "Invalid NativeTheme::ColorScheme";
-      return "<invalid>";
+      NOTREACHED() << "Invalid NativeTheme::ColorScheme";
   }
 }
 
 bool IsOverlayScrollbarEnabled() {
-  return IsOverlayScrollbarEnabledByFeatureFlag() &&
-         NativeTheme::IsOverlayScrollbarEnabledByOSSetting();
+#if BUILDFLAG(IS_CHROMEOS)
+  return NativeTheme::GetInstanceForWeb()->use_overlay_scrollbar();
+#else
+  return IsOverlayScrollbarEnabledByFeatureFlag();
+#endif
 }
 
 }  // namespace ui

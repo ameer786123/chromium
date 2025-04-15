@@ -83,8 +83,8 @@ class BASE_EXPORT MemoryAllocatorDump {
   ~MemoryAllocatorDump();
 
   // Standard attribute |name|s for the AddScalar and AddString() methods.
-  static const char kNameSize[];          // To represent allocated space.
-  static const char kNameObjectCount[];   // To represent number of objects.
+  static const char kNameSize[];         // To represent allocated space.
+  static const char kNameObjectCount[];  // To represent number of objects.
 
   // Standard attribute |unit|s for the AddScalar and AddString() methods.
   static const char kUnitsBytes[];    // Unit name to represent bytes.
@@ -134,9 +134,9 @@ class BASE_EXPORT MemoryAllocatorDump {
   // cross process sharing. See crbug.com/492102 for design docs.
   // Subsequent MemoryAllocatorDump(s) with the same |absolute_name| are
   // expected to have the same guid.
-  const MemoryAllocatorDumpGuid& guid() const { return guid_; }
+  const MemoryAllocatorDumpGuid& guid() const LIFETIME_BOUND { return guid_; }
 
-  const std::vector<Entry>& entries() const { return entries_; }
+  const std::vector<Entry>& entries() const LIFETIME_BOUND { return entries_; }
 
   // Only for mojo serialization, which can mutate the collection.
   std::vector<Entry>* mutable_entries_for_serialization() const {
@@ -151,7 +151,7 @@ class BASE_EXPORT MemoryAllocatorDump {
   const std::string absolute_name_;
   MemoryAllocatorDumpGuid guid_;
   MemoryDumpLevelOfDetail level_of_detail_;
-  int flags_;  // See enum Flags.
+  int flags_;                                    // See enum Flags.
   mutable std::optional<uint64_t> cached_size_;  // Lazy, for GetSizeInternal().
   std::vector<Entry> entries_;
 };

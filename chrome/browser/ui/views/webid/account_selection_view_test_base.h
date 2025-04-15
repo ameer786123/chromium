@@ -11,6 +11,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/view.h"
 
+namespace webid {
+
 const std::u16string kRpETLDPlusOne = u"rp-example.com";
 const std::u16string kIdpETLDPlusOne = u"idp-example.com";
 const std::u16string kSecondIdpETLDPlusOne = u"idp2.com";
@@ -29,6 +31,8 @@ inline constexpr char kIdpForDisplay[] = "idp-example.com";
 // The char version of `kSecondIdpETLDPlusOne`.
 inline constexpr char kSecondIdpForDisplay[] = "idp2.com";
 inline constexpr char kIdBase[] = "id";
+inline constexpr char kDisplayIdentifierBase[] = "displayid";
+inline constexpr char kDisplayNameBase[] = "displayname";
 inline constexpr char kEmailBase[] = "email";
 inline constexpr char kNameBase[] = "name";
 inline constexpr char kGivenNameBase[] = "given_name";
@@ -55,20 +59,27 @@ class AccountSelectionViewTestBase {
   ~AccountSelectionViewTestBase();
 
  protected:
-  std::u16string GetHoverButtonTitle(HoverButton* account);
+  std::u16string_view GetHoverButtonTitle(HoverButton* account);
   views::Label* GetHoverButtonSubtitle(HoverButton* account);
   views::View* GetHoverButtonIconView(HoverButton* account);
   views::Label* GetHoverButtonFooter(HoverButton* account);
   views::View* GetHoverButtonSecondaryView(HoverButton* account);
 
   void CheckNonHoverableAccountRow(views::View* row,
-                                   const std::string& account_suffix);
+                                   const std::string& account_suffix,
+                                   bool has_display_identifier);
   void CheckHoverableAccountRows(
       const std::vector<raw_ptr<views::View, VectorExperimental>>& accounts,
       const std::vector<std::string>& account_suffixes,
       size_t& accounts_index,
       bool expect_idp = false,
       bool is_modal_dialog = false);
+  void CheckHoverableAccountRow(views::View* account,
+                                const std::string& account_suffix,
+                                bool has_display_identifier,
+                                bool expect_idp = false,
+                                bool is_modal_dialog = false,
+                                bool is_disabled = false);
   void CheckDisclosureText(views::View* disclosure_text,
                            bool expect_terms_of_service,
                            bool expect_privacy_policy);
@@ -97,5 +108,7 @@ class AccountSelectionViewTestBase {
   views::View* GetViewWithClassName(views::View* parent,
                                     const std::string& class_name);
 };
+
+}  // namespace webid
 
 #endif  // CHROME_BROWSER_UI_VIEWS_WEBID_ACCOUNT_SELECTION_VIEW_TEST_BASE_H_

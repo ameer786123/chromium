@@ -220,22 +220,22 @@ void DriveUploadObserver::OnIOTaskStatus(
   // Only log in case of final state.
   if (status.state == file_manager::io_task::State::kError) {
     policy::local_user_files::SkyVaultDeleteErrorHistogram(
-        trigger_, policy::local_user_files::CloudProvider::kGoogleDrive, true);
+        trigger_, policy::local_user_files::MigrationDestination::kGoogleDrive,
+        true);
   }
   if (status.state == file_manager::io_task::State::kSuccess) {
     policy::local_user_files::SkyVaultDeleteErrorHistogram(
-        trigger_, policy::local_user_files::CloudProvider::kGoogleDrive, false);
+        trigger_, policy::local_user_files::MigrationDestination::kGoogleDrive,
+        false);
   }
 
   switch (status.state) {
     case file_manager::io_task::State::kCancelled:
-      NOTREACHED_IN_MIGRATION()
-          << "Deletion of source or destination file should not have "
-             "been cancelled.";
-      ABSL_FALLTHROUGH_INTENDED;
+      NOTREACHED() << "Deletion of source or destination file should not have "
+                      "been cancelled.";
     case file_manager::io_task::State::kError:
       LOG(ERROR) << "Deleting the file from the local cache failed.";
-      ABSL_FALLTHROUGH_INTENDED;
+      [[fallthrough]];
     case file_manager::io_task::State::kSuccess:
       std::move(upload_callback_).Run(false);
       return;

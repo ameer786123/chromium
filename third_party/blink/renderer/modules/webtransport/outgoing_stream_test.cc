@@ -4,10 +4,10 @@
 
 #include "third_party/blink/renderer/modules/webtransport/outgoing_stream.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/containers/span.h"
-#include "base/ranges/algorithm.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/task_type.h"
@@ -78,11 +78,7 @@ class StreamCreator {
     mock_client_ = MakeGarbageCollected<StrictMock<MockClient>>();
     auto* outgoing_stream = MakeGarbageCollected<OutgoingStream>(
         script_state, mock_client_, std::move(data_pipe_producer));
-    ExceptionState exception_state(scope.GetIsolate(),
-                                   v8::ExceptionContext::kConstructor,
-                                   "OutgoingStream");
-    outgoing_stream->Init(exception_state);
-    CHECK(!exception_state.HadException());
+    outgoing_stream->Init(ASSERT_NO_EXCEPTION);
     return outgoing_stream;
   }
 
@@ -173,7 +169,7 @@ TEST(OutgoingStreamTest, WriteArrayBufferView) {
 }
 
 bool IsAllNulls(base::span<const uint8_t> data) {
-  return base::ranges::all_of(data, [](uint8_t c) { return !c; });
+  return std::ranges::all_of(data, [](uint8_t c) { return !c; });
 }
 
 TEST(OutgoingStreamTest, AsyncWrite) {

@@ -4,8 +4,8 @@
 
 #include "components/autofill/core/browser/form_structure_test_api.h"
 
-#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/form_parsing/field_candidates.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,8 +36,6 @@ void FormStructureTestApi::SetFieldTypes(
       form_field->set_heuristic_type(source, type);
     form_field->set_server_predictions({server_types[i]});
   }
-
-  form_structure_->UpdateAutofillCount();
 }
 
 void FormStructureTestApi::SetFieldTypes(

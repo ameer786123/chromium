@@ -14,7 +14,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_cpp.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_swap_buffer_provider.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
+#include "third_party/blink/renderer/platform/graphics/predefined_color_space.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 
 namespace blink {
@@ -29,7 +29,8 @@ class V8UnionHTMLCanvasElementOrOffscreenCanvas;
 
 // A GPUCanvasContext does little by itself and basically just binds a canvas
 // and a GPUSwapChain together and forwards calls from one to the other.
-class GPUCanvasContext : public CanvasRenderingContext,
+class GPUCanvasContext : public ScriptWrappable,
+                         public CanvasRenderingContext,
                          public WebGPUSwapBufferProvider::Client {
   DEFINE_WRAPPERTYPEINFO();
 
@@ -62,11 +63,11 @@ class GPUCanvasContext : public CanvasRenderingContext,
   // CanvasRenderingContext implementation
   V8RenderingContext* AsV8RenderingContext() final;
   V8OffscreenRenderingContext* AsV8OffscreenRenderingContext() final;
-  SkColorInfo CanvasRenderingContextSkColorInfo() const override;
-  // Produces a snapshot of the current contents of the swap chain if possible.
-  // If that texture has already been sent to the compositor, will produce a
-  // snapshot of the just released texture associated to this gpu context.
-  // todo(crbug/1267243) Make snapshot always return the current frame.
+  SkAlphaType GetAlphaType() const override;
+  viz::SharedImageFormat GetSharedImageFormat() const override;
+  gfx::ColorSpace GetColorSpace() const override;
+  // Produces a snapshot of the current contents of the swap chain if possible
+  // or else a snapshot of the most-recently presented contents.
   scoped_refptr<StaticBitmapImage> GetImage(FlushReason) final;
   bool PaintRenderingResultsToCanvas(SourceDrawingBuffer) final;
   bool CopyRenderingResultsToVideoFrame(
@@ -77,8 +78,6 @@ class GPUCanvasContext : public CanvasRenderingContext,
   void PageVisibilityChanged() override {}
   bool isContextLost() const override { return false; }
   bool IsComposited() const final { return true; }
-  bool IsOriginTopLeft() const final { return true; }
-  void SetFilterQuality(cc::PaintFlags::FilterQuality) override;
   bool IsPaintable() const final { return true; }
   int ExternallyAllocatedBufferCountPerPixel() final { return 1; }
   void Stop() final;
@@ -99,19 +98,22 @@ class GPUCanvasContext : public CanvasRenderingContext,
     return false;
   }
 
-  // gpu_presentation_context.idl
+  // gpu_canvas_context.idl {{{
   V8UnionHTMLCanvasElementOrOffscreenCanvas* getHTMLOrOffscreenCanvas() const;
-
   void configure(const GPUCanvasConfiguration* descriptor, ExceptionState&);
   void unconfigure();
   GPUCanvasConfiguration* getConfiguration();
   GPUTexture* getCurrentTexture(ScriptState*, ExceptionState&);
+  // }}} End of WebIDL binding implementation.
 
   // WebGPUSwapBufferProvider::Client implementation
   void OnTextureTransferred() override;
+  void InitializeLayer(cc::Layer* layer) override;
   void SetNeedsCompositingUpdate() override;
+  bool IsGPUDeviceDestroyed() override;
 
  private:
+  scoped_refptr<WebGPUMailboxTexture> GetFrontBufferMailboxTexture();
   void DetachSwapBuffers();
   void ReplaceDrawingBuffer(bool destroy_swap_buffers);
   void InitializeAlphaModePipeline(wgpu::TextureFormat format);
@@ -119,12 +121,10 @@ class GPUCanvasContext : public CanvasRenderingContext,
   void FinalizeFrame(FlushReason) override;
 
   scoped_refptr<StaticBitmapImage> SnapshotInternal(
-      const wgpu::Texture& texture,
-      const gfx::Size& size) const;
+      const wgpu::Texture& texture) const;
 
   bool CopyTextureToResourceProvider(
       const wgpu::Texture& texture,
-      const gfx::Size& size,
       CanvasResourceProvider* resource_provider) const;
 
   void CopyToSwapTexture();
@@ -132,8 +132,9 @@ class GPUCanvasContext : public CanvasRenderingContext,
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> GetContextProviderWeakPtr()
       const;
 
-  cc::PaintFlags::FilterQuality filter_quality_ =
-      cc::PaintFlags::FilterQuality::kLow;
+  scoped_refptr<StaticBitmapImage> MakeFallbackStaticBitmapImage(
+      V8GPUCanvasAlphaMode::Enum alpha_mode);
+
   Member<GPUDevice> device_;
 
   // If the system doesn't support the requested format but it's one that WebGPU

@@ -74,7 +74,7 @@ void ReportBridgeErrorOnModelThreadForTest(  // IN-TEST
 }
 
 // Rurns some task on the destination task runner (backend sequence), first
-// exercising |delegate_provider| *also* in the backend sequence.
+// exercising `delegate_provider` *also* in the backend sequence.
 void RunModelTask(
     const ProxyDataTypeControllerDelegate::DelegateProvider& delegate_provider,
     base::OnceCallback<void(base::WeakPtr<DataTypeControllerDelegate>)> task) {
@@ -102,9 +102,12 @@ ProxyDataTypeControllerDelegate::~ProxyDataTypeControllerDelegate() = default;
 void ProxyDataTypeControllerDelegate::OnSyncStarting(
     const DataTypeActivationRequest& request,
     StartCallback callback) {
+  DataTypeActivationRequest proxy_request = request;
+  proxy_request.error_handler =
+      base::BindPostTaskToCurrentDefault(request.error_handler);
   PostTask(
       FROM_HERE,
-      base::BindOnce(&OnSyncStartingHelperOnModelThread, request,
+      base::BindOnce(&OnSyncStartingHelperOnModelThread, proxy_request,
                      base::BindPostTaskToCurrentDefault(std::move(callback))));
 }
 

@@ -191,7 +191,7 @@ int SQLiteStatement::BindText(int index, const String& text) {
   String text16(text);
   text16.Ensure16Bit();
   return restrictError(
-      sqlite3_bind_text16(statement_, index, text16.Characters16(),
+      sqlite3_bind_text16(statement_, index, UNSAFE_TODO(text16.Characters16()),
                           sizeof(UChar) * text16.length(), SQLITE_TRANSIENT));
 }
 
@@ -225,8 +225,7 @@ int SQLiteStatement::BindValue(int index, const SQLValue& value) {
       return BindNull(index);
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return SQLITE_ERROR;
+  NOTREACHED();
 }
 
 unsigned SQLiteStatement::BindParameterCount() const {
@@ -280,8 +279,7 @@ SQLValue SQLiteStatement::GetColumnValue(int col) {
     case SQLITE_NULL:
       return SQLValue();
   }
-  NOTREACHED_IN_MIGRATION();
-  return SQLValue();
+  NOTREACHED();
 }
 
 String SQLiteStatement::GetColumnText(int col) {

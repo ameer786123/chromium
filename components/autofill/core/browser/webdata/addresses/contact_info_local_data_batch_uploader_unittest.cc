@@ -6,11 +6,11 @@
 
 #include "base/test/bind.h"
 #include "base/test/test_future.h"
-#include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
-#include "components/autofill/core/browser/profile_requirement_utils.h"
-#include "components/autofill/core/browser/test_address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/test_address_data_manager.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_quality/addresses/profile_requirement_utils.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/sync/service/local_data_description.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -77,8 +77,8 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest,
   AutofillProfile first_profile = test::GetFullProfile();
   AutofillProfile second_profile = test::GetFullProfile2();
   // Set the `first_profile` use_count greater than `second_profile` use_count.
-  first_profile.set_use_count(20);
-  second_profile.set_use_count(10);
+  first_profile.usage_history().set_use_count(20);
+  second_profile.usage_history().set_use_count(10);
   address_data_manager().AddProfile(first_profile);
   address_data_manager().AddProfile(second_profile);
 
@@ -146,6 +146,9 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest, LocalCompleteProfilesOnly) {
 
 TEST_F(ContactInfoLocalDataBatchUploaderTest,
        LocalWithEligibleCountryProfilesOnly) {
+  base::test::ScopedFeatureList feature;
+  feature.InitAndDisableFeature(
+      features::kAutofillEnableAccountStorageForIneligibleCountries);
   // These profiles are local profiles by default.
   AutofillProfile eligible_profile = test::GetFullProfile();
   AddressCountryCode ineligible_country_code("IR");
@@ -212,7 +215,7 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest, MigrateWithProfilesIds) {
               IsEmpty());
 
   // Request migration for 2 of the 3 profiles.
-  uploader().TriggerLocalDataMigration(
+  uploader().TriggerLocalDataMigrationForItems(
       {first_profile.guid(), second_profile.guid()});
 
   // Third profile remains as a local profile.
@@ -242,7 +245,7 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest,
                   AutofillProfile::RecordType::kAccount),
               IsEmpty());
 
-  uploader().TriggerLocalDataMigration(
+  uploader().TriggerLocalDataMigrationForItems(
       {complete_profile.guid(), incomplete_profile.guid()});
 
   // Only `complete_profile` migrated, `incomplete_profile` remains.
@@ -256,6 +259,9 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest,
 
 TEST_F(ContactInfoLocalDataBatchUploaderTest,
        MigrateWithProfilesIdsWithIneligibleCountryProfile) {
+  base::test::ScopedFeatureList feature;
+  feature.InitAndDisableFeature(
+      features::kAutofillEnableAccountStorageForIneligibleCountries);
   // These profiles are local profiles by default.
   AutofillProfile eligible_profile = test::GetFullProfile();
   AddressCountryCode ineligible_country_code("IR");
@@ -275,7 +281,7 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest,
                   AutofillProfile::RecordType::kAccount),
               IsEmpty());
 
-  uploader().TriggerLocalDataMigration(
+  uploader().TriggerLocalDataMigrationForItems(
       {eligible_profile.guid(), ineligible_profile.guid()});
 
   // Only `eligible_profile` migrated, `ineligible_profile` remains.
@@ -304,7 +310,7 @@ TEST_F(ContactInfoLocalDataBatchUploaderTest,
               IsEmpty());
 
   // Request migration for `first_profile` and some fake_id.
-  uploader().TriggerLocalDataMigration(
+  uploader().TriggerLocalDataMigrationForItems(
       {first_profile.guid(), std::string("fake_id")});
 
   // Only `first_profile` migrated.

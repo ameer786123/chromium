@@ -147,6 +147,8 @@ class MODULES_EXPORT SharedStorageWorkletGlobalScope final
     return permissions_policy_state_;
   }
 
+  bool add_module_finished() const { return add_module_finished_; }
+
  private:
   void OnModuleScriptDownloaded(
       const KURL& script_source_url,
@@ -168,25 +170,27 @@ class MODULES_EXPORT SharedStorageWorkletGlobalScope final
       SharedStorageOperationDefinition*& operation_definition);
 
   network::mojom::RequestDestination GetDestination() const override {
-    // Not called as the current implementation uses the custom module script
-    // loader.
-    NOTREACHED_IN_MIGRATION();
-
     // Once we migrate to the blink-worklet's script loading infra, this needs
     // to return a valid destination defined in the Fetch standard:
     // https://fetch.spec.whatwg.org/#concept-request-destination
-    return network::mojom::RequestDestination::kEmpty;
+    //
+    // Not called as the current implementation uses the custom module script
+    // loader.
+    NOTREACHED();
   }
 
   // Sets continuation-preserved embedder data to allow us to identify this
   // particular operation invocation later, even after asynchronous operations.
-  // Returns a closure that should be run when the operation finishes.
-  base::OnceClosure StartOperation(
+  // Returns a callback that should be run when the operation finishes.
+  base::OnceCallback<void(PrivateAggregation::TerminationStatus)>
+  StartOperation(
       mojom::blink::PrivateAggregationOperationDetailsPtr pa_operation_details);
 
   // Notifies the `private_aggregation_` that the operation with the given ID
-  // has finished.
-  void FinishOperation(int64_t operation_id);
+  // has finished and whether it finished due to an uncaught exception.
+  void FinishOperation(
+      int64_t operation_id,
+      PrivateAggregation::TerminationStatus termination_status);
 
   PrivateAggregation* GetOrCreatePrivateAggregation();
 

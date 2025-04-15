@@ -99,7 +99,9 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
       }
 
       pending_task_count_++;
-      uint64_t remove_mask = BrowsingDataRemover::DATA_TYPE_COOKIES;
+      uint64_t remove_mask =
+          BrowsingDataRemover::DATA_TYPE_COOKIES |
+          BrowsingDataRemover::DATA_TYPE_DEVICE_BOUND_SESSIONS;
       if (avoid_closing_connections_) {
         remove_mask |= BrowsingDataRemover::DATA_TYPE_AVOID_CLOSING_CONNECTIONS;
       }
@@ -130,8 +132,13 @@ class SiteDataClearer : public BrowsingDataRemover::Observer {
     if (clear_site_data_types_.Has(ClearSiteDataType::kStorage)) {
       remove_mask |= BrowsingDataRemover::DATA_TYPE_DOM_STORAGE;
       remove_mask |= BrowsingDataRemover::DATA_TYPE_PRIVACY_SANDBOX;
+      remove_mask |= BrowsingDataRemover::DATA_TYPE_DEVICE_BOUND_SESSIONS;
       // Internal data should not be removed by site-initiated deletions.
       remove_mask &= ~BrowsingDataRemover::DATA_TYPE_PRIVACY_SANDBOX_INTERNAL;
+      // Some deletions should also be more narrow for Clear-Site-Data, to avoid
+      // sites from hostilely interfering with each other where a user-initiated
+      // deletion would be conservative.
+      remove_mask &= ~BrowsingDataRemover::DATA_TYPE_INTEREST_GROUPS_USER_CLEAR;
     }
 
     if (clear_site_data_types_.Has(ClearSiteDataType::kCache)) {

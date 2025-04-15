@@ -15,7 +15,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.view.View;
 
 import androidx.test.core.app.ApplicationProvider;
@@ -29,17 +28,16 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ActivityTabProvider.ActivityTabTabObserver;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.tab.RequestDesktopUtilsUnitTest.ShadowSysUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.user_education.IphCommand;
@@ -49,7 +47,6 @@ import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
 import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
-import org.chromium.components.embedder_support.util.ShadowUrlUtilities;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
@@ -70,12 +67,10 @@ import java.util.List;
 
 /** Unit tests for {@link DesktopSiteSettingsIphController}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(
-        manifest = Config.NONE,
-        shadows = {ShadowUrlUtilities.class, ShadowSysUtils.class})
+@Config(manifest = Config.NONE)
 public class DesktopSiteSettingsIphControllerUnitTest {
-    @Rule public JniMocker mJniMocker = new JniMocker();
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private WebsitePreferenceBridge.Natives mWebsitePreferenceBridgeJniMock;
     @Mock private WebsitePreferenceBridge mWebsitePreferenceBridge;
     @Mock private WindowAndroid mWindowAndroid;
@@ -83,7 +78,6 @@ public class DesktopSiteSettingsIphControllerUnitTest {
     @Mock private View mToolbarMenuButton;
     @Mock private AppMenuHandler mAppMenuHandler;
     @Mock private UserEducationHelper mUserEducationHelper;
-    @Mock private Context mContext;
     @Mock private WeakReference<Context> mWeakReferenceContext;
     @Mock private Tab mTab;
     @Mock private WebContents mWebContents;
@@ -96,24 +90,22 @@ public class DesktopSiteSettingsIphControllerUnitTest {
 
     private DesktopSiteSettingsIphController mController;
     private GURL mTabUrl;
+    private Context mContext;
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(WebsitePreferenceBridgeJni.TEST_HOOKS, mWebsitePreferenceBridgeJniMock);
+        WebsitePreferenceBridgeJni.setInstanceForTesting(mWebsitePreferenceBridgeJniMock);
 
-        Resources resources = ApplicationProvider.getApplicationContext().getResources();
-
+        mContext = ApplicationProvider.getApplicationContext();
         doReturn(mWeakReferenceContext).when(mWindowAndroid).getContext();
         doReturn(mContext).when(mWeakReferenceContext).get();
-        doReturn(resources).when(mContext).getResources();
         doReturn(mContext).when(mToolbarMenuButton).getContext();
 
         TrackerFactory.setTrackerForTests(mTracker);
-        when(mTracker.wouldTriggerHelpUI(
+        when(mTracker.wouldTriggerHelpUi(
                         FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE))
                 .thenReturn(true);
-        when(mTracker.wouldTriggerHelpUI(
+        when(mTracker.wouldTriggerHelpUi(
                         FeatureConstants.REQUEST_DESKTOP_SITE_WINDOW_SETTING_FEATURE))
                 .thenReturn(true);
 
@@ -169,7 +161,7 @@ public class DesktopSiteSettingsIphControllerUnitTest {
     @Test
     @Config(qualifiers = "sw600dp")
     public void testPerSiteIphPreChecksFailed_TrackerWouldNotTrigger() {
-        when(mTracker.wouldTriggerHelpUI(
+        when(mTracker.wouldTriggerHelpUi(
                         FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE))
                 .thenReturn(false);
         boolean failed =
@@ -178,10 +170,10 @@ public class DesktopSiteSettingsIphControllerUnitTest {
                         mTracker,
                         FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE);
         verify(mTracker)
-                .wouldTriggerHelpUI(
+                .wouldTriggerHelpUi(
                         FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE);
         Assert.assertTrue(
-                "Generic site IPH should not trigger when Tracker#wouldTriggerHelpUI returns"
+                "Generic site IPH should not trigger when Tracker#wouldTriggerHelpUi returns"
                         + " false.",
                 failed);
     }
@@ -271,11 +263,11 @@ public class DesktopSiteSettingsIphControllerUnitTest {
                 message.getValue().get(MessageBannerProperties.MESSAGE_IDENTIFIER));
         Assert.assertEquals(
                 "Message title should match.",
-                mContext.getResources().getString(R.string.rds_window_setting_message_title),
+                mContext.getString(R.string.rds_window_setting_message_title),
                 message.getValue().get(MessageBannerProperties.TITLE));
         Assert.assertEquals(
                 "Message primary button text should match.",
-                mContext.getResources().getString(R.string.rds_window_setting_message_button),
+                mContext.getString(R.string.rds_window_setting_message_button),
                 message.getValue().get(MessageBannerProperties.PRIMARY_BUTTON_TEXT));
         Assert.assertEquals(
                 "Message icon resource ID should match.",
@@ -286,7 +278,7 @@ public class DesktopSiteSettingsIphControllerUnitTest {
     @Test
     public void testShowWindowSettingIph_TrackerWouldNotTrigger() {
         simulateActiveWindowSetting();
-        when(mTracker.wouldTriggerHelpUI(
+        when(mTracker.wouldTriggerHelpUi(
                         FeatureConstants.REQUEST_DESKTOP_SITE_WINDOW_SETTING_FEATURE))
                 .thenReturn(false);
         mController.showWindowSettingIph(mTab, mProfile);
@@ -344,8 +336,8 @@ public class DesktopSiteSettingsIphControllerUnitTest {
         IphCommand command = mIphCommandCaptor.getValue();
         Assert.assertEquals(
                 "IphCommand feature should match.",
-                command.featureName,
-                FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE);
+                FeatureConstants.REQUEST_DESKTOP_SITE_EXCEPTIONS_GENERIC_FEATURE,
+                command.featureName);
         Assert.assertEquals(
                 "IphCommand stringId should match.",
                 switchToDesktop

@@ -128,8 +128,9 @@ testing::AssertionResult ReportRequestsEqual(
 
   testing::AssertionResult payload_contents_equal = PayloadContentsEqual(
       expected.payload_contents(), actual.payload_contents());
-  if (!payload_contents_equal)
+  if (!payload_contents_equal) {
     return payload_contents_equal;
+  }
 
   if (expected.reporting_path() != actual.reporting_path()) {
     return testing::AssertionFailure()
@@ -281,7 +282,7 @@ AggregatableReportRequest CreateExampleRequestWithReportTime(
                      /*filtering_id=*/std::nullopt)},
                  aggregation_mode, std::move(aggregation_coordinator_origin),
                  /*max_contributions_allowed=*/20u,
-                 /*filtering_id_max_bytes=*/std::nullopt),
+                 /*filtering_id_max_bytes=*/1u),
              AggregatableReportSharedInfo(
                  /*scheduled_report_time=*/report_time,
                  /*report_id=*/
@@ -384,7 +385,7 @@ std::vector<uint8_t> DecryptPayloadWithHpke(
       base::StrCat({AggregatableReport::kDomainSeparationPrefix,
                     expected_serialized_shared_info});
   base::span<const uint8_t> authenticated_info =
-      base::as_bytes(base::make_span(authenticated_info_str));
+      base::as_byte_span(authenticated_info_str);
 
   // No null terminators should have been copied when concatenating the strings.
   CHECK(!base::Contains(authenticated_info_str, '\0'));
@@ -400,8 +401,7 @@ std::vector<uint8_t> DecryptPayloadWithHpke(
     return {};
   }
 
-  base::span<const uint8_t> ciphertext =
-      payload.subspan(X25519_PUBLIC_VALUE_LEN);
+  auto ciphertext = payload.subspan<X25519_PUBLIC_VALUE_LEN>();
   std::vector<uint8_t> plaintext(ciphertext.size());
   size_t plaintext_len;
 
@@ -461,8 +461,9 @@ void MockAggregationService::NotifyReportHandled(
     std::optional<AggregatableReport> report,
     base::Time report_handled_time,
     AggregationServiceObserver::ReportStatus status) {
-  for (auto& observer : observers_)
+  for (auto& observer : observers_) {
     observer.OnReportHandled(request, id, report, report_handled_time, status);
+  }
 }
 
 AggregatableReportRequestsAndIdsBuilder::

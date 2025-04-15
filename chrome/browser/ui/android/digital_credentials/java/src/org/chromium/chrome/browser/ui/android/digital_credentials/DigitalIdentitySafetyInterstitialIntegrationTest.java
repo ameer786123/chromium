@@ -81,10 +81,6 @@ public class DigitalIdentitySafetyInterstitialIntegrationTest {
             return mWasDialogShown;
         }
 
-        public PropertyModel getDialogPropertyModel() {
-            return mDialogPropertyModel;
-        }
-
         @Override
         public void onDialogAdded(PropertyModel model) {
             mWasAnyDialogShown = true;
@@ -105,12 +101,13 @@ public class DigitalIdentitySafetyInterstitialIntegrationTest {
     private static class ReturnTokenIdentityCredentialsDelegate
             extends IdentityCredentialsDelegate {
         @Override
-        public Promise<byte[]> get(Activity activity, String origin, String request) {
-            return Promise.fulfilled("token".getBytes());
+        public Promise<DigitalCredential> get(Activity activity, String origin, String request) {
+            return Promise.fulfilled(
+                    new DigitalCredential("protocol", "{\"token\" : \"test_token\"}".getBytes()));
         }
     }
 
-    private static final String TEST_PAGE = "/chrome/test/data/android/fedcm_mdocs.html";
+    private static final String TEST_PAGE = "/chrome/test/data/android/dc_mdocs.html";
 
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
@@ -202,7 +199,7 @@ public class DigitalIdentitySafetyInterstitialIntegrationTest {
 
         DOMUtils.clickNode(mActivityTestRule.getWebContents(), nodeIdToClick);
 
-        waitTillLogTextAreaHasTextContent("\"token\"");
+        waitTillLogTextAreaHasTextContent("\"test_token\"");
 
         if (expectedInterstitialParagraph1ResourceId >= 0) {
             assertTrue(mModalDialogObserver.wasDialogShown());

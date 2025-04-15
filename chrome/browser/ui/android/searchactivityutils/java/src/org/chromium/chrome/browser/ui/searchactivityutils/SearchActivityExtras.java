@@ -26,9 +26,9 @@ public @interface SearchActivityExtras {
     /** The incognito status (boolean) associated with the origin activity. */
     String EXTRA_IS_INCOGNITO = "org.chromium.chrome.browser.ui.searchactivityutils.is_incognito";
 
-    /** Whether intent is requesting LoadUrlParams (true) or direct navigation (false). */
-    String EXTRA_IS_SERVICE_REQUEST =
-            "org.chromium.chrome.browser.ui.searchactivityutils.is_service_request";
+    /** Carries {@link ResolutionType} describing how the intent should be resolved. */
+    String EXTRA_RESOLUTION_TYPE =
+            "org.chromium.chrome.browser.ui.searchactivityutils.resolution_type";
 
     // Only alphanumeric characters, dots and dashes.
     // Must be at least 2 characters long, and begin and end with an alphanumeric character.
@@ -43,6 +43,7 @@ public @interface SearchActivityExtras {
         IntentOrigin.CUSTOM_TAB,
         IntentOrigin.HUB,
         IntentOrigin.LAUNCHER,
+        IntentOrigin.WEB_SEARCH,
         IntentOrigin.COUNT
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -65,8 +66,11 @@ public @interface SearchActivityExtras {
         /** User redirected from Launcher MAIN intent (Jump-Start Omnibox). */
         int LAUNCHER = 5;
 
+        /** Intent.ACTION_WEB_SEARCH. */
+        int WEB_SEARCH = 6;
+
         /** Total count of items, used for histogram recording. */
-        int COUNT = 6;
+        int COUNT = 7;
     }
 
     // LINT.ThenChange(//tools/metrics/histograms/metadata/android/enums.xml:IntentOrigin)
@@ -86,5 +90,23 @@ public @interface SearchActivityExtras {
 
         /** Total count of items, used for histogram recording. */
         int COUNT = 3;
+    }
+
+    /** Defines resolution types for the search intent. */
+    @IntDef({
+        ResolutionType.OPEN_IN_CHROME,
+        ResolutionType.OPEN_OR_LAUNCH_CHROME,
+        ResolutionType.SEND_TO_CALLER
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @interface ResolutionType {
+        /** Successful selection is opened in Chrome; canceled selection exits. */
+        int OPEN_IN_CHROME = 0;
+
+        /** Successful selection is opened in Chrome; canceled selection launches Chrome. */
+        int OPEN_OR_LAUNCH_CHROME = 1;
+
+        /** Successful selection is sent back to calling Activity; canceled selection exits. */
+        int SEND_TO_CALLER = 2;
     }
 }

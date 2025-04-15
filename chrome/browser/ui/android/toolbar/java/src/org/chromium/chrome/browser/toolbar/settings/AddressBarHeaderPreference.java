@@ -8,7 +8,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener;
 import android.util.AttributeSet;
-import android.view.View;
 import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
@@ -18,32 +17,25 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceViewHolder;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
-import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.toolbar.R;
 
 /** The header shows on the top of {@link AddressBarPreference}. */
 public class AddressBarHeaderPreference extends Preference
         implements OnSharedPreferenceChangeListener {
-    private @NonNull SharedPreferencesManager mSharedPreferencesManager;
-    private @NonNull ImageView mToolbarOnTopImage;
-    private @NonNull ImageView mToolbarOnBottomImage;
+    private @NonNull ImageView mToolbarPositionImage;
 
     public AddressBarHeaderPreference(Context context, AttributeSet attrs) {
         super(context, attrs);
         // Inflating from XML.
         setLayoutResource(R.layout.address_bar_header_preference);
-        mSharedPreferencesManager = ChromeSharedPreferences.getInstance();
     }
 
     @Override
     public void onBindViewHolder(PreferenceViewHolder holder) {
         super.onBindViewHolder(holder);
 
-        mToolbarOnTopImage = (ImageView) holder.findViewById(R.id.toolbar_on_top);
-        mToolbarOnBottomImage = (ImageView) holder.findViewById(R.id.toolbar_on_bottom);
-
+        mToolbarPositionImage = (ImageView) holder.findViewById(R.id.toolbar_position_graphic);
         updateImageVisibility();
     }
 
@@ -70,21 +62,19 @@ public class AddressBarHeaderPreference extends Preference
     }
 
     private void updateImageVisibility() {
-        boolean showOnTop =
-                mSharedPreferencesManager.readBoolean(
-                        ChromePreferenceKeys.TOOLBAR_TOP_ANCHORED, true);
+        boolean showOnTop = AddressBarPreference.isToolbarConfiguredToShowOnTop();
 
-        mToolbarOnTopImage.setVisibility(showOnTop ? View.VISIBLE : View.GONE);
-        mToolbarOnBottomImage.setVisibility(showOnTop ? View.GONE : View.VISIBLE);
+        mToolbarPositionImage.setSelected(showOnTop);
+        int stringRes =
+                showOnTop
+                        ? R.string.address_bar_settings_currently_on_top
+                        : R.string.address_bar_settings_currently_on_bottom;
+        mToolbarPositionImage.setContentDescription(getContext().getString(stringRes));
     }
 
+    @NonNull
     @VisibleForTesting
-    ImageView getToolbarOnTopImage() {
-        return mToolbarOnTopImage;
-    }
-
-    @VisibleForTesting
-    ImageView getToolbarOnBottomImage() {
-        return mToolbarOnBottomImage;
+    ImageView getToolbarPositionImage() {
+        return mToolbarPositionImage;
     }
 }

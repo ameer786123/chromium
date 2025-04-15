@@ -4,8 +4,11 @@
 #include "content/public/test/keep_alive_url_loader_utils.h"
 
 #include <memory>
+#include <set>
+#include <vector>
 
 #include "base/memory/scoped_refptr.h"
+#include "base/no_destructor.h"
 #include "base/run_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
@@ -20,6 +23,30 @@
 namespace content {
 
 namespace {
+
+using testing::IsNull;
+using testing::NotNull;
+using testing::Pointee;
+
+// NOTE: The following are sorted in the topological order of the corresponding
+// request stage types.
+const std::set<std::string>& GetTimeDeltaMetricNames() {
+  static base::NoDestructor<std::set<std::string>> names({
+      "TimeDelta.RequestStarted",
+      "TimeDelta.FirstRedirectReceived",
+      "TimeDelta.SecondRedirectReceived",
+      "TimeDelta.ThirdOrLaterRedirectReceived",
+      "TimeDelta.ResponseReceived",
+      "TimeDelta.RequestFailed",
+      "TimeDelta.RequestCancelledAfterTimeLimit",
+      "TimeDelta.RequestCancelledByRenderer",
+      "TimeDelta.LoaderDisconnectedFromRenderer",
+      "TimeDelta.BrowserShutdown",
+      "TimeDelta.LoaderCompleted",
+      "TimeDelta.EventLogged",
+  });
+  return *names;
+}
 
 // Counts the total triggering of `Increment()` asynchronously.
 //
@@ -135,14 +162,6 @@ class TestObserverImpl : public KeepAliveURLLoader::TestObserver {
     EXPECT_THAT(on_complete_processed_status_,
                 testing::Pointwise(ErrorCodeEq(), error_codes));
   }
-  // Waits for `PauseReadingBodyFromNetProcessed()` to be called `total` times.
-  void WaitForTotalPauseReadingBodyFromNetProcessed(size_t total) {
-    pause_reading_body_from_net_processed_count_.WaitUntil(total);
-  }
-  // Waits for `ResumeReadingBodyFromNetProcessed()` to be called `total` times.
-  void WaitForTotalResumeReadingBodyFromNetProcessed(size_t total) {
-    resume_reading_body_from_net_processed_count_.WaitUntil(total);
-  }
 
  private:
   ~TestObserverImpl() override = default;
@@ -182,13 +201,6 @@ class TestObserverImpl : public KeepAliveURLLoader::TestObserver {
     on_complete_processed_status_.push_back(completion_status);
   }
 
-  void PauseReadingBodyFromNetProcessed(KeepAliveURLLoader* loader) override {
-    pause_reading_body_from_net_processed_count_.Increment();
-  }
-  void ResumeReadingBodyFromNetProcessed(KeepAliveURLLoader* loader) override {
-    resume_reading_body_from_net_processed_count_.Increment();
-  }
-
   // OnReceiveRedirect*:
   AtomicCounter on_receive_redirect_forwarded_count_;
   AtomicCounter on_receive_redirect_processed_count_;
@@ -200,9 +212,6 @@ class TestObserverImpl : public KeepAliveURLLoader::TestObserver {
   AtomicCounter on_complete_count_;
   AtomicCounter on_complete_forwarded_count_;
   AtomicCounter on_complete_processed_count_;
-
-  AtomicCounter pause_reading_body_from_net_processed_count_;
-  AtomicCounter resume_reading_body_from_net_processed_count_;
 
   std::vector<network::URLLoaderCompletionStatus> on_complete_status_;
   std::vector<network::URLLoaderCompletionStatus> on_complete_forwarded_status_;
@@ -275,14 +284,117 @@ void KeepAliveURLLoadersTestObserver::WaitForTotalOnCompleteProcessed(
   impl_->get()->WaitForTotalOnCompleteProcessed(error_codes);
 }
 
-void KeepAliveURLLoadersTestObserver::
-    WaitForTotalPauseReadingBodyFromNetProcessed(size_t total) {
-  impl_->get()->WaitForTotalPauseReadingBodyFromNetProcessed(total);
+const ukm::mojom::UkmEntry* KeepAliveRequestUkmMatcher::GetUkmEntry() {
+  auto entries = ukm_recorder().GetEntriesByName(UkmEvent::kEntryName);
+  CHECK_EQ(entries.size(), 1u)
+      << "The number of recorded UKM event "
+         "\"FetchKeepAliveRequest.WithCategory\" must be 1.";
+  return entries[0];
 }
 
-void KeepAliveURLLoadersTestObserver::
-    WaitForTotalResumeReadingBodyFromNetProcessed(size_t total) {
-  impl_->get()->WaitForTotalResumeReadingBodyFromNetProcessed(total);
+void KeepAliveRequestUkmMatcher::ExpectNoUkm() {
+  auto entries = ukm_recorder().GetEntriesByName(UkmEvent::kEntryName);
+  EXPECT_THAT(entries, testing::IsEmpty())
+      << "Unexpected UKM event \"FetchKeepAliveRequest.WithCategory\" was "
+         "recorded";
+}
+
+void KeepAliveRequestUkmMatcher::ExpectCommonUkm(
+    KeepAliveRequestTracker::RequestType request_type,
+    size_t category_id,
+    size_t num_redirects,
+    bool is_context_detached,
+    KeepAliveRequestTracker::RequestStageType end_stage,
+    std::optional<KeepAliveRequestTracker::RequestStageType> previous_stage,
+    const std::optional<base::UnguessableToken>& keepalive_token,
+    std::optional<int64_t> error_code,
+    std::optional<int64_t> extended_error_code) {
+  const ukm::mojom::UkmEntry* entry = GetUkmEntry();
+
+  EXPECT_TRUE(ukm_recorder().EntryHasMetric(entry, "Id.Low"));
+  EXPECT_TRUE(ukm_recorder().EntryHasMetric(entry, "Id.High"));
+  if (keepalive_token.has_value()) {
+    ukm_recorder().ExpectEntryMetric(entry, "Id.Low",
+                                     keepalive_token->GetLowForSerialization());
+    ukm_recorder().ExpectEntryMetric(
+        entry, "Id.High", keepalive_token->GetHighForSerialization());
+  }
+
+  ukm_recorder().ExpectEntryMetric(entry, "RequestType",
+                                   static_cast<int64_t>(request_type));
+  ukm_recorder().ExpectEntryMetric(entry, "Category", category_id);
+  ukm_recorder().ExpectEntryMetric(entry, "NumRedirects",
+                                   static_cast<int64_t>(num_redirects));
+  ukm_recorder().ExpectEntryMetric(entry, "IsContextDetached",
+                                   static_cast<int64_t>(is_context_detached));
+  ukm_recorder().ExpectEntryMetric(entry, "EndStage",
+                                   static_cast<int64_t>(end_stage));
+
+  if (previous_stage.has_value()) {
+    ukm_recorder().ExpectEntryMetric(entry, "PreviousStage",
+                                     static_cast<int64_t>(*previous_stage));
+  } else {
+    EXPECT_FALSE(ukm_recorder().EntryHasMetric(entry, "PreviousStage"));
+  }
+
+  if (error_code.has_value()) {
+    ukm_recorder().ExpectEntryMetric(entry, "CompletionStatus.ErrorCode",
+                                     static_cast<int64_t>(*error_code));
+  } else {
+    EXPECT_FALSE(
+        ukm_recorder().EntryHasMetric(entry, "CompletionStatus.ErrorCode"));
+  }
+
+  if (extended_error_code.has_value()) {
+    ukm_recorder().ExpectEntryMetric(
+        entry, "CompletionStatus.ExtendedErrorCode",
+        static_cast<int64_t>(*extended_error_code));
+  } else {
+    EXPECT_FALSE(ukm_recorder().EntryHasMetric(
+        entry, "CompletionStatus.ExtendedErrorCode"));
+  }
+}
+
+void KeepAliveRequestUkmMatcher::ExpectTimeSortedTimeDeltaUkm(
+    const std::vector<std::string>& time_sorted_metric_names) {
+  const ukm::mojom::UkmEntry* entry = GetUkmEntry();
+  const auto& all_time_delta_metric_names = GetTimeDeltaMetricNames();
+
+  for (const auto& time_sorted_metric_name : time_sorted_metric_names) {
+    CHECK(all_time_delta_metric_names.find(time_sorted_metric_name) !=
+          all_time_delta_metric_names.end())
+        << "TimeDelta UKM metric [" << time_sorted_metric_name
+        << "] is not defined.";
+  }
+
+  std::set<std::string> time_sorted_metric_names_set(
+      time_sorted_metric_names.begin(), time_sorted_metric_names.end());
+  for (const auto& metric_name : GetTimeDeltaMetricNames()) {
+    if (time_sorted_metric_names_set.find(metric_name) !=
+        time_sorted_metric_names_set.end()) {
+      EXPECT_TRUE(ukm_recorder().EntryHasMetric(entry, metric_name))
+          << "TimeDelta UKM metric [" << metric_name << "] must exist.";
+    } else {
+      EXPECT_FALSE(ukm_recorder().EntryHasMetric(entry, metric_name))
+          << "TimeDelta UKM metric [" << metric_name
+          << "] must not be recorded, but got unexpected value.";
+    }
+  }
+
+  if (time_sorted_metric_names.size() <= 1) {
+    return;
+  }
+  int64_t previous_metric =
+      *ukm_recorder().GetEntryMetric(entry, time_sorted_metric_names[0]);
+  for (size_t i = 1; i < time_sorted_metric_names.size(); i++) {
+    auto current_metric =
+        *ukm_recorder().GetEntryMetric(entry, time_sorted_metric_names[i]);
+    EXPECT_GE(current_metric, previous_metric)
+        << "TimeDelta UKM metric [" << time_sorted_metric_names[i]
+        << "] is unexpectedly smaller than the TimeDelta UKM metric ["
+        << time_sorted_metric_names[i - 1] << "] from its previous stage.";
+    previous_metric = current_metric;
+  }
 }
 
 }  // namespace content

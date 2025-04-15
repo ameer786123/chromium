@@ -86,38 +86,60 @@ export class PostSelectionRendererElement extends PolymerElement {
 
   static get properties() {
     return {
-      top: Number,
-      left: Number,
-      height: Number,
-      width: Number,
-      currentDragTarget: Number,
-      cornerIds: Array,
+      top: {
+        type: Number,
+        value: 0,
+      },
+      left: {
+        type: Number,
+        value: 0,
+      },
+      height: {
+        type: Number,
+        value: 0,
+      },
+      width: {
+        type: Number,
+        value: 0,
+      },
+      currentDragTarget: {
+        type: Number,
+        value: DragTarget.NONE,
+      },
+      cornerIds: {
+        type: Array,
+        value: () => ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'],
+      },
       canvasHeight: Number,
       canvasWidth: Number,
       canvasPhysicalHeight: Number,
       canvasPhysicalWidth: Number,
       selectionOverlayRect: Object,
+      shouldDarkenScrim: {
+        type: Boolean,
+        reflectToAttribute: true,
+        value: false,
+      },
     };
   }
 
   private eventTracker_: EventTracker = new EventTracker();
   // The bounds of the current selection
-  private top: number = 0;
-  private left: number = 0;
-  private height: number = 0;
-  private width: number = 0;
+  declare private top: number;
+  declare private left: number;
+  declare private height: number;
+  declare private width: number;
   // What is currently being dragged by the user.
-  private currentDragTarget: DragTarget = DragTarget.NONE;
+  declare private currentDragTarget: DragTarget;
   // IDs used to generate the corner hitbox divs.
-  private cornerIds: string[] =
-      ['topLeft', 'topRight', 'bottomRight', 'bottomLeft'];
-  private canvasHeight: number;
-  private canvasWidth: number;
-  private canvasPhysicalHeight: number;
-  private canvasPhysicalWidth: number;
+  declare private cornerIds: string[];
+  declare private canvasHeight: number;
+  declare private canvasWidth: number;
+  declare private canvasPhysicalHeight: number;
+  declare private canvasPhysicalWidth: number;
   // The bounds of the parent element. This is updated by the parent to avoid
   // this class needing to call getBoundingClientRect().
-  private selectionOverlayRect: DOMRect;
+  declare private selectionOverlayRect: DOMRect;
 
   private context: CanvasRenderingContext2D;
   // Listener IDs for events tracked from the browser.
@@ -131,6 +153,8 @@ export class PostSelectionRendererElement extends PolymerElement {
   });
   private newBoxAnimation: Animation|null = null;
   private animateOnResize = false;
+  // Whether to darken the post selection scrim.
+  declare private shouldDarkenScrim;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -153,13 +177,18 @@ export class PostSelectionRendererElement extends PolymerElement {
         }));
       }
     });
+    this.eventTracker_.add(document, 'text-found-in-region', () => {
+      if (this.hasSelection()) {
+        this.shouldDarkenScrim = true;
+      }
+    });
     this.resizeObserver.observe(this);
     // Set up listener to listen to events from C++.
     this.listenerIds = [
       this.browserProxy.callbackRouter.clearAllSelections.addListener(
           this.clearSelection.bind(this)),
       this.browserProxy.callbackRouter.clearRegionSelection.addListener(
-          this.clearSelection.bind(this)),
+          this.clearRegionSelection.bind(this)),
       this.browserProxy.callbackRouter.setPostRegionSelection.addListener(
           this.setSelection.bind(this)),
     ];
@@ -182,10 +211,17 @@ export class PostSelectionRendererElement extends PolymerElement {
     this.canvasPhysicalHeight = height * window.devicePixelRatio;
   }
 
+  clearRegionSelection() {
+    unfocusShimmer(this, ShimmerControlRequester.CURSOR);
+    unfocusShimmer(this, ShimmerControlRequester.MANUAL_REGION);
+    this.clearSelection();
+  }
+
   clearSelection() {
     unfocusShimmer(this, ShimmerControlRequester.POST_SELECTION);
     this.height = 0;
     this.width = 0;
+    this.shouldDarkenScrim = false;
     this.dispatchEvent(new CustomEvent(
         'hide-selected-region-context-menu', {bubbles: true, composed: true}));
     this.notifyPostSelectionUpdated();
@@ -203,6 +239,7 @@ export class PostSelectionRendererElement extends PolymerElement {
         width: this.width,
         height: this.height,
       };
+      this.shouldDarkenScrim = false;
       return true;
     }
     return false;
@@ -503,6 +540,7 @@ export class PostSelectionRendererElement extends PolymerElement {
         left: this.left,
         width: this.width,
         height: this.height,
+        centerRotatedBox: this.getNormalizedCenterRotatedBox(),
       },
     }));
   }

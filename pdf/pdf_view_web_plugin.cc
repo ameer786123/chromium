@@ -4,11 +4,6 @@
 
 #include "pdf/pdf_view_web_plugin.h"
 
-#if defined(UNSAFE_BUFFERS_BUILD)
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -21,8 +16,10 @@
 
 #include "base/auto_reset.h"
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/containers/queue.h"
+#include "base/containers/span.h"
 #include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -125,7 +122,11 @@
 #include "v8/include/v8.h"
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
+#include "base/memory/raw_ref.h"
+#include "pdf/pdf_ink_ids.h"
+#include "pdf/pdf_ink_metrics_handler.h"
 #include "pdf/pdf_ink_module.h"
+#include "pdf/pdf_ink_module_client.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #endif
 
@@ -142,6 +143,12 @@ constexpr base::TimeDelta kAccessibilityPageDelay = base::Milliseconds(100);
 
 constexpr base::TimeDelta kFindResultCooldown = base::Milliseconds(100);
 
+// This constant should have the same value as the one in
+// `pdf_view_web_plugin_unittest.cc`.
+// LINT.IfChange(searchify_state_propagation_delay)
+constexpr base::TimeDelta kSearchifyStatePropagationDelay = base::Seconds(1);
+// LINT.ThenChange(//pdf/pdf_view_web_plugin_unittest.cc:searchify_state_propagation_delay)
+
 constexpr std::string_view kChromeExtensionHost =
     "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/";
 
@@ -157,6 +164,9 @@ constexpr int kCompletePDFIndex = -1;
 
 // A different negative value to differentiate itself from `kCompletePDFIndex`.
 constexpr int kInvalidPDFIndex = -2;
+
+// Get save data from plugin in maximum 16 MB blocks.
+constexpr uint32_t kMaxSaveBufferSize = 16 * 1000 * 1000;
 
 // Enumeration of pinch states.
 // This should match PinchPhase enum in
@@ -260,31 +270,168 @@ bool IsSaveDataSizeValid(size_t size) {
   return size > 0 && size <= PdfViewWebPlugin::kMaximumSavedFileSize;
 }
 
-#if BUILDFLAG(ENABLE_PDF_INK2)
-std::unique_ptr<PdfInkModule> MaybeCreatePdfInkModule(
-    PdfInkModuleClient& client) {
-  if (!base::FeatureList::IsEnabled(features::kPdfInk2)) {
-    return nullptr;
-  }
-  return std::make_unique<PdfInkModule>(client);
+base::Value::Dict CreateSaveDataBlockMessage(
+    const std::string& token,
+    PdfViewWebPlugin::SaveDataBlock data) {
+  base::Value::Dict message;
+  message.Set("type", "saveDataBlock");
+  message.Set("token", token);
+  message.Set("dataToSave", std::move(data.block));
+  message.Set("totalFileSize", base::checked_cast<int>(data.total_file_size));
+  return message;
 }
-#endif
 
 }  // namespace
+
+#if BUILDFLAG(ENABLE_PDF_INK2)
+class PdfViewWebPlugin::PdfInkModuleClientImpl : public PdfInkModuleClient {
+ public:
+  explicit PdfInkModuleClientImpl(PdfViewWebPlugin& plugin) : plugin_(plugin) {}
+  ~PdfInkModuleClientImpl() override = default;
+
+  // PdfInkModuleClient:
+  void DiscardStroke(int page_index, InkStrokeId id) override {
+    plugin_->engine_->DiscardStroke(page_index, id);
+  }
+
+  PageOrientation GetOrientation() const override {
+    return plugin_->engine_->GetCurrentOrientation();
+  }
+
+  gfx::Rect GetPageContentsRect(int page_index) override {
+    if (page_index < 0 || page_index >= plugin_->engine_->GetNumberOfPages()) {
+      return gfx::Rect();
+    }
+    return plugin_->engine_->GetPageContentsRect(page_index);
+  }
+
+  gfx::SizeF GetPageSizeInPoints(int page_index) override {
+    if (page_index < 0 || page_index >= plugin_->engine_->GetNumberOfPages()) {
+      return gfx::SizeF();
+    }
+    return plugin_->engine_->GetPageSizeInPoints(page_index).value();
+  }
+
+  gfx::Size GetThumbnailSize(int page_index) override {
+    return plugin_->engine_->GetThumbnailSize(page_index,
+                                              plugin_->device_scale_);
+  }
+
+  gfx::Vector2dF GetViewportOriginOffset() override {
+    return plugin_->available_area_.OffsetFromOrigin();
+  }
+
+  float GetZoom() const override {
+    return plugin_->zoom_ * plugin_->client_->DeviceScaleFactor();
+  }
+
+  void Invalidate(const gfx::Rect& rect) override {
+    return plugin_->Invalidate(rect);
+  }
+
+  bool IsPageVisible(int page_index) override {
+    return plugin_->engine_->IsPageVisible(page_index);
+  }
+
+  DocumentV2InkPathShapesMap LoadV2InkPathsFromPdf() override {
+    DocumentV2InkPathShapesMap shapes_map;
+
+    for (int i = 0; i < plugin_->engine_->GetNumberOfPages(); ++i) {
+      PageV2InkPathShapesMap page_shapes_map =
+          plugin_->engine_->LoadV2InkPathsForPage(i);
+      if (page_shapes_map.empty()) {
+        continue;
+      }
+
+      shapes_map[i] = std::move(page_shapes_map);
+    }
+
+    return shapes_map;
+  }
+
+  void OnAnnotationModeToggled(bool enable) override {
+    plugin_->engine_->SetFormHighlight(/*enable_form=*/!enable);
+    if (enable) {
+      plugin_->engine_->ClearTextSelection();
+    }
+  }
+
+  void PostMessage(base::Value::Dict message) override {
+    plugin_->client_->PostMessage(std::move(message));
+  }
+
+  void RequestThumbnail(int page_index,
+                        SendThumbnailCallback callback) override {
+    plugin_->engine_->RequestThumbnail(page_index, plugin_->device_scale_,
+                                       std::move(callback));
+  }
+
+  void StrokeAdded(int page_index,
+                   InkStrokeId id,
+                   const ink::Stroke& stroke) override {
+    plugin_->engine_->ApplyStroke(page_index, id, stroke);
+
+    // `snapshot_` is now stale, since its content doesn't contain this newly
+    // added stroke.
+    plugin_->snapshot_needs_update_for_ink_input_ = true;
+  }
+
+  void StrokeFinished() override {
+    base::Value::Dict message;
+    message.Set("type", "finishInkStroke");
+    plugin_->client_->PostMessage(std::move(message));
+    plugin_->SetPluginCanSave(true);
+  }
+
+  void UpdateInkCursor(const ui::Cursor& cursor) override {
+    plugin_->cursor_ = cursor;
+  }
+
+  void UpdateShapeActive(int page_index,
+                         InkModeledShapeId id,
+                         bool active) override {
+    plugin_->engine_->UpdateShapeActive(page_index, id, active);
+  }
+
+  void UpdateStrokeActive(int page_index,
+                          InkStrokeId id,
+                          bool active) override {
+    plugin_->engine_->UpdateStrokeActive(page_index, id, active);
+  }
+
+  int VisiblePageIndexFromPoint(const gfx::PointF& point) override {
+    for (int i = 0; i < plugin_->engine_->GetNumberOfPages(); ++i) {
+      if (!IsPageVisible(i)) {
+        continue;
+      }
+
+      // Explicitly construct a gfx::RectF from gfx::Rect, so the Contains()
+      // call below works with `point`, which has float values.
+      gfx::RectF rect(plugin_->engine_->GetPageContentsRect(i));
+      if (!rect.Contains(point)) {
+        continue;
+      }
+      return i;
+    }
+    return -1;
+  }
+
+ private:
+  const raw_ref<PdfViewWebPlugin> plugin_;
+};
+#endif  // BUILDFLAG(ENABLE_PDF_INK2)
+
+PdfViewWebPlugin::SaveDataBlock::SaveDataBlock() = default;
+PdfViewWebPlugin::SaveDataBlock::SaveDataBlock(
+    PdfViewWebPlugin::SaveDataBlock&& other) noexcept = default;
+PdfViewWebPlugin::SaveDataBlock& PdfViewWebPlugin::SaveDataBlock::operator=(
+    PdfViewWebPlugin::SaveDataBlock&&) noexcept = default;
+PdfViewWebPlugin::SaveDataBlock::~SaveDataBlock() = default;
 
 std::unique_ptr<PDFiumEngine> PdfViewWebPlugin::Client::CreateEngine(
     PDFiumEngineClient* client,
     PDFiumFormFiller::ScriptOption script_option) {
   return std::make_unique<PDFiumEngine>(client, script_option);
-}
-
-std::unique_ptr<PdfAccessibilityDataHandler>
-PdfViewWebPlugin::Client::CreateAccessibilityDataHandler(
-    PdfAccessibilityActionHandler* action_handler,
-    PdfAccessibilityImageFetcher* image_fetcher,
-    blink::WebPluginContainer* plugin_container,
-    bool print_preview) {
-  return nullptr;
 }
 
 PdfViewWebPlugin::PdfViewWebPlugin(
@@ -294,9 +441,11 @@ PdfViewWebPlugin::PdfViewWebPlugin(
     : client_(std::move(client)),
       pdf_host_(std::move(pdf_host)),
 #if BUILDFLAG(ENABLE_PDF_INK2)
-      ink_module_(MaybeCreatePdfInkModule(*this)),
+      ink_module_client_(MaybeCreatePdfInkModuleClient(*this)),
+      ink_module_(MaybeCreatePdfInkModule(ink_module_client_.get())),
 #endif
-      initial_params_(std::move(params)) {
+      initial_params_(std::move(params)),
+      max_save_buffer_size_(kMaxSaveBufferSize) {
   DCHECK(pdf_host_);
   pdf_host_->SetListener(listener_receiver_.BindNewPipeAndPassRemote());
 }
@@ -366,6 +515,7 @@ bool PdfViewWebPlugin::InitializeCommon() {
 
   pdf_accessibility_data_handler_ = client_->CreateAccessibilityDataHandler(
       this, this, client_->PluginContainer(), IsPrintPreview());
+  CHECK(pdf_accessibility_data_handler_);
 
   // Skip the remaining initialization when in Print Preview mode. Loading will
   // continue after the plugin receives a "resetPrintPreviewMode" message.
@@ -398,13 +548,13 @@ void PdfViewWebPlugin::SendSetSmoothScrolling() {
 }
 
 void PdfViewWebPlugin::DidOpen(std::unique_ptr<UrlLoader> loader,
-                               int32_t result) {
-  if (result == kSuccess) {
+                               Result result) {
+  if (result == Result::kSuccess) {
     if (!engine_->HandleDocumentLoad(std::move(loader), url_)) {
       document_load_state_ = DocumentLoadState::kLoading;
       DocumentLoadFailed();
     }
-  } else if (result != kErrorAborted) {
+  } else if (result != Result::kErrorAborted) {
     DocumentLoadFailed();
   }
 }
@@ -481,7 +631,11 @@ void PdfViewWebPlugin::Paint(cc::PaintCanvas* canvas, const gfx::Rect& rect) {
   canvas->drawImage(snapshot_, 0, 0);
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
-  if (ink_module_) {
+  if (!ink_module_) {
+    return;
+  }
+
+  if (ink_module_->HasInputsToDraw()) {
     SkBitmap sk_bitmap;
     sk_bitmap.allocPixels(
         SkImageInfo::MakeN32Premul(rect.width(), rect.height()));
@@ -491,13 +645,23 @@ void PdfViewWebPlugin::Paint(cc::PaintCanvas* canvas, const gfx::Rect& rect) {
 
     sk_sp<SkImage> snapshot = sk_bitmap.asImage();
     CHECK(snapshot);
-    cc::PaintImage cc_snapshot =
+    snapshot_ink_inputs_ =
         cc::PaintImageBuilder::WithDefault()
             .set_image(std::move(snapshot), cc::PaintImage::GetNextContentId())
             .set_id(cc::PaintImage::GetNextId())
             .set_no_cache(true)
             .TakePaintImage();
-    canvas->drawImage(cc_snapshot, 0, 0);
+    canvas->drawImage(snapshot_ink_inputs_.value(), 0, 0);
+  } else if (snapshot_ink_inputs_.has_value()) {
+    if (snapshot_needs_update_for_ink_input_) {
+      // Still waiting on `snapshot_` to get refreshed to reflect the change
+      // for an added stroke, so reapply the last Ink inputs snapshot to avoid
+      // a flash of a recently added stroke temporarily disappearing.
+      canvas->drawImage(snapshot_ink_inputs_.value(), 0, 0);
+    } else {
+      // Now safe to discard the previous Ink inputs snapshot.
+      snapshot_ink_inputs_.reset();
+    }
   }
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
 }
@@ -1087,9 +1251,9 @@ void PdfViewWebPlugin::SubmitForm(const std::string& url,
                                              weak_factory_.GetWeakPtr()));
 }
 
-void PdfViewWebPlugin::DidFormOpen(int32_t result) {
+void PdfViewWebPlugin::DidFormOpen(Result result) {
   // TODO(crbug.com/41317525): Process response.
-  LOG_IF(ERROR, result != kSuccess) << "DidFormOpen failed: " << result;
+  LOG_IF(ERROR, result != Result::kSuccess) << "DidFormOpen failed: " << result;
   form_loader_.reset();
 }
 
@@ -1194,6 +1358,7 @@ void PdfViewWebPlugin::DocumentLoadComplete() {
     return;
 
   DidStopLoading();
+  pdf_host_->OnDocumentLoadComplete();
   pdf_host_->UpdateContentRestrictions(GetContentRestrictions());
 }
 
@@ -1215,14 +1380,9 @@ void PdfViewWebPlugin::DocumentHasUnsupportedFeature(
     const std::string& feature) {
   DCHECK(!feature.empty());
   std::string metric = base::StrCat({"PDF_Unsupported_", feature});
-  if (unsupported_features_reported_.insert(metric).second)
+  if (unsupported_features_reported_.insert(metric).second) {
     client_->RecordComputedAction(metric);
-
-  if (!full_frame_ || notified_browser_about_unsupported_feature_)
-    return;
-
-  notified_browser_about_unsupported_feature_ = true;
-  pdf_host_->HasUnsupportedFeature();
+  }
 }
 
 void PdfViewWebPlugin::DocumentLoadProgress(uint32_t available,
@@ -1303,7 +1463,7 @@ void PdfViewWebPlugin::SelectionChanged(const gfx::Rect& left,
 
 void PdfViewWebPlugin::EnteredEditMode() {
   edit_mode_ = true;
-  pdf_host_->SetPluginCanSave(true);
+  SetPluginCanSave(true);
 
   base::Value::Dict message;
   message.Set("type", "setIsEditing");
@@ -1338,6 +1498,67 @@ bool PdfViewWebPlugin::IsInAnnotationMode() const {
 }
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
 
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+void PdfViewWebPlugin::OnSearchifyStateChange(bool busy) {
+  if (!busy) {
+    if (show_searchify_in_progress_) {
+      show_searchify_in_progress_ = false;
+      // The UI is asked to hide the progress indicator with 1s delay, so that
+      // when the OCR process finishes in less than 1s, the indicator would not
+      // flicker.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&PdfViewWebPlugin::SetShowSearchifyInProgress,
+                         weak_factory_.GetWeakPtr(), /*show=*/false),
+          kSearchifyStatePropagationDelay);
+    }
+    return;
+  }
+
+  if (!searchify_started_) {
+    searchify_started_ = true;
+    pdf_host_->OnSearchifyStarted();
+  }
+
+  if (!show_searchify_in_progress_) {
+    show_searchify_in_progress_ = true;
+    // Executing the script directly may cause a crash in blink as it might be
+    // during layout change, hence posting it (crbug.com/401142034).
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&PdfViewWebPlugin::SetShowSearchifyInProgress,
+                                  weak_factory_.GetWeakPtr(), /*show=*/true));
+    return;
+  }
+}
+
+void PdfViewWebPlugin::SetShowSearchifyInProgress(bool show) {
+  // Searchify tasks are expected to be quite fast most of the times, and if so,
+  // progress indicator should be kept visible for at least 1s to avoiding
+  // flickering.
+  // A false `show` and a true `show_searchify_in_progress_` means that during
+  // the 1s after OCR stopped, it started again and hence the UI should keep the
+  // progress bar visible.
+  if (!show && show_searchify_in_progress_) {
+    return;
+  }
+
+  base::Value::Dict message;
+  message.Set("type", "showSearchifyInProgress");
+  message.Set("show", show);
+  client_->PostMessage(std::move(message));
+}
+
+void PdfViewWebPlugin::OnHasSearchifyText() {
+  base::Value::Dict message;
+  message.Set("type", "setHasSearchifyText");
+  client_->PostMessage(std::move(message));
+  pdf_accessibility_data_handler_->OnHasSearchifyText();
+  if (chrome_pdf::features::IsPdfSearchifySaveEnabled()) {
+    SetPluginCanSave(true);
+  }
+}
+#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+
 void PdfViewWebPlugin::SetCaretPosition(const gfx::PointF& position) {
   engine_->SetCaretPosition(FrameToPdfCoordinates(position));
 }
@@ -1354,12 +1575,34 @@ void PdfViewWebPlugin::SetSelectionBounds(const gfx::PointF& base,
 
 void PdfViewWebPlugin::GetPdfBytes(uint32_t size_limit,
                                    GetPdfBytesCallback callback) {
+  uint32_t page_count = engine_->GetNumberOfPages();
   if (engine_->GetLoadedByteSize() > size_limit) {
-    std::move(callback).Run(GetPdfBytesStatus::kSizeLimitExceeded, {});
+    std::move(callback).Run(GetPdfBytesStatus::kSizeLimitExceeded, {},
+                            page_count);
     return;
   }
 
-  std::move(callback).Run(GetPdfBytesStatus::kSuccess, engine_->GetSaveData());
+  std::move(callback).Run(GetPdfBytesStatus::kSuccess, engine_->GetSaveData(),
+                          page_count);
+}
+
+void PdfViewWebPlugin::GetMostVisiblePageIndex(
+    GetMostVisiblePageIndexCallback callback) {
+  auto page_index = engine_->GetMostVisiblePage();
+  if (page_index < 0) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+  std::move(callback).Run(page_index);
+}
+
+void PdfViewWebPlugin::GetPageText(int32_t page_index,
+                                   GetPageTextCallback callback) {
+  if (page_index < 0 || page_index >= engine_->GetNumberOfPages()) {
+    std::move(callback).Run(std::u16string());
+    return;
+  }
+  std::move(callback).Run(engine_->GetPageText(page_index));
 }
 
 bool PdfViewWebPlugin::IsValid() const {
@@ -1408,10 +1651,18 @@ void PdfViewWebPlugin::OnMessage(const base::Value::Dict& message) {
            &PdfViewWebPlugin::HandleGetPageBoundingBoxMessage},
           {"getPasswordComplete",
            &PdfViewWebPlugin::HandleGetPasswordCompleteMessage},
+          {"getSaveDataBlock",
+           &PdfViewWebPlugin::HandleGetSaveDataBlockMessage},
           {"getSelectedText", &PdfViewWebPlugin::HandleGetSelectedTextMessage},
+          {"getSuggestedFileName",
+           &PdfViewWebPlugin::HandleGetSuggestedFileName},
           {"getThumbnail", &PdfViewWebPlugin::HandleGetThumbnailMessage},
+          {"highlightTextFragments",
+           &PdfViewWebPlugin::HandleHighlightTextFragmentsMessage},
           {"print", &PdfViewWebPlugin::HandlePrintMessage},
           {"loadPreviewPage", &PdfViewWebPlugin::HandleLoadPreviewPageMessage},
+          {"releaseSaveInBlockBuffers",
+           &PdfViewWebPlugin::HandleReleaseSaveInBlockBuffers},
           {"resetPrintPreviewMode",
            &PdfViewWebPlugin::HandleResetPrintPreviewModeMessage},
           {"rotateClockwise", &PdfViewWebPlugin::HandleRotateClockwiseMessage},
@@ -1454,8 +1705,11 @@ void PdfViewWebPlugin::HandleGetNamedDestinationMessage(
     std::ostringstream view_stream;
     view_stream << named_destination->view;
     if (named_destination->xyz_params.empty()) {
-      for (unsigned long i = 0; i < named_destination->num_params; ++i)
-        view_stream << "," << named_destination->params[i];
+      UNSAFE_TODO({
+        for (unsigned long i = 0; i < named_destination->num_params; ++i) {
+          view_stream << "," << named_destination->params[i];
+        }
+      });
     } else {
       view_stream << "," << named_destination->xyz_params;
     }
@@ -1504,6 +1758,26 @@ void PdfViewWebPlugin::HandleGetSelectedTextMessage(
   client_->PostMessage(std::move(reply));
 }
 
+void PdfViewWebPlugin::HandleGetSaveDataBlockMessage(
+    const base::Value::Dict& message) {
+  const std::string& token = *message.FindString("token");
+  SaveRequestType request_type =
+      static_cast<SaveRequestType>(message.FindInt("saveRequestType").value());
+  uint32_t offset = static_cast<uint32_t>(message.FindInt("offset").value());
+  uint32_t block_size =
+      static_cast<uint32_t>(message.FindInt("blockSize").value());
+
+  client_->PostMessage(CreateSaveDataBlockMessage(
+      token, SaveBlockToBuffer(request_type, offset, block_size)));
+}
+
+void PdfViewWebPlugin::HandleGetSuggestedFileName(
+    const base::Value::Dict& message) {
+  base::Value::Dict reply = PrepareReplyMessage(message);
+  reply.Set("fileName", GetFileNameForSaveFromUrl(url_));
+  client_->PostMessage(std::move(reply));
+}
+
 void PdfViewWebPlugin::HandleGetThumbnailMessage(
     const base::Value::Dict& message) {
   const int page_index = message.FindInt("pageIndex").value();
@@ -1513,6 +1787,17 @@ void PdfViewWebPlugin::HandleGetThumbnailMessage(
       page_index, device_scale_,
       base::BindOnce(&PdfViewWebPlugin::SendThumbnail,
                      weak_factory_.GetWeakPtr(), std::move(reply), page_index));
+}
+
+void PdfViewWebPlugin::HandleHighlightTextFragmentsMessage(
+    const base::Value::Dict& message) {
+  const auto* text_fragment_value_list = message.FindList("textFragments");
+  std::vector<std::string> text_fragments;
+  text_fragments.reserve(text_fragment_value_list->size());
+  for (const base::Value& fragment : *text_fragment_value_list) {
+    text_fragments.push_back(fragment.GetString());
+  }
+  engine_->HighlightTextFragments(text_fragments);
 }
 
 void PdfViewWebPlugin::HandlePrintMessage(
@@ -1552,29 +1837,42 @@ void PdfViewWebPlugin::HandleSaveAttachmentMessage(
 
 void PdfViewWebPlugin::HandleSaveMessage(const base::Value::Dict& message) {
   const std::string& token = *message.FindString("token");
-  int request_type = message.FindInt("saveRequestType").value();
-  DCHECK_GE(request_type, static_cast<int>(SaveRequestType::kAnnotation));
-  DCHECK_LE(request_type, static_cast<int>(SaveRequestType::kEdited));
+  SaveRequestType request_type =
+      static_cast<SaveRequestType>(message.FindInt("saveRequestType").value());
 
-  switch (static_cast<SaveRequestType>(request_type)) {
+  switch (request_type) {
     case SaveRequestType::kAnnotation:
-#if BUILDFLAG(ENABLE_INK)
+#if BUILDFLAG(ENABLE_INK) || BUILDFLAG(ENABLE_PDF_INK2)
       // In annotation mode, assume the user will make edits and prefer saving
       // using the plugin data.
-      pdf_host_->SetPluginCanSave(true);
-      SaveToBuffer(token);
+      SetPluginCanSave(true);
+      SaveToBuffer(request_type, token);
       return;
 #else
       NOTREACHED();
-#endif  // BUILDFLAG(ENABLE_INK)
-    case SaveRequestType::kOriginal:
-      pdf_host_->SetPluginCanSave(false);
+#endif  // BUILDFLAG(ENABLE_INK) || BUILDFLAG(ENABLE_PDF_INK2)
+    case SaveRequestType::kOriginal: {
+      const bool can_save = plugin_can_save_ || edit_mode_;
+      SetPluginCanSave(false);
       SaveToFile(token);
-      pdf_host_->SetPluginCanSave(edit_mode_);
+      SetPluginCanSave(can_save);
       return;
+    }
     case SaveRequestType::kEdited:
-      SaveToBuffer(token);
+      SaveToBuffer(request_type, token);
       return;
+    case SaveRequestType::kSearchified:
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+      CHECK(chrome_pdf::features::IsPdfSearchifySaveEnabled());
+      // TODO(crbug.com/382610226): If engine has searchified text, ensure all
+      // pages are searchified and then save.
+      SaveToBuffer(request_type, token);
+      return;
+#else
+      // PDF Searchify is not expected to be triggered when ScreenAI service is
+      // not enabled.
+      NOTREACHED();
+#endif
   }
   NOTREACHED();
 }
@@ -1592,7 +1890,12 @@ void PdfViewWebPlugin::HandleSetBackgroundColorMessage(
 
 void PdfViewWebPlugin::HandleSetPresentationModeMessage(
     const base::Value::Dict& message) {
-  engine_->SetReadOnly(message.FindBool("enablePresentationMode").value());
+  const bool presentation_mode =
+      message.FindBool("enablePresentationMode").value();
+  engine_->SetReadOnly(presentation_mode);
+  if (presentation_mode) {
+    cursor_ = ui::mojom::CursorType::kPointer;
+  }
 }
 
 void PdfViewWebPlugin::HandleSetTwoUpViewMessage(
@@ -1736,7 +2039,12 @@ void PdfViewWebPlugin::HandleViewportMessage(const base::Value::Dict& message) {
   UpdateScroll(GetScrollPositionFromOffset(scroll_offset));
 }
 
-void PdfViewWebPlugin::SaveToBuffer(const std::string& token) {
+void PdfViewWebPlugin::SaveToBuffer(SaveRequestType request_type,
+                                    const std::string& token) {
+  CHECK(request_type == SaveRequestType::kAnnotation ||
+        request_type == SaveRequestType::kEdited ||
+        request_type == SaveRequestType::kSearchified);
+
   engine_->KillFormFocus();
 
   base::Value::Dict message;
@@ -1748,17 +2056,29 @@ void PdfViewWebPlugin::SaveToBuffer(const std::string& token) {
   message.Set("editModeForTesting", edit_mode_);
 
   base::Value data_to_save;
-  if (edit_mode_) {
+
+  bool use_save_data = edit_mode_;
+#if BUILDFLAG(ENABLE_PDF_INK2)
+  use_save_data |= !!ink_module_;
+#endif  // BUILDFLAG(ENABLE_PDF_INK2)
+
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  use_save_data |= (request_type == SaveRequestType::kSearchified);
+#endif
+
+  if (use_save_data) {
     base::Value::BlobStorage data = engine_->GetSaveData();
-    if (IsSaveDataSizeValid(data.size()))
+    if (IsSaveDataSizeValid(data.size())) {
       data_to_save = base::Value(std::move(data));
+    }
   } else {
 #if BUILDFLAG(ENABLE_INK)
     uint32_t length = engine_->GetLoadedByteSize();
     if (IsSaveDataSizeValid(length)) {
       base::Value::BlobStorage data(length);
-      if (engine_->ReadLoadedBytes(length, data.data()))
+      if (engine_->ReadLoadedBytes(0, data)) {
         data_to_save = base::Value(std::move(data));
+      }
     }
 #else
     NOTREACHED();
@@ -1767,6 +2087,73 @@ void PdfViewWebPlugin::SaveToBuffer(const std::string& token) {
 
   message.Set("dataToSave", std::move(data_to_save));
   client_->PostMessage(std::move(message));
+}
+
+uint32_t PdfViewWebPlugin::VerifyParamsAndGetSaveBlockSize(
+    uint32_t total_file_size,
+    uint32_t offset,
+    uint32_t block_size) {
+  if (block_size) {
+    // Block size should be less than max threshold.
+    CHECK_LE(block_size, max_save_buffer_size_);
+  } else {
+    // `block_size` is allowed to be 0 only when offset is 0 since the caller
+    // may not know the total file size at that point.
+    CHECK(!offset);
+  }
+  CHECK_LT(offset, total_file_size);
+  if (block_size) {
+    CHECK_LE(block_size, total_file_size - offset);
+  } else {
+    block_size = std::min(max_save_buffer_size_, total_file_size);
+  }
+  return block_size;
+}
+
+PdfViewWebPlugin::SaveDataBlock PdfViewWebPlugin::SaveBlockToBuffer(
+    SaveRequestType request_type,
+    uint32_t offset,
+    uint32_t block_size) {
+  engine_->KillFormFocus();
+
+  SaveDataBlock result;
+  if (request_type == SaveRequestType::kOriginal) {
+    // This function does not handle files larger than INT_MAX.
+    if (engine_->GetLoadedByteSize() <= static_cast<uint32_t>(INT_MAX)) {
+      result.total_file_size = engine_->GetLoadedByteSize();
+      block_size = VerifyParamsAndGetSaveBlockSize(result.total_file_size,
+                                                   offset, block_size);
+      result.block.resize(block_size);
+      if (!engine_->ReadLoadedBytes(offset, result.block)) {
+        result.block.resize(0);
+      }
+    }
+    return result;
+  }
+
+  if (offset == 0) {
+    save_data_buffer_ = engine_->GetSaveData();
+    // This function does not handle files larger than INT_MAX.
+    if (save_data_buffer_.size() > static_cast<uint32_t>(INT_MAX)) {
+      ReleaseSaveBuffer();
+    }
+  } else {
+    CHECK(save_data_buffer_.size());
+  }
+  if (save_data_buffer_.size()) {
+    result.total_file_size = static_cast<uint32_t>(save_data_buffer_.size());
+    block_size = VerifyParamsAndGetSaveBlockSize(result.total_file_size, offset,
+                                                 block_size);
+    result.block.resize(block_size);
+    base::span(result.block)
+        .copy_from(base::span(save_data_buffer_).subspan(offset, block_size));
+    // Drop the buffer if everything is returned.
+    if (offset + block_size == result.total_file_size) {
+      ReleaseSaveBuffer();
+    }
+  }
+
+  return result;
 }
 
 void PdfViewWebPlugin::SaveToFile(const std::string& token) {
@@ -1778,6 +2165,20 @@ void PdfViewWebPlugin::SaveToFile(const std::string& token) {
   client_->PostMessage(std::move(message));
 
   pdf_host_->SaveUrlAs(GURL(url_), network::mojom::ReferrerPolicy::kDefault);
+}
+
+void PdfViewWebPlugin::ReleaseSaveBuffer() {
+  std::vector<uint8_t> empty;
+  save_data_buffer_.swap(empty);
+}
+
+void PdfViewWebPlugin::SetPluginCanSave(bool can_save) {
+  if (plugin_can_save_ == can_save) {
+    return;
+  }
+
+  plugin_can_save_ = can_save;
+  pdf_host_->SetPluginCanSave(can_save);
 }
 
 void PdfViewWebPlugin::InvalidatePluginContainer() {
@@ -2005,6 +2406,13 @@ void PdfViewWebPlugin::UpdateSnapshot(sk_sp<SkImage> snapshot) {
           .set_no_cache(true)
           .TakePaintImage();
 
+#if BUILDFLAG(ENABLE_PDF_INK2)
+  // `paint_manager_` updates the snapshot after it has completed painting,
+  // which uses `engine_` in `DoPaint()`.  Any newly added Ink stroke will now
+  // be applied in the snapshot.
+  snapshot_needs_update_for_ink_input_ = false;
+#endif
+
   if (!plugin_rect_.IsEmpty())
     InvalidatePluginContainer();
 }
@@ -2040,76 +2448,6 @@ SkBitmap PdfViewWebPlugin::GetImageForOcr(int32_t page_index,
                                           int32_t page_object_index) {
   return engine_->GetImageForOcr(page_index, page_object_index);
 }
-
-#if BUILDFLAG(ENABLE_PDF_INK2)
-PageOrientation PdfViewWebPlugin::GetOrientation() const {
-  return engine_->GetCurrentOrientation();
-}
-
-gfx::Rect PdfViewWebPlugin::GetPageContentsRect(int index) {
-  if (index < 0 || index >= engine_->GetNumberOfPages()) {
-    return gfx::Rect();
-  }
-
-  return engine_->GetPageContentsRect(index);
-}
-
-gfx::Vector2dF PdfViewWebPlugin::GetViewportOriginOffset() {
-  return available_area_.OffsetFromOrigin();
-}
-
-float PdfViewWebPlugin::GetZoom() const {
-  return zoom_;
-}
-
-bool PdfViewWebPlugin::IsPageVisible(int page_index) {
-  return engine_->IsPageVisible(page_index);
-}
-
-void PdfViewWebPlugin::OnAnnotationModeToggled(bool enable) {
-  engine_->SetFormHighlight(/*enable_form=*/!enable);
-  if (enable) {
-    engine_->ClearTextSelection();
-  }
-}
-
-void PdfViewWebPlugin::PostMessage(base::Value::Dict message) {
-  client_->PostMessage(std::move(message));
-}
-
-void PdfViewWebPlugin::StrokeFinished() {
-  base::Value::Dict message;
-  message.Set("type", "finishInkStroke");
-  client_->PostMessage(std::move(message));
-}
-
-void PdfViewWebPlugin::UpdateInkCursorImage(SkBitmap bitmap) {
-  gfx::Point hotspot(bitmap.width() / 2, bitmap.height() / 2);
-  cursor_ = ui::Cursor::NewCustom(std::move(bitmap), std::move(hotspot));
-}
-
-void PdfViewWebPlugin::UpdateThumbnail(int page_index) {
-  GenerateAndSendInkThumbnail(
-      page_index, engine_->GetThumbnailSize(page_index, device_scale_));
-}
-
-int PdfViewWebPlugin::VisiblePageIndexFromPoint(const gfx::PointF& point) {
-  for (int i = 0; i < engine_->GetNumberOfPages(); ++i) {
-    if (!IsPageVisible(i)) {
-      continue;
-    }
-
-    // Explicitly construct a gfx::RectF from gfx::Rect, so the Contains() call
-    // below works with `point`, which has float values.
-    gfx::RectF rect(engine_->GetPageContentsRect(i));
-    if (!rect.Contains(point)) {
-      continue;
-    }
-    return i;
-  }
-  return -1;
-}
-#endif  // BUILDFLAG(ENABLE_PDF_INK2)
 
 void PdfViewWebPlugin::HandleAccessibilityAction(
     const AccessibilityActionData& action_data) {
@@ -2155,15 +2493,11 @@ void PdfViewWebPlugin::OnViewportChanged(
   const gfx::Size new_image_size =
       PaintManager::GetNewContextSize(old_image_size, plugin_rect_.size());
   if (new_image_size != old_image_size) {
-    SkAlphaType alpha_type;
-    if (base::FeatureList::IsEnabled(
-            features::kPdfPaintManagerDrawsBackground)) {
-      alpha_type = kUnpremul_SkAlphaType;
-    } else {
-      alpha_type = kPremul_SkAlphaType;
-    }
-    image_data_.allocPixels(SkImageInfo::MakeN32(
-        new_image_size.width(), new_image_size.height(), alpha_type));
+    // Ignore the result. If the allocation fails, the image data buffer will be
+    // empty and the code below will handle that.
+    (void)image_data_.tryAllocPixels(
+        SkImageInfo::MakeN32(new_image_size.width(), new_image_size.height(),
+                             kUnpremul_SkAlphaType));
     first_paint_ = true;
   }
 
@@ -2291,6 +2625,17 @@ void PdfViewWebPlugin::RecordDocumentMetrics() {
     return;
 
   metrics_handler_->RecordDocumentMetrics(engine_->GetDocumentMetadata());
+
+#if BUILDFLAG(ENABLE_PDF_INK2)
+  // `metrics_handler_` is only initialized when not in Print Preview, so the
+  // V2 ink annotations load metric will not count Print Preview loads.
+  if (ink_module_) {
+    // Use a timeout limit of 100ms, which will capture over 90 percent of PDFs
+    // without increasing the PDF load time a significant amount.
+    RecordPdfLoadedWithV2InkAnnotations(
+        engine_->ContainsV2InkPath(base::Milliseconds(100)));
+  }
+#endif  // BUILDFLAG(ENABLE_PDF_INK2)
 }
 
 void PdfViewWebPlugin::SendAttachments() {
@@ -2405,6 +2750,11 @@ void PdfViewWebPlugin::SendLoadingProgress(double percentage) {
   client_->PostMessage(std::move(message));
 }
 
+void PdfViewWebPlugin::HandleReleaseSaveInBlockBuffers(
+    const base::Value::Dict& /*message*/) {
+  ReleaseSaveBuffer();
+}
+
 void PdfViewWebPlugin::HandleResetPrintPreviewModeMessage(
     const base::Value::Dict& message) {
   const std::string& url = *message.FindString("url");
@@ -2488,8 +2838,8 @@ void PdfViewWebPlugin::LoadAvailablePreviewPage() {
 }
 
 void PdfViewWebPlugin::DidOpenPreview(std::unique_ptr<UrlLoader> loader,
-                                      int32_t result) {
-  DCHECK_EQ(result, kSuccess);
+                                      Result result) {
+  DCHECK_EQ(result, Result::kSuccess);
 
   // `preview_engine_` holds a `raw_ptr` to `preview_client_`.
   // We need to explicitly destroy it before clobbering
@@ -2569,37 +2919,29 @@ void PdfViewWebPlugin::SendThumbnail(base::Value::Dict reply,
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
   if (ink_module_) {
-    GenerateAndSendInkThumbnail(page_index, thumbnail.image_size());
+    ink_module_->GenerateAndSendInkThumbnail(page_index,
+                                             thumbnail.image_size());
   }
 #endif
 }
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
-void PdfViewWebPlugin::GenerateAndSendInkThumbnail(int page_index,
-                                                   const gfx::Size& size) {
-  CHECK(!size.IsEmpty());
-  CHECK(ink_module_);
-
-  auto info = SkImageInfo::Make(size.width(), size.height(),
-                                kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
-  const size_t alloc_size = info.computeMinByteSize();
-  CHECK(!SkImageInfo::ByteSizeOverflowed(alloc_size));
-  std::vector<uint8_t> image_data(alloc_size);
-
-  SkBitmap sk_bitmap;
-  sk_bitmap.installPixels(info, image_data.data(), info.minRowBytes());
-  SkCanvas canvas(sk_bitmap);
-  if (!ink_module_->DrawThumbnail(canvas, page_index)) {
-    return;
+// static
+std::unique_ptr<PdfInkModuleClient>
+PdfViewWebPlugin::MaybeCreatePdfInkModuleClient(PdfViewWebPlugin& plugin) {
+  if (!base::FeatureList::IsEnabled(features::kPdfInk2)) {
+    return nullptr;
   }
+  return std::make_unique<PdfInkModuleClientImpl>(plugin);
+}
 
-  base::Value::Dict message;
-  message.Set("type", "updateInk2Thumbnail");
-  message.Set("pageNumber", page_index + 1);
-  message.Set("imageData", std::move(image_data));
-  message.Set("width", size.width());
-  message.Set("height", size.height());
-  client_->PostMessage(std::move(message));
+// static
+std::unique_ptr<PdfInkModule> PdfViewWebPlugin::MaybeCreatePdfInkModule(
+    PdfInkModuleClient* client) {
+  if (!base::FeatureList::IsEnabled(features::kPdfInk2)) {
+    return nullptr;
+  }
+  return std::make_unique<PdfInkModule>(*client);
 }
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
 
@@ -2611,12 +2953,16 @@ gfx::Point PdfViewWebPlugin::FrameToPdfCoordinates(
          gfx::Vector2d(available_area_.x(), 0);
 }
 
-AccessibilityDocInfo PdfViewWebPlugin::GetAccessibilityDocInfo() const {
-  AccessibilityDocInfo doc_info;
-  doc_info.page_count = engine_->GetNumberOfPages();
-  doc_info.text_accessible =
+std::unique_ptr<AccessibilityDocInfo>
+PdfViewWebPlugin::GetAccessibilityDocInfo() const {
+  auto doc_info = std::make_unique<AccessibilityDocInfo>();
+  doc_info->page_count = engine_->GetNumberOfPages();
+  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfTags)) {
+    doc_info->is_tagged = engine_->IsPDFDocTagged();
+  }
+  doc_info->text_accessible =
       engine_->HasPermission(DocumentPermission::kCopyAccessible);
-  doc_info.text_copyable = engine_->HasPermission(DocumentPermission::kCopy);
+  doc_info->text_copyable = engine_->HasPermission(DocumentPermission::kCopy);
   return doc_info;
 }
 
@@ -2675,10 +3021,10 @@ void PdfViewWebPlugin::PrepareAndSetAccessibilityViewportInfo() {
       static_cast<int32_t>(engine_->GetCurrentOrientation());
   viewport_info.focus_info = {FocusObjectType::kNone, 0, 0};
 
-  engine_->GetSelection(&viewport_info.selection_start_page_index,
-                        &viewport_info.selection_start_char_index,
-                        &viewport_info.selection_end_page_index,
-                        &viewport_info.selection_end_char_index);
+  std::optional<Selection> selection = engine_->GetSelection();
+  if (selection.has_value()) {
+    viewport_info.selection = *selection;
+  }
 
   pdf_accessibility_data_handler_->SetAccessibilityViewportInfo(
       std::move(viewport_info));

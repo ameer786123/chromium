@@ -159,6 +159,13 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) LightweightQuarantineBranch {
   template <LockRequired lock_required>
   class PA_SCOPED_LOCKABLE CompileTimeConditionalScopedGuard;
   class PA_SCOPED_LOCKABLE RuntimeConditionalScopedGuard;
+  // `ToBeFreedArray` is used in `PurgeInternalInTwoPhases1of2` and
+  // `PurgeInternalInTwoPhases2of2`. See the function comment about the purpose.
+  // In order to avoid reentrancy issues, we must not deallocate any object in
+  // `Quarantine`. So, std::vector is not an option. std::array doesn't
+  // deallocate, plus, std::array has perf advantages.
+  static constexpr size_t kMaxFreeTimesPerPurge = 1024;
+  using ToBeFreedArray = std::array<uintptr_t, kMaxFreeTimesPerPurge>;
 
   LightweightQuarantineBranch(Root& root,
                               const LightweightQuarantineBranchConfig& config);
@@ -176,6 +183,19 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) LightweightQuarantineBranch {
   // constraint, call `Purge()` for each branch in sequence, synchronously.
   PA_ALWAYS_INLINE void PurgeInternal(size_t target_size_in_bytes)
       PA_EXCLUSIVE_LOCKS_REQUIRED(lock_);
+  // In order to reduce thread contention, dequarantines entries in two phases:
+  //   Phase 1) With the lock acquired, saves `slot_start`s of the quarantined
+  //     objects in an array, and shrinks `slots_`. Then, releases the lock so
+  //     that another thread can quarantine an object.
+  //   Phase 2) Without the lock acquired, deallocates objects saved in the
+  //     array in Phase 1. This may take some time, but doesn't block other
+  //     threads.
+  PA_ALWAYS_INLINE void PurgeInternalWithDefferedFree(
+      size_t target_size_in_bytes,
+      ToBeFreedArray& to_be_freed,
+      size_t& num_of_slots) PA_EXCLUSIVE_LOCKS_REQUIRED(lock_);
+  PA_ALWAYS_INLINE void BatchFree(const ToBeFreedArray& to_be_freed,
+                                  size_t num_of_slots);
 
   Root& root_;
 
@@ -196,6 +216,17 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) LightweightQuarantineBranch {
   size_t branch_size_in_bytes_ PA_GUARDED_BY(lock_) = 0;
   // Using `std::atomic` here so that other threads can update this value.
   std::atomic_size_t branch_capacity_in_bytes_;
+
+  // This working memory is temporarily needed only while dequarantining
+  // objects in slots_ when lock_required_ is true. However, allocating this
+  // working memory on stack may cause stack overflow [1]. Plus, it's non-
+  // negligible perf penalty to allocate and deallocate this working memory on
+  // heap only while dequarantining. So, we reserve one chunk of working memory
+  // on heap during the entire lifetime of this branch object and try to reuse
+  // this working memory among threads. Only when thread contention occurs, we
+  // allocate and deallocate another chunk of working memory.
+  // [1] https://issues.chromium.org/issues/387508217
+  std::atomic<ToBeFreedArray*> to_be_freed_working_memory_ = nullptr;
 
   friend class LightweightQuarantineRoot;
 };

@@ -4,6 +4,7 @@
 
 #include "components/dom_distiller/core/distiller.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <utility>
@@ -14,7 +15,7 @@
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "base/ranges/algorithm.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -47,9 +48,9 @@ std::unique_ptr<Distiller> DistillerFactoryImpl::CreateDistillerForUrl(
   return std::move(distiller);
 }
 
-DistillerImpl::DistilledPageData::DistilledPageData() {}
+DistillerImpl::DistilledPageData::DistilledPageData() = default;
 
-DistillerImpl::DistilledPageData::~DistilledPageData() {}
+DistillerImpl::DistilledPageData::~DistilledPageData() = default;
 
 DistillerImpl::DistillerImpl(
     const DistillerURLFetcherFactory& distiller_url_fetcher_factory,
@@ -240,6 +241,10 @@ void DistillerImpl::OnPageDistillationFinished(
                     distiller_result->content_images(img_num).url());
   }
 
+  base::UmaHistogramCounts100000(
+      "DomDistiller.WordCount",
+      distiller_result->statistics_info().word_count());
+
   AddPageIfDone(page_num);
   DistillNextPage();
 }
@@ -283,8 +288,8 @@ void DistillerImpl::OnFetchImageDone(int page_num,
   DCHECK(page_data->distilled_page_proto);
   DCHECK(url_fetcher);
   auto fetcher_it =
-      base::ranges::find(page_data->image_fetchers_, url_fetcher,
-                         &std::unique_ptr<DistillerURLFetcher>::get);
+      std::ranges::find(page_data->image_fetchers_, url_fetcher,
+                        &std::unique_ptr<DistillerURLFetcher>::get);
 
   DCHECK(fetcher_it != page_data->image_fetchers_.end());
   // Delete the |url_fetcher| by DeleteSoon since the OnFetchImageDone

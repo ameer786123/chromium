@@ -5,7 +5,10 @@
 #include "chromeos/ash/components/boca/on_task/on_task_session_manager.h"
 
 #include <memory>
+#include <optional>
 
+#include "ash/constants/ash_features.h"
+#include "ash/constants/notifier_catalogs.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -14,24 +17,35 @@
 #include "base/sequence_checker.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
 #include "chromeos/ash/components/boca/on_task/activity/active_tab_tracker.h"
+#include "chromeos/ash/components/boca/on_task/notification_constants.h"
 #include "chromeos/ash/components/boca/on_task/on_task_blocklist.h"
+#include "chromeos/ash/components/boca/on_task/on_task_notifications_manager.h"
 #include "chromeos/ash/components/boca/on_task/on_task_system_web_app_manager.h"
+#include "chromeos/strings/grit/chromeos_strings.h"
 #include "components/sessions/core/session_id.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 #include "url/gurl.h"
 
-namespace ash::boca {
+using message_center::NotifierId;
+using message_center::NotifierType;
 
+namespace ash::boca {
 namespace {
 
 // Delay in seconds before we attempt to add a tab.
-constexpr base::TimeDelta kAddTabRetryDelay = base::Seconds(3);
+constexpr base::TimeDelta kAddTabRetryDelay = base::Seconds(1);
 
 // Delay in seconds before we attempt to remove a tab.
-constexpr base::TimeDelta kRemoveTabRetryDelay = base::Seconds(3);
+constexpr base::TimeDelta kRemoveTabRetryDelay = base::Seconds(1);
 
 // Delay in seconds before we attempt to pin or unpin the active SWA window.
 constexpr base::TimeDelta kSetPinnedStateDelay = base::Seconds(3);
+
+// Delay in seconds before we attempt to pause or unpause the active SWA window.
+constexpr base::TimeDelta kSetPausedStateDelay = base::Seconds(3);
 
 }  // namespace
 
@@ -44,27 +58,32 @@ OnTaskSessionManager::OnTaskSessionManager(
           std::make_unique<OnTaskSessionManager::SystemWebAppLaunchHelper>(
               system_web_app_manager_.get(),
               std::vector<boca::BocaWindowObserver*>{&active_tab_tracker_,
-                                                     this})) {}
+                                                     this})),
+      notifications_manager_(OnTaskNotificationsManager::Create()) {
+  notification_countdown_duration_ =
+      features::IsBocaLockedModeCustomCountdownDurationEnabled()
+          ? ash::features::kBocaLockedModeCountdownDurationInSeconds.Get()
+          : kDefaultOnTaskNotificationCountdownDuration;
+}
 
 OnTaskSessionManager::~OnTaskSessionManager() = default;
 
 void OnTaskSessionManager::OnSessionStarted(
     const std::string& session_id,
     const ::boca::UserIdentity& producer) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  active_session_id_ = session_id;
   if (const SessionID window_id =
           system_web_app_manager_->GetActiveSystemWebAppWindowID();
       window_id.is_valid()) {
-    // Close all pre-existing SWA instances before we reopen a new one to set
-    // things up for OnTask. We should rarely get here because relevant
-    // notifiers ensure the SWA is closed at the onset of a session.
-    //
-    // TODO (b/354007279): Look out for and break from loop should window close
-    // fail more than once.
-    system_web_app_manager_->CloseSystemWebAppWindow(window_id);
-    OnSessionStarted(session_id, producer);
-    return;
+    // Prepare the pre-existing Boca SWA instance for OnTask.
+    system_web_app_manager_->PrepareSystemWebAppWindowForOnTask(
+        window_id, /*close_bundle_content=*/true);
+    system_web_app_manager_->SetWindowTrackerForSystemWebAppWindow(
+        window_id, {&active_tab_tracker_, this});
+  } else {
+    system_web_app_launch_helper_->LaunchBocaSWA();
   }
-  system_web_app_launch_helper_->LaunchBocaSWA();
 }
 
 void OnTaskSessionManager::OnSessionEnded(const std::string& session_id) {
@@ -72,13 +91,43 @@ void OnTaskSessionManager::OnSessionEnded(const std::string& session_id) {
   if (const SessionID window_id =
           system_web_app_manager_->GetActiveSystemWebAppWindowID();
       window_id.is_valid()) {
+    // Unlock SWA window before closing it to ensure we restore things like
+    // global accelerators, etc.
+    LockOrUnlockWindow(/*lock_window=*/false);
     system_web_app_manager_->CloseSystemWebAppWindow(window_id);
   }
+  active_session_id_ = std::nullopt;
   provider_url_tab_ids_map_.clear();
   provider_url_restriction_level_map_.clear();
+  should_lock_window_ = false;
 
   // Re-enable extensions on session end to prepare for subsequent sessions.
   extensions_manager_->ReEnableExtensions();
+
+  // Stop and clear locked mode countdown notification if the session ends.
+  notifications_manager_->StopProcessingNotification(
+      kOnTaskEnterLockedModeNotificationId);
+  notifications_manager_->ClearNotification(
+      kOnTaskEnterLockedModeNotificationId);
+
+  // Clear content added and removed notification if the session ends.
+  notifications_manager_->ClearNotification(
+      kOnTaskBundleContentAddedNotificationId);
+  notifications_manager_->ClearNotification(
+      kOnTaskBundleContentRemovedNotificationId);
+
+  // Surface notification to notify user about session end.
+  OnTaskNotificationsManager::NotificationCreateParams
+      notification_create_params(
+          kOnTaskSessionEndNotificationId,
+          /*title=*/l10n_util::GetStringUTF16(IDS_ON_TASK_NOTIFICATION_TITLE),
+          /*message_id=*/
+          IDS_ON_TASK_SESSION_END_NOTIFICATION_MESSAGE,
+          /*notifier_id=*/
+          NotifierId(NotifierType::SYSTEM_COMPONENT, kOnTaskNotifierId,
+                     ash::NotificationCatalogName::kOnTaskSessionEnd));
+  notifications_manager_->CreateNotification(
+      std::move(notification_create_params));
 }
 
 void OnTaskSessionManager::OnBundleUpdated(const ::boca::Bundle& bundle) {
@@ -96,6 +145,7 @@ void OnTaskSessionManager::OnBundleUpdated(const ::boca::Bundle& bundle) {
   }
 
   // Process bundle content.
+  bool has_new_content = false;
   base::flat_set<GURL> current_urls_set;
   active_tab_url_ = GURL();
   for (const ::boca::ContentConfig& content_config : bundle.content_configs()) {
@@ -132,13 +182,17 @@ void OnTaskSessionManager::OnBundleUpdated(const ::boca::Bundle& bundle) {
                          weak_ptr_factory_.GetWeakPtr(), url));
     }
 
+    has_new_content = true;
     system_web_app_launch_helper_->AddTab(
         url, restriction_level,
         base::BindOnce(&OnTaskSessionManager::OnBundleTabAdded,
                        weak_ptr_factory_.GetWeakPtr(), url, restriction_level));
   }
+
+  bool has_removed_content = false;
   for (auto const& [provider_sent_url, tab_ids] : provider_url_tab_ids_map_) {
     if (!current_urls_set.contains(provider_sent_url)) {
+      has_removed_content = true;
       system_web_app_launch_helper_->RemoveTab(
           tab_ids,
           base::BindOnce(&OnTaskSessionManager::OnBundleTabRemoved,
@@ -146,18 +200,38 @@ void OnTaskSessionManager::OnBundleUpdated(const ::boca::Bundle& bundle) {
     }
   }
 
-  // Disable extensions in the context of OnTask before the window is locked.
-  // Re-enable them otherwise.
-  bool should_lock_window = bundle.locked();
-  if (should_lock_window) {
-    extensions_manager_->DisableExtensions();
-  } else {
-    extensions_manager_->ReEnableExtensions();
+  LockOrUnlockWindow(bundle.locked());
+  PauseOrUnpauseApp(bundle.lock_to_app_home());
+
+  // Show relevant notifications if content was added or deleted.
+  if (has_new_content) {
+    OnTaskNotificationsManager::NotificationCreateParams
+        notification_create_params(
+            kOnTaskBundleContentAddedNotificationId,
+            /*title=*/l10n_util::GetStringUTF16(IDS_ON_TASK_NOTIFICATION_TITLE),
+            /*message_id=*/
+            IDS_ON_TASK_BUNDLE_CONTENT_ADDED_MESSAGE,
+            /*notifier_id=*/
+            NotifierId(
+                NotifierType::SYSTEM_COMPONENT, kOnTaskNotifierId,
+                ash::NotificationCatalogName::kOnTaskAddContentToBundle));
+    notifications_manager_->CreateNotification(
+        std::move(notification_create_params));
   }
-  system_web_app_launch_helper_->SetPinStateForActiveSWAWindow(
-      /*pinned=*/should_lock_window,
-      base::BindOnce(&OnTaskSessionManager::OnSetPinStateOnBocaSWAWindow,
-                     weak_ptr_factory_.GetWeakPtr()));
+  if (has_removed_content) {
+    OnTaskNotificationsManager::NotificationCreateParams
+        notification_create_params(
+            kOnTaskBundleContentRemovedNotificationId,
+            /*title=*/l10n_util::GetStringUTF16(IDS_ON_TASK_NOTIFICATION_TITLE),
+            /*message_id=*/
+            IDS_ON_TASK_BUNDLE_CONTENT_REMOVED_MESSAGE,
+            /*notifier_id=*/
+            NotifierId(
+                NotifierType::SYSTEM_COMPONENT, kOnTaskNotifierId,
+                ash::NotificationCatalogName::kOnTaskRemoveContentFromBundle));
+    notifications_manager_->CreateNotification(
+        std::move(notification_create_params));
+  }
 }
 
 void OnTaskSessionManager::OnAppReloaded() {
@@ -168,7 +242,26 @@ void OnTaskSessionManager::OnAppReloaded() {
     // No active window found, so we return. We should rarely get here.
     return;
   }
-  system_web_app_manager_->PrepareSystemWebAppWindowForOnTask(window_id);
+
+  // Prepare the SWA for OnTask without closing bundle content outside an active
+  // session. This is needed to prevent the window tracker from filtering out
+  // and closing the app instance.
+  system_web_app_manager_->PrepareSystemWebAppWindowForOnTask(
+      window_id, /*close_bundle_content=*/false);
+
+  // Only restore tabs, lock window or set up window tracker if there is an
+  // active session. This ensures we do not inadvertently block URLs or lock the
+  // user into a fullscreen window.
+  if (!active_session_id_.has_value()) {
+    system_web_app_launch_helper_->SetPinStateForActiveSWAWindow(
+        /*pinned=*/false, base::DoNothing());
+    return;
+  }
+
+  // Prepare the SWA for OnTask and close bundle content. This is to de-dupe
+  // content and ensure that they are set up for locked mode.
+  system_web_app_manager_->PrepareSystemWebAppWindowForOnTask(
+      window_id, /*close_bundle_content=*/true);
   system_web_app_manager_->SetWindowTrackerForSystemWebAppWindow(
       window_id, {&active_tab_tracker_, this});
 
@@ -189,6 +282,101 @@ void OnTaskSessionManager::OnAppReloaded() {
                        weak_ptr_factory_.GetWeakPtr(), provider_sent_url,
                        restriction_level));
   }
+
+  // Also lock window if necessary.
+  LockOrUnlockWindow(should_lock_window_);
+}
+
+void OnTaskSessionManager::LockOrUnlockWindow(bool lock_window) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  lock_in_progress_ = lock_window;
+  bool locked_mode_state_changed = (should_lock_window_ != lock_window);
+  should_lock_window_ = lock_window;
+  notifications_manager_->ConfigureForLockedMode(should_lock_window_);
+  if (should_lock_window_) {
+    system_web_app_manager_->SetAllChromeTabsMuted(/*muted=*/true);
+    extensions_manager_->DisableExtensions();
+    if (locked_mode_state_changed) {
+      // Show notification before locking the window.
+      int message_id =
+          (features::IsBocaLockedModeCustomCountdownDurationEnabled())
+              ? IDS_ON_TASK_ENTER_LOCKED_MODE_COUNTDOWN_NOTIFICATION_MESSAGE
+              : IDS_ON_TASK_ENTER_LOCKED_MODE_NOTIFICATION_MESSAGE;
+
+      OnTaskNotificationsManager::NotificationCreateParams
+          notification_create_params(
+              kOnTaskEnterLockedModeNotificationId,
+              /*title=*/
+              l10n_util::GetStringUTF16(IDS_ON_TASK_NOTIFICATION_TITLE),
+              /*message_id=*/message_id,
+              /*notifier_id=*/
+              NotifierId(NotifierType::SYSTEM_COMPONENT, kOnTaskNotifierId,
+                         ash::NotificationCatalogName::kOnTaskEnterLockedMode),
+              base::BindRepeating(&OnTaskSessionManager::EnterLockedMode,
+                                  weak_ptr_factory_.GetWeakPtr()),
+              notification_countdown_duration_,
+              /*is_counting_down=*/
+              features::IsBocaLockedModeCustomCountdownDurationEnabled());
+
+      notifications_manager_->CreateNotification(
+          std::move(notification_create_params));
+    } else {
+      EnterLockedMode();
+    }
+  } else {
+    // Re-enable extensions before attempting to unlock the window.
+    extensions_manager_->ReEnableExtensions();
+
+    // Stop and clear locked mode countdown notification if the session unlocks.
+    notifications_manager_->StopProcessingNotification(
+        kOnTaskEnterLockedModeNotificationId);
+    notifications_manager_->ClearNotification(
+        kOnTaskEnterLockedModeNotificationId);
+
+    system_web_app_launch_helper_->SetPinStateForActiveSWAWindow(
+        /*pinned=*/false,
+        base::BindRepeating(&OnTaskSessionManager::OnSetPinStateOnBocaSWAWindow,
+                            weak_ptr_factory_.GetWeakPtr()));
+  }
+}
+
+void OnTaskSessionManager::EnterLockedMode() {
+  // If the Boca SWA is closed during the countdown, we launch it again so we
+  // can pin the SWA window.
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (const SessionID window_id =
+          system_web_app_manager_->GetActiveSystemWebAppWindowID();
+      !window_id.is_valid()) {
+    system_web_app_launch_helper_->LaunchBocaSWA();
+  }
+  system_web_app_launch_helper_->SetPinStateForActiveSWAWindow(
+      /*pinned=*/true,
+      base::BindRepeating(&OnTaskSessionManager::OnSetPinStateOnBocaSWAWindow,
+                          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void OnTaskSessionManager::SetNotificationManagerForTesting(
+    std::unique_ptr<ash::boca::OnTaskNotificationsManager>
+        notifications_manager) {
+  notifications_manager_ = std::move(notifications_manager);
+}
+
+void OnTaskSessionManager::PauseOrUnpauseApp(bool pause_app) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (lock_in_progress_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&OnTaskSessionManager::PauseOrUnpauseApp,
+                       weak_ptr_factory_.GetWeakPtr(), pause_app),
+        kSetPausedStateDelay);
+    return;
+  }
+  if (const SessionID window_id =
+          system_web_app_manager_->GetActiveSystemWebAppWindowID();
+      window_id.is_valid()) {
+    system_web_app_manager_->SetPauseStateForSystemWebAppWindow(pause_app,
+                                                                window_id);
+  }
 }
 
 void OnTaskSessionManager::OnTabAdded(const SessionID active_tab_id,
@@ -196,11 +384,33 @@ void OnTaskSessionManager::OnTabAdded(const SessionID active_tab_id,
                                       const GURL url) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(tab_id.is_valid());
+  if (!active_session_id_.has_value()) {
+    // No active session. Close the tab after the tab creation has been
+    // processed.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::WeakPtr<OnTaskSessionManager> instance,
+               const SessionID window_id, const SessionID tab_id) {
+              if (!instance) {
+                return;
+              }
+              // Do not use `system_web_app_launch_helper_` here to ensure we
+              // are working with the right window. This will result in a no-op
+              // should the window be closed.
+              instance->system_web_app_manager_->RemoveTabsWithTabIds(window_id,
+                                                                      {tab_id});
+            },
+            weak_ptr_factory_.GetWeakPtr(),
+            system_web_app_manager_->GetActiveSystemWebAppWindowID(), tab_id));
+    return;
+  }
   if (active_tab_id == tab_id) {
     return;
   }
   if (!active_tab_id.is_valid()) {
     provider_url_tab_ids_map_[url].insert(tab_id);
+    return;
   }
   for (auto& [provider_sent_url, tab_ids] : provider_url_tab_ids_map_) {
     // Guarantee that tabs sent by provider are not regarded as child tabs.
@@ -235,6 +445,10 @@ OnTaskSessionManager::SystemWebAppLaunchHelper::~SystemWebAppLaunchHelper() =
 
 void OnTaskSessionManager::SystemWebAppLaunchHelper::LaunchBocaSWA() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (launch_in_progress_) {
+    // Another Boca SWA launch is in progress. Return.
+    return;
+  }
   launch_in_progress_ = true;
   system_web_app_manager_->LaunchSystemWebAppAsync(
       base::BindOnce(&SystemWebAppLaunchHelper::OnBocaSWALaunched,
@@ -287,7 +501,8 @@ void OnTaskSessionManager::SystemWebAppLaunchHelper::RemoveTab(
 }
 
 void OnTaskSessionManager::SystemWebAppLaunchHelper::
-    SetPinStateForActiveSWAWindow(bool pinned, base::OnceClosure callback) {
+    SetPinStateForActiveSWAWindow(bool pinned,
+                                  base::RepeatingClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (launch_in_progress_) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -362,6 +577,8 @@ void OnTaskSessionManager::OnBundleTabRemoved(GURL url) {
 }
 
 void OnTaskSessionManager::OnSetPinStateOnBocaSWAWindow() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  lock_in_progress_ = false;
   // TODO (b/370871395): Move `SetWindowTrackerForSystemWebAppWindow` to
   // `OnTaskSystemWebAppManager` eliminating the need for this callback.
   if (const SessionID window_id =

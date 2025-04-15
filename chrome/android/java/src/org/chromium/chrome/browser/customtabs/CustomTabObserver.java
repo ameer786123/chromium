@@ -13,10 +13,10 @@ import android.text.format.DateUtils;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
-import androidx.browser.customtabs.CustomTabsSessionToken;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.base.ColdStartTracker;
+import org.chromium.chrome.browser.browserservices.intents.SessionHolder;
 import org.chromium.chrome.browser.customtabs.ClientManager.CalledWarmup;
 import org.chromium.chrome.browser.customtabs.features.TabInteractionRecorder;
 import org.chromium.chrome.browser.intents.BrowserIntentUtils;
@@ -38,7 +38,7 @@ import java.lang.annotation.RetentionPolicy;
 /** A {@link TabObserver} that also handles custom tabs specific logging and messaging. */
 public class CustomTabObserver extends EmptyTabObserver {
     private final CustomTabsConnection mCustomTabsConnection;
-    private final CustomTabsSessionToken mSession;
+    private final SessionHolder<?> mSession;
     private final boolean mOpenedByChrome;
     private final NavigationInfoCaptureTrigger mNavigationInfoCaptureTrigger =
             new NavigationInfoCaptureTrigger(this::captureNavigationInfo);
@@ -65,8 +65,6 @@ public class CustomTabObserver extends EmptyTabObserver {
 
     // Lets Long press on links select the link text instead of triggering context menu.
     private boolean mLongPressLinkSelectText;
-
-    private boolean mIsHidden;
 
     @IntDef({State.RESET, State.WAITING_LOAD_START, State.WAITING_LOAD_FINISH})
     @Retention(RetentionPolicy.SOURCE)
@@ -95,12 +93,10 @@ public class CustomTabObserver extends EmptyTabObserver {
         }
     }
 
-    public CustomTabObserver(
-            boolean openedByChrome, CustomTabsSessionToken token, boolean isHidden) {
+    public CustomTabObserver(boolean openedByChrome, SessionHolder<?> token) {
         mOpenedByChrome = openedByChrome;
         mCustomTabsConnection = mOpenedByChrome ? null : CustomTabsConnection.getInstance();
         mSession = token;
-        mIsHidden = isHidden;
         resetPageLoadTracking();
     }
 
@@ -129,7 +125,9 @@ public class CustomTabObserver extends EmptyTabObserver {
 
     public void trackNextPageLoadForHiddenTab(
             boolean usedSpeculation, boolean hasCommitted, Intent sourceIntent) {
-        mIsHidden = false;
+        // If page load is already being tracked, it must have been an early nav - nothing to do
+        // here.
+        if (mIntentReceivedRealtimeMillis != 0) return;
         mUsedHiddenTabSpeculation = usedSpeculation;
         mLaunchedForSpeculationRealtimeMillis =
                 BrowserIntentUtils.getStartupRealtimeMillis(sourceIntent);
@@ -283,7 +281,6 @@ public class CustomTabObserver extends EmptyTabObserver {
     }
 
     private void recordFirstCommitNavigation() {
-        if (mIsHidden) return;
         if (mCustomTabsConnection == null) return;
         String histogram = null;
         long duration = 0;

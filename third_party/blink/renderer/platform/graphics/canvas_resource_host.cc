@@ -19,7 +19,7 @@ bool CanUseGPU() {
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper =
       SharedGpuContext::ContextProviderWrapper();
   return context_provider_wrapper &&
-         !context_provider_wrapper->ContextProvider()->IsContextLost();
+         !context_provider_wrapper->ContextProvider().IsContextLost();
 }
 
 }  // namespace
@@ -50,18 +50,6 @@ CanvasResourceHost::ReplaceResourceProvider(
 void CanvasResourceHost::DiscardResourceProvider() {
   resource_provider_ = nullptr;
   UpdateMemoryUsage();
-}
-
-void CanvasResourceHost::SetFilterQuality(
-    cc::PaintFlags::FilterQuality filter_quality) {
-  filter_quality_ = filter_quality;
-  if (resource_provider_) {
-    resource_provider_->SetFilterQuality(filter_quality);
-  }
-  if (cc_layer_) {
-    cc_layer_->SetNearestNeighbor(filter_quality ==
-                                  cc::PaintFlags::FilterQuality::kNone);
-  }
 }
 
 void CanvasResourceHost::SetPreferred2DRasterMode(RasterModeHint hint) {
@@ -110,9 +98,6 @@ void CanvasResourceHost::CreateRateLimiter() {
 }
 
 RasterMode CanvasResourceHost::GetRasterMode() const {
-  if (preferred_2d_raster_mode() == RasterModeHint::kPreferCPU) {
-    return RasterMode::kCPU;
-  }
   if (IsHibernating()) {
     return RasterMode::kCPU;
   }
@@ -128,13 +113,10 @@ RasterMode CanvasResourceHost::GetRasterMode() const {
 
 void CanvasResourceHost::ResetLayer() {
   if (cc_layer_) {
-    if (GetRasterMode() == RasterMode::kGPU) {
-      cc_layer_->ClearTexture();
-      // Orphaning the layer is required to trigger the recreation of a new
-      // layer in the case where destruction is caused by a canvas resize. Test:
-      // virtual/gpu/fast/canvas/canvas-resize-after-paint-without-layout.html
-      cc_layer_->RemoveFromParent();
-    }
+    // Orphaning the layer is required to trigger the recreation of a new
+    // layer in the case where destruction is caused by a canvas resize. Test:
+    // virtual/gpu/fast/canvas/canvas-resize-after-paint-without-layout.html
+    cc_layer_->RemoveFromParent();
     cc_layer_->ClearClient();
     cc_layer_ = nullptr;
   }
@@ -161,14 +143,12 @@ cc::TextureLayer* CanvasResourceHost::GetOrCreateCcLayerIfNeeded() {
     return nullptr;
   }
   if (!cc_layer_) [[unlikely]] {
-    cc_layer_ = cc::TextureLayer::CreateForMailbox(this);
+    cc_layer_ = cc::TextureLayer::Create(this);
+    InitializeLayerWithCSSProperties(cc_layer_.get());
     cc_layer_->SetIsDrawable(true);
     cc_layer_->SetHitTestable(true);
-    cc_layer_->SetContentsOpaque(opacity_mode_ == kOpaque);
-    cc_layer_->SetBlendBackgroundColor(opacity_mode_ != kOpaque);
-    cc_layer_->SetNearestNeighbor(FilterQuality() ==
-                                  cc::PaintFlags::FilterQuality::kNone);
-    cc_layer_->SetFlipped(!resource_provider_->IsOriginTopLeft());
+    cc_layer_->SetContentsOpaque(is_opaque_);
+    cc_layer_->SetBlendBackgroundColor(!is_opaque_);
   }
   return cc_layer_.get();
 }
@@ -187,7 +167,6 @@ void ReleaseCanvasResource(CanvasResource::ReleaseCallback callback,
 }  // unnamed namespace
 
 bool CanvasResourceHost::PrepareTransferableResource(
-    cc::SharedBitmapIdRegistrar* bitmap_registrar,
     viz::TransferableResource* out_resource,
     viz::ReleaseCallback* out_release_callback) {
   CHECK(cc_layer_);  // This explodes if FinalizeFrame() was not called.
@@ -220,7 +199,7 @@ bool CanvasResourceHost::PrepareTransferableResource(
   // If the context is lost, we don't know if we should be producing GPU or
   // software frames, until we get a new context, since the compositor will
   // be trying to get a new context and may change modes.
-  if (!GetOrCreateCanvasResourceProvider(preferred_2d_raster_mode_)) {
+  if (!GetOrCreateCanvasResourceProvider()) {
     return false;
   }
 
@@ -260,10 +239,10 @@ void CanvasResourceHost::DoPaintInvalidation(const gfx::Rect& dirty_rect) {
 }
 
 void CanvasResourceHost::SetOpacityMode(OpacityMode opacity_mode) {
-  opacity_mode_ = opacity_mode;
+  is_opaque_ = opacity_mode == kOpaque;
   if (cc_layer_) {
-    cc_layer_->SetContentsOpaque(opacity_mode_ == kOpaque);
-    cc_layer_->SetBlendBackgroundColor(opacity_mode_ != kOpaque);
+    cc_layer_->SetContentsOpaque(is_opaque_);
+    cc_layer_->SetBlendBackgroundColor(!is_opaque_);
   }
 }
 
@@ -278,42 +257,15 @@ bool CanvasResourceHost::IsResourceValid() {
     return true;
   }
 
-  if (!cc_layer_) {
-    return true;
-  }
-
-  if (!features::IsCanvasSharedBitmapConversionEnabled() ||
-      (resource_provider_ &&
-       resource_provider_->GetType() == CanvasResourceProvider::kBitmap)) {
-    if (preferred_2d_raster_mode_ == RasterModeHint::kPreferCPU) {
-      return true;
-    }
-  }
-
-  if (context_lost_ || shared_bitmap_gpu_channel_lost_) {
+  if (IsContextLost()) {
     return false;
   }
 
-  // For Gpu rendering
-  if (resource_provider_ && resource_provider_->IsAccelerated() &&
-      resource_provider_->IsGpuContextLost()) {
-    context_lost_ = true;
-    ReplaceResourceProvider(nullptr);
-    NotifyGpuContextLost();
+  if (resource_provider_ && !resource_provider_->IsValid()) {
     return false;
   }
 
-  // For software rendering with CanvasResourceProvider::kSharedBitmap
-  if (resource_provider_ &&
-      resource_provider_->GetType() == CanvasResourceProvider::kSharedBitmap &&
-      resource_provider_->IsSharedBitmapGpuChannelLost()) {
-    shared_bitmap_gpu_channel_lost_ = true;
-    ReplaceResourceProvider(nullptr);
-    NotifyGpuContextLost();
-    return false;
-  }
-
-  return !!GetOrCreateCanvasResourceProvider(preferred_2d_raster_mode_);
+  return !!GetOrCreateCanvasResourceProvider();
 }
 
 }  // namespace blink

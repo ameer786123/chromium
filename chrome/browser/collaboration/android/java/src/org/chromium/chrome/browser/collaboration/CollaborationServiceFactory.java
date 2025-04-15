@@ -4,25 +4,29 @@
 
 package org.chromium.chrome.browser.collaboration;
 
-import androidx.annotation.Nullable;
-
 import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.collaboration.CollaborationService;
 
 /** This factory creates CollaborationService for the given {@link Profile}. */
 @JNINamespace("collaboration")
+@NullMarked
 public final class CollaborationServiceFactory {
-    private static CollaborationService sCollaborationServiceForTesting;
+    private static @Nullable CollaborationService sCollaborationServiceForTesting;
 
     /**
      * A factory method to create or retrieve a {@link CollaborationService} object for a given
-     * profile.
+     * profile. If this service is not enabled this will return the {@code
+     * EmptyCollaborationService} (see native implementation).
      *
+     * @param profile The profile key to generate the factory. If this is an off-the-record profile
+     *     a {@code EmptyCollaborationService} will be returned.
      * @return The {@link CollaborationService} for the given profile.
      */
     public static CollaborationService getForProfile(Profile profile) {

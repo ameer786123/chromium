@@ -18,6 +18,7 @@ export function getHtml(this: AutoTabGroupsPageElement) {
       ${
       this.showBackButton ? html`
         <cr-icon-button class="back-button"
+            aria-label="${this.getBackButtonAriaLabel_()}"
             iron-icon="cr:arrow-back"
             @click="${this.onBackClick_}">
         </cr-icon-button>
@@ -29,6 +30,7 @@ export function getHtml(this: AutoTabGroupsPageElement) {
         ?shown="${this.isState_(TabOrganizationState.kNotStarted)}"
         model-strategy="${this.modelStrategy_}"
         @model-strategy-change="${this.onModelStrategyChange_}"
+        @user-instruction-input-change="${this.onUserInstructionInputChange_}"
         @sign-in-click="${this.onSignInClick_}"
         @organize-tabs-click="${this.onOrganizeTabsClick_}"
         @learn-more-click="${this.onLearnMoreClick_}"
@@ -40,7 +42,6 @@ export function getHtml(this: AutoTabGroupsPageElement) {
     <auto-tab-groups-results id="results"
         ?shown="${this.isState_(TabOrganizationState.kSuccess)}"
         .session="${this.session_}"
-        ?multi-tab-organization="${this.multiTabOrganization_}"
         available-height="${this.availableHeight}"
         @name-change="${this.onNameChange_}"
         @reject-click="${this.onRejectClick_}"

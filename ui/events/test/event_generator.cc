@@ -22,7 +22,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/tick_clock.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/events/event.h"
 #include "ui/events/event_source.h"
 #include "ui/events/event_utils.h"
@@ -229,7 +228,7 @@ void EventGenerator::SendMouseExit() {
   Dispatch(&mouseev);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void EventGenerator::MoveMouseToWithNative(const gfx::Point& point_in_host,
                                            const gfx::Point& point_for_native) {
   // Ozone uses the location in native event as a system location.
@@ -321,6 +320,11 @@ void EventGenerator::SetTouchTilt(float x, float y) {
   touch_pointer_details_.tilt_y = y;
 }
 
+void EventGenerator::SetProperties(
+    std::optional<Event::Properties> properties) {
+  properties_ = std::move(properties);
+}
+
 void EventGenerator::PressTouch(
     const std::optional<gfx::Point>& touch_location_in_screen) {
   PressTouchId(0, touch_location_in_screen);
@@ -337,19 +341,42 @@ void EventGenerator::PressTouchId(
   Dispatch(&touchev);
 }
 
-void EventGenerator::MoveTouch(const gfx::Point& point) {
-  MoveTouchId(point, 0);
+void EventGenerator::MoveTouch(const gfx::Point& point, int count) {
+  MoveTouchId(point, 0, count);
 }
 
-void EventGenerator::MoveTouchId(const gfx::Point& point, int touch_id) {
-  SetCurrentScreenLocation(point);
-  ui::TouchEvent touchev = CreateTestTouchEvent(
-      ui::EventType::kTouchMoved, GetLocationInCurrentRoot(), touch_id, flags_,
-      ui::EventTimeForNow());
-  Dispatch(&touchev);
+void EventGenerator::MoveTouchId(const gfx::Point& point,
+                                 int touch_id,
+                                 int count) {
+  // Tracks the location of last `SetCurrentScreenLocation` in the loop.
+  gfx::Point expected_current_location = current_screen_location_;
 
-  if (!grab_)
-    UpdateCurrentDispatcher(point);
+  const gfx::Point start_point = current_screen_location_;
+  const gfx::Vector2dF diff(point - start_point);
+  for (float i = 1; i <= count; i++) {
+    gfx::Vector2dF step(diff);
+    step.Scale(i / count);
+    gfx::Point move_point = start_point + gfx::ToRoundedVector2d(step);
+    if (!grab_) {
+      UpdateCurrentDispatcher(move_point);
+    }
+
+    // Changing `current_screen_location_` in nested `MoveTouchId` under
+    // `Dispatch` is not supported.
+    CHECK_EQ(expected_current_location, current_screen_location_);
+
+    // Update current location before dispatching because some tests (e.g.
+    // apps grid view dragging related) calculate the next touch position
+    // during the dispatch.
+    SetCurrentScreenLocation(move_point);
+    expected_current_location = move_point;
+
+    delegate()->ConvertPointToTarget(current_target_, &move_point);
+    ui::TouchEvent touchev =
+        CreateTestTouchEvent(ui::EventType::kTouchMoved, move_point, touch_id,
+                             flags_, ui::EventTimeForNow());
+    Dispatch(&touchev);
+  }
 }
 
 void EventGenerator::ReleaseTouch() {
@@ -598,7 +625,7 @@ void EventGenerator::GestureMultiFingerScroll(int count,
                                               int move_x,
                                               int move_y) {
   const int kMaxTouchPoints = 10;
-  int delays[kMaxTouchPoints] = {0};
+  int delays[kMaxTouchPoints] = {};
   GestureMultiFingerScrollWithDelays(
       count, start, delays, event_separation_time_ms, steps, move_x, move_y);
 }
@@ -719,6 +746,10 @@ void EventGenerator::Dispatch(ui::Event* event) {
     ui::TouchEvent* touch_event = static_cast<ui::TouchEvent*>(event);
     touch_pointer_details_.id = touch_event->pointer_details().id;
     touch_event->SetPointerDetailsForTest(touch_pointer_details_);
+  }
+
+  if (properties_.has_value()) {
+    event->SetProperties(properties_.value());
   }
 
   if (!event->handled()) {

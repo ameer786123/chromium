@@ -142,8 +142,7 @@ DOMMatrixReadOnly* DOMMatrixReadOnly::Create(
     }
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return nullptr;
+  NOTREACHED();
 }
 
 DOMMatrixReadOnly* DOMMatrixReadOnly::CreateForSerialization(
@@ -420,7 +419,7 @@ const String DOMMatrixReadOnly::toString(
   return result.ToString();
 }
 
-ScriptValue DOMMatrixReadOnly::toJSONForBinding(
+ScriptObject DOMMatrixReadOnly::toJSONForBinding(
     ScriptState* script_state) const {
   V8ObjectBuilder result(script_state);
   result.AddNumber("a", a());
@@ -447,7 +446,7 @@ ScriptValue DOMMatrixReadOnly::toJSONForBinding(
   result.AddNumber("m44", m44());
   result.AddBoolean("is2D", is2D());
   result.AddBoolean("isIdentity", isIdentity());
-  return result.GetScriptValue();
+  return result.ToScriptObject();
 }
 
 AffineTransform DOMMatrixReadOnly::GetAffineTransform() const {
@@ -488,7 +487,7 @@ void DOMMatrixReadOnly::SetMatrixValueFromString(
   }
 
   TransformOperations operations = TransformBuilder::CreateTransformOperations(
-      *value, CSSToLengthConversionData());
+      *value, CSSToLengthConversionData(/*element=*/nullptr));
 
   if (operations.BoxSizeDependencies()) {
     exception_state.ThrowDOMException(

@@ -6,10 +6,12 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
@@ -23,7 +25,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/attribution_reporting/aggregation_keys.h"
@@ -34,6 +35,7 @@
 #include "components/attribution_reporting/trigger_config.h"
 #include "components/attribution_reporting/trigger_registration.h"
 #include "content/browser/attribution_reporting/aggregatable_debug_report.h"
+#include "content/browser/attribution_reporting/aggregatable_named_budget_pair.h"
 #include "content/browser/attribution_reporting/attribution_debug_report.h"
 #include "content/browser/attribution_reporting/attribution_info.h"
 #include "content/browser/attribution_reporting/attribution_internals.mojom.h"
@@ -56,7 +58,6 @@
 #include "content/public/common/content_client.h"
 #include "net/base/net_errors.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -73,6 +74,19 @@ using ReportStatusPtr = ::attribution_internals::mojom::ReportStatusPtr;
 
 using ::attribution_internals::mojom::WebUIAggregatableDebugReport;
 using ::attribution_internals::mojom::WebUIDebugReport;
+
+std::string SerializeBudgetsMap(
+    const StoredSource::AggregatableNamedBudgets& map) {
+  base::Value::Dict dict;
+  for (const auto& [key, value] : map) {
+    base::Value::Dict inner_dict;
+    inner_dict.Set("original_budget", value.original_budget());
+    inner_dict.Set("remaining_budget", value.remaining_budget());
+    dict.Set(key, std::move(inner_dict));
+  }
+
+  return SerializeAttributionJson(dict, /*pretty_print=*/true);
+}
 
 attribution_internals::mojom::WebUISourcePtr WebUISource(
     const StoredSource& source,
@@ -107,6 +121,7 @@ attribution_internals::mojom::WebUISourcePtr WebUISource(
           ? SerializeAttributionJson(source.attribution_scopes_data()->ToJson(),
                                      /*pretty_print=*/true)
           : "null",
+      SerializeBudgetsMap(source.aggregatable_named_budgets()),
       attributability);
 }
 
@@ -156,7 +171,7 @@ attribution_internals::mojom::WebUIReportPtr WebUIReport(
 
   const AttributionInfo& attribution_info = report.attribution_info();
 
-  ai_mojom::WebUIReportDataPtr data = absl::visit(
+  ai_mojom::WebUIReportDataPtr data = std::visit(
       base::Overloaded{
           [](const AttributionReport::EventLevelData& event_level_data) {
             return ai_mojom::WebUIReportData::NewEventLevelData(
@@ -176,7 +191,7 @@ attribution_internals::mojom::WebUIReportPtr WebUIReport(
                       /*value=*/0,
                       /*filtering_id=*/0));
             } else {
-              base::ranges::transform(
+              std::ranges::transform(
                   aggregatable_data.contributions(),
                   std::back_inserter(contributions),
                   [](const auto& contribution) {
@@ -372,10 +387,13 @@ void AttributionInternalsHandlerImpl::OnReportSent(
     const AttributionReport& report,
     bool is_debug_report,
     const SendResult& info) {
-  ReportStatusPtr status = absl::visit(
+  ReportStatusPtr status = std::visit(
       base::Overloaded{
           [](SendResult::Sent sent) {
             return ReportStatus::NewNetworkStatus(NetworkStatus(sent.status));
+          },
+          [](SendResult::Expired) {
+            return ReportStatus::NewExpired(Empty::New());
           },
           [](SendResult::Dropped) {
             return ReportStatus::NewProhibitedByBrowserPolicy(Empty::New());
@@ -418,7 +436,7 @@ void AttributionInternalsHandlerImpl::OnAggregatableDebugReportSent(
       SerializeAttributionJson(report_body, /*pretty_print=*/true);
   web_report->process_result = process_result;
 
-  web_report->send_result = absl::visit(
+  web_report->send_result = std::visit(
       base::Overloaded{
           [](const SendAggregatableDebugReportResult::Sent& sent) {
             return attribution_internals::mojom::

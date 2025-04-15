@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig_base.json",
   "compilerOptions": {
-    "noUncheckedSideEffectImports": true,
-    "useDefineForClassFields": false
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"]
   }
 }

@@ -5,11 +5,13 @@
 package org.chromium.chrome.browser.dom_distiller;
 
 import org.jni_zero.JNINamespace;
+import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ResettersForTesting;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
 import org.chromium.components.user_prefs.UserPrefs;
@@ -92,19 +94,30 @@ public class DomDistillerTabUtils {
         return getDistillerHeuristics() == DistillerHeuristicsType.ALWAYS_TRUE;
     }
 
+    /** Returns whether the reader mode accessibility setting is enabled. */
+    public static boolean isReaderModeAccessibilitySettingEnabled(Profile profile) {
+        return UserPrefs.get(profile).getBoolean(Pref.READER_FOR_ACCESSIBILITY);
+    }
+
     /**
      * Check if the distiller should report mobile-friendly pages as non-distillable.
      *
-     * @return True if heuristic is ADABOOST_MODEL, and "Simplified view for accessibility"
-     * is disabled.
+     * @return True if heuristic is ADABOOST_MODEL, and "Simplified view for accessibility" is
+     *     disabled.
      */
     public static boolean shouldExcludeMobileFriendly(Tab tab) {
         if (sExcludeMobileFriendlyForTesting != null) return sExcludeMobileFriendlyForTesting;
-        return !UserPrefs.get(tab.getProfile()).getBoolean(Pref.READER_FOR_ACCESSIBILITY)
+        if (ChromeFeatureList.sReaderModeImprovements.isEnabled()
+                && ChromeFeatureList.sReaderModeImprovementsTriggerOnMobileFriendlyPages
+                        .getValue()) {
+            return false;
+        }
+
+        return !isReaderModeAccessibilitySettingEnabled(tab.getProfile())
                 && getDistillerHeuristics() == DistillerHeuristicsType.ADABOOST_MODEL;
     }
 
-    public static void setExcludeMobileFriendlyForTesting(boolean excludeForTesting) {
+    public static void setExcludeMobileFriendlyForTesting(Boolean excludeForTesting) {
         sExcludeMobileFriendlyForTesting = excludeForTesting;
         ResettersForTesting.register(() -> sExcludeMobileFriendlyForTesting = null);
     }
@@ -128,15 +141,6 @@ public class DomDistillerTabUtils {
     }
 
     /**
-     * Check if the distilled content should be shown in a Chrome Custom Tab (CCT).
-     *
-     * @return True if it should.
-     */
-    public static boolean isCctMode() {
-        return ChromeFeatureList.sReaderModeCct.isEnabled();
-    }
-
-    /**
      * Set an InterceptNavigationDelegate on a WebContents.
      * @param delegate The navigation delegate.
      * @param webContents The WebContents to bind the delegate to.
@@ -154,6 +158,7 @@ public class DomDistillerTabUtils {
 
         void distillAndView(WebContents sourceWebContents, WebContents destinationWebContents);
 
+        @JniType("std::u16string")
         String getFormattedUrlFromOriginalDistillerUrl(GURL url);
 
         int getDistillerHeuristics();

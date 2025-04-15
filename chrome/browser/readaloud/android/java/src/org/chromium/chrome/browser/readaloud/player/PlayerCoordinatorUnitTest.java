@@ -23,13 +23,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutManager;
@@ -53,7 +53,7 @@ import java.util.List;
 @Config(manifest = Config.NONE)
 @RunWith(BaseRobolectricTestRunner.class)
 public class PlayerCoordinatorUnitTest {
-    @Rule public JniMocker mJniMocker = new JniMocker();
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock ReadAloudMiniPlayerSceneLayer.Natives mSceneLayerNativeMock;
 
     @Mock private BottomSheetController mBottomSheetController;
@@ -74,8 +74,7 @@ public class PlayerCoordinatorUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mJniMocker.mock(ReadAloudMiniPlayerSceneLayerJni.TEST_HOOKS, mSceneLayerNativeMock);
+        ReadAloudMiniPlayerSceneLayerJni.setInstanceForTesting(mSceneLayerNativeMock);
         doReturn(123456789L).when(mSceneLayerNativeMock).init(any());
         doReturn(mBottomControlsStacker).when(mDelegate).getBottomControlsStacker();
         doReturn(mBrowserControlsStateProvider).when(mBottomControlsStacker).getBrowserControls();
@@ -114,6 +113,7 @@ public class PlayerCoordinatorUnitTest {
                 .when(mDelegate)
                 .getCurrentLanguageVoicesSupplier();
         doReturn(new ObservableSupplierImpl<String>()).when(mDelegate).getVoiceIdSupplier();
+        doReturn(new ObservableSupplierImpl<Boolean>()).when(mDelegate).getPlaybackModeSelectionEnabled();
         doReturn(mActivity).when(mDelegate).getActivity();
 
         mPlayerCoordinator = new PlayerCoordinator(mDelegate);

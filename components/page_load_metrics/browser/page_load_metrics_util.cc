@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <string_view>
 
+#include "components/page_load_metrics/browser/features.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
 #include "components/page_load_metrics/common/page_visit_final_status.h"
+#include "net/base/url_util.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
@@ -101,6 +103,22 @@ bool QueryContainsComponentHelper(std::string_view query,
     return true;
   }
   return false;
+}
+
+// Returns the category ID given a string if it matches the configured pattern.
+std::optional<uint32_t> GetCategoryId(const std::string& category) {
+  auto category_prefix = features::kBeaconLeakageLoggingCategoryPrefix.Get();
+  if (category_prefix.empty() || !category.starts_with(category_prefix)) {
+    return std::nullopt;
+  }
+
+  uint32_t category_id;
+  if (!base::StringToUint(category.substr(category_prefix.size()),
+                          &category_id)) {
+    return std::nullopt;
+  }
+
+  return category_id;
 }
 
 }  // namespace
@@ -284,80 +302,6 @@ bool DidObserveLoadingBehaviorInAnyFrame(
   return (all_frame_loading_behavior_flags & behavior) != 0;
 }
 
-bool IsGoogleSearchHostname(const GURL& url) {
-  std::optional<std::string> result =
-      page_load_metrics::GetGoogleHostnamePrefix(url);
-  return result && result.value() == "www";
-}
-
-bool IsProbablyGoogleSearchUrl(const GURL& url) {
-  if (!page_load_metrics::IsGoogleSearchHostname(url)) {
-    return false;
-  }
-
-  const std::string_view path = url.path_piece();
-  if (path == "/maps" || path.find("/maps/") != std::string_view::npos) {
-    return false;
-  }
-
-  return true;
-}
-
-// Determine if the given url has query associated with it.
-bool HasGoogleSearchQuery(const GURL& url) {
-  // NOTE: we do not require 'q=' in the query, as AJAXy search may instead
-  // store the query in the URL fragment.
-  return QueryContainsComponentPrefix(url.query_piece(), "q=") ||
-         QueryContainsComponentPrefix(url.ref_piece(), "q=");
-}
-
-bool IsGoogleSearchResultUrl(const GURL& url) {
-  if (!IsGoogleSearchHostname(url)) {
-    return false;
-  }
-
-  if (!HasGoogleSearchQuery(url)) {
-    return false;
-  }
-
-  const std::string_view path = url.path_piece();
-  return path == "/search" || path == "/webhp" || path == "/custom" ||
-         path == "/";
-}
-
-bool IsGoogleSearchHomepageUrl(const GURL& url) {
-  if (!IsGoogleSearchHostname(url)) {
-    return false;
-  }
-
-  const std::string_view path = url.path_piece();
-  if (path == "/webhp" || path == "/") {
-    return true;
-  }
-
-  return (path == "/custom" || path == "/search") && !HasGoogleSearchQuery(url);
-}
-
-bool IsGoogleSearchRedirectorUrl(const GURL& url) {
-  if (!IsGoogleSearchHostname(url))
-    return false;
-
-  // The primary search redirector.  Google search result redirects are
-  // differentiated from other general google redirects by 'source=web' in the
-  // query string.
-  if (url.path_piece() == "/url" && url.has_query() &&
-      QueryContainsComponent(url.query_piece(), "source=web")) {
-    return true;
-  }
-
-  // Intent-based navigations from search are redirected through a second
-  // redirector, which receives its redirect URL in the fragment/hash/ref
-  // portion of the URL (the portion after '#'). We don't check for the presence
-  // of certain params in the ref since this redirector is only used for
-  // redirects from search.
-  return url.path_piece() == "/searchurl/r.html" && url.has_ref();
-}
-
 bool IsZstdUrl(const GURL& url) {
   return url.DomainIs("facebook.com") || url.DomainIs("instagram.com") ||
          url.DomainIs("whatsapp.com") || url.DomainIs("messenger.com");
@@ -403,6 +347,16 @@ PageVisitFinalStatus RecordPageVisitFinalStatusForTiming(
   pageVisitBuilder.SetPageVisitFinalStatus(static_cast<int>(page_visit_status));
   pageVisitBuilder.Record(ukm::UkmRecorder::Get());
   return page_visit_status;
+}
+
+std::optional<uint32_t> GetCategoryIdFromUrl(const GURL& url) {
+  std::string category;
+  if (net::GetValueForKeyInQuery(
+          url, features::kBeaconLeakageLoggingCategoryParamName.Get(),
+          &category)) {
+    return GetCategoryId(category);
+  }
+  return std::nullopt;
 }
 
 }  // namespace page_load_metrics

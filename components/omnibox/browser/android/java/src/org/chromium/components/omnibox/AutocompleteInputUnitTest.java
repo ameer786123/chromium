@@ -6,12 +6,13 @@ package org.chromium.components.omnibox;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
 
 import java.util.Set;
@@ -38,8 +39,8 @@ public class AutocompleteInputUnitTest {
     }
 
     @Test
+    @DisableFeatures(OmniboxFeatureList.JUMP_START_OMNIBOX)
     public void isInCacheableContext_defaultContexts() {
-        OmniboxFeatures.sJumpStartOmnibox.setForTesting(false);
         verifyCacheablePageClasses(
                 Set.of(
                         PageClassification.ANDROID_SEARCH_WIDGET_VALUE,
@@ -47,10 +48,10 @@ public class AutocompleteInputUnitTest {
     }
 
     @Test
+    @EnableFeatures(
+            OmniboxFeatureList.JUMP_START_OMNIBOX + ":jump_start_cover_recently_visited_page/false")
     public void isInCacheableContext_jumpStartDisabled() {
-        OmniboxFeatures.sJumpStartOmnibox.setForTesting(true);
         OmniboxFeatures.setJumpStartOmniboxEnabled(false);
-        OmniboxFeatures.sJumpStartOmniboxCoverRecentlyVisitedPage.setForTesting(false);
         verifyCacheablePageClasses(
                 Set.of(
                         PageClassification.ANDROID_SEARCH_WIDGET_VALUE,
@@ -58,10 +59,10 @@ public class AutocompleteInputUnitTest {
     }
 
     @Test
+    @EnableFeatures(
+            OmniboxFeatureList.JUMP_START_OMNIBOX + ":jump_start_cover_recently_visited_page/false")
     public void isInCacheableContext_jumpStartDefaultContext() {
-        OmniboxFeatures.sJumpStartOmnibox.setForTesting(true);
         OmniboxFeatures.setJumpStartOmniboxEnabled(true);
-        OmniboxFeatures.sJumpStartOmniboxCoverRecentlyVisitedPage.setForTesting(false);
         verifyCacheablePageClasses(
                 Set.of(
                         PageClassification.ANDROID_SEARCH_WIDGET_VALUE,
@@ -70,10 +71,10 @@ public class AutocompleteInputUnitTest {
     }
 
     @Test
+    @EnableFeatures(
+            OmniboxFeatureList.JUMP_START_OMNIBOX + ":jump_start_cover_recently_visited_page/true")
     public void isInCacheableContext_jumpStartAdditionalContext() {
-        OmniboxFeatures.sJumpStartOmnibox.setForTesting(true);
         OmniboxFeatures.setJumpStartOmniboxEnabled(true);
-        OmniboxFeatures.sJumpStartOmniboxCoverRecentlyVisitedPage.setForTesting(true);
         verifyCacheablePageClasses(
                 Set.of(
                         PageClassification.ANDROID_SEARCH_WIDGET_VALUE,
@@ -98,11 +99,7 @@ public class AutocompleteInputUnitTest {
     @Test
     public void reset() {
         mInput.setUserText("test");
-        mInput.setPageClassification(123);
-
         mInput.reset();
-
         mInput.setUserText(null);
-        assertTrue(mInput.getPageClassification().isEmpty());
     }
 }

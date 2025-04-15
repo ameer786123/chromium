@@ -1052,7 +1052,7 @@ void NavigationSimulatorImpl::SetIsSignedExchangeInnerResponse(
 }
 
 void NavigationSimulatorImpl::SetPermissionsPolicyHeader(
-    blink::ParsedPermissionsPolicy permissions_policy_header) {
+    network::ParsedPermissionsPolicy permissions_policy_header) {
   CHECK_LE(state_, STARTED) << "The Permissions-Policy headers cannot be set "
                                "after the navigation has committed or failed";
   permissions_policy_header_ = std::move(permissions_policy_header);
@@ -1645,6 +1645,9 @@ NavigationSimulatorImpl::BuildDidCommitProvisionalLoadParams(
   params->insecure_navigations_set = insecure_navigations_set_;
   params->has_potentially_trustworthy_unique_origin =
       has_potentially_trustworthy_unique_origin_;
+
+  params->commit_navigation_start = base::TimeTicks::Now();
+  params->commit_navigation_end = base::TimeTicks::Now();
 
   return params;
 }

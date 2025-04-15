@@ -49,8 +49,7 @@ WebUIType GetWebUIType(const GURL& url) {
     return WebUIType::kChrome;
   if (url.SchemeIs(content::kChromeUIUntrustedScheme))
     return WebUIType::kChromeUntrusted;
-  NOTREACHED_IN_MIGRATION();
-  return WebUIType::kChrome;
+  NOTREACHED();
 }
 
 // Assumes url is like "chrome://web-app/index.html". Returns "web-app";
@@ -206,11 +205,9 @@ bool UnittestingSystemAppDelegate::IsUrlInSystemAppScope(
 bool UnittestingSystemAppDelegate::UseSystemThemeColor() const {
   return use_system_theme_color_;
 }
-#if BUILDFLAG(IS_CHROMEOS)
 bool UnittestingSystemAppDelegate::ShouldAnimateThemeChanges() const {
   return should_animate_theme_changes_;
 }
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void UnittestingSystemAppDelegate::SetAppIdsToUninstallAndReplace(
     const std::vector<webapps::AppId>& ids) {
@@ -290,11 +287,9 @@ void UnittestingSystemAppDelegate::SetUrlInSystemAppScope(const GURL& url) {
 void UnittestingSystemAppDelegate::SetUseSystemThemeColor(bool value) {
   use_system_theme_color_ = value;
 }
-#if BUILDFLAG(IS_CHROMEOS)
 void UnittestingSystemAppDelegate::SetShouldAnimateThemeChanges(bool value) {
   should_animate_theme_changes_ = value;
 }
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 TestSystemWebAppInstallation::TestSystemWebAppInstallation(
     std::unique_ptr<UnittestingSystemAppDelegate> delegate)
@@ -422,7 +417,7 @@ TestSystemWebAppInstallation::SetUpStandaloneSingleWindowApp() {
           SystemWebAppType::SETTINGS, "OSSettings",
           GURL("chrome://test-system-app/pwa.html"),
           base::BindRepeating(&GenerateWebAppInstallInfoForTestApp));
-  delegate->SetUrlInSystemAppScope(GURL("http://example.com/in-scope"));
+  delegate->SetUrlInSystemAppScope(GURL("https://example.com/in-scope"));
 
   return base::WrapUnique(
       new TestSystemWebAppInstallation(std::move(delegate)));

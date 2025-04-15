@@ -37,7 +37,8 @@ import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
@@ -81,7 +82,6 @@ import org.chromium.components.embedder_support.contextmenu.ChipDelegate;
 import org.chromium.components.embedder_support.contextmenu.ChipRenderParams;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuPopulatorFactory;
-import org.chromium.components.externalauth.ExternalAuthUtils;
 import org.chromium.components.policy.test.annotations.Policies;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.TestTouchUtils;
@@ -120,6 +120,8 @@ public class ContextMenuTest {
                             sDownloadTestRule.startMainActivityOnBlankPage();
                         }
                     });
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
     public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
@@ -178,7 +180,6 @@ public class ContextMenuTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
 
         mTestServer = sDownloadTestRule.getTestServer();
@@ -912,14 +913,14 @@ public class ContextMenuTest {
                         0,
                         0,
                         MenuSourceType.TOUCH,
-                        /* getOpenedFromHighlight= */ true,
+                        /* openedFromHighlight= */ true,
+                        /* openedFromInterestTarget= */ false,
                         /* additionalNavigationParams= */ null);
         ContextMenuPopulatorFactory populatorFactory =
                 new ChromeContextMenuPopulatorFactory(
                         mItemDelegate,
                         () -> mShareDelegate,
-                        ChromeContextMenuPopulator.ContextMenuMode.NORMAL,
-                        ExternalAuthUtils.getInstance());
+                        ChromeContextMenuPopulator.ContextMenuMode.NORMAL);
         Integer[] expectedItems = {
             R.id.contextmenu_share_highlight,
             R.id.contextmenu_remove_highlight,

@@ -4,6 +4,7 @@
 
 #include "remoting/host/webauthn/remote_webauthn_caller_security_utils.h"
 
+#include <optional>
 #include <string_view>
 
 #include "base/environment.h"
@@ -41,9 +42,10 @@ namespace {
 #elif BUILDFLAG(IS_LINUX)
 
 constexpr auto kAllowedCallerPrograms =
-    base::MakeFixedFlatSet<base::FilePath::StringPieceType>({
+    base::MakeFixedFlatSet<base::FilePath::StringViewType>({
         "/opt/google/chrome/chrome",
         "/opt/google/chrome-beta/chrome",
+        "/opt/google/chrome-canary/chrome",
         "/opt/google/chrome-unstable/chrome",
     });
 
@@ -67,7 +69,7 @@ constexpr auto kAppsDirectoryEnvVars =
 
 // Relative to the Program Files directory.
 constexpr auto kAllowedCallerPrograms =
-    base::MakeFixedFlatSet<base::FilePath::StringPieceType>({
+    base::MakeFixedFlatSet<base::FilePath::StringViewType>({
         L"Google\\Chrome\\Application\\chrome.exe",
         L"Google\\Chrome Beta\\Application\\chrome.exe",
         L"Google\\Chrome SxS\\Application\\chrome.exe",
@@ -107,9 +109,9 @@ bool IsLaunchedByTrustedProcess() {
 
   // COMSPEC is generally "C:\WINDOWS\system32\cmd.exe". Note that the casing
   // does not match the actual file path's casing.
-  std::string comspec_utf8;
-  if (environment->GetVar("COMSPEC", &comspec_utf8)) {
-    base::FilePath::StringType comspec = base::UTF8ToWide(comspec_utf8);
+  std::optional<std::string> comspec_utf8 = environment->GetVar("COMSPEC");
+  if (comspec_utf8.has_value()) {
+    base::FilePath::StringType comspec = base::UTF8ToWide(comspec_utf8.value());
     if (base::FilePath::CompareEqualIgnoreCase(parent_image_path.value(),
                                                comspec)) {
       // Skip to the grandparent.
@@ -128,15 +130,17 @@ bool IsLaunchedByTrustedProcess() {
 
   // Check if the caller's image path is allowlisted.
   for (std::string_view apps_dir_env_var : kAppsDirectoryEnvVars) {
-    std::string apps_dir_path_utf8;
-    if (!environment->GetVar(apps_dir_env_var, &apps_dir_path_utf8)) {
+    std::optional<std::string> apps_dir_path_utf8 =
+        environment->GetVar(apps_dir_env_var);
+    if (!apps_dir_path_utf8.has_value()) {
       continue;
     }
-    auto apps_dir_path = base::FilePath::FromUTF8Unsafe(apps_dir_path_utf8);
+    auto apps_dir_path =
+        base::FilePath::FromUTF8Unsafe(apps_dir_path_utf8.value());
     if (!apps_dir_path.IsParent(parent_image_path)) {
       continue;
     }
-    for (const base::FilePath::StringPieceType& allowed_caller_program :
+    for (const base::FilePath::StringViewType& allowed_caller_program :
          kAllowedCallerPrograms) {
       base::FilePath allowed_caller_program_full_path =
           apps_dir_path.Append(allowed_caller_program);

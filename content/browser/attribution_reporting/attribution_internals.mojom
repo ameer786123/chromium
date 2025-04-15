@@ -61,6 +61,7 @@ union ReportStatus {
   // Contains the external report ID of the replacement report.
   string replaced_by_higher_priority_report;
   Empty prohibited_by_browser_policy;
+  Empty expired;
   NetworkStatus network_status;
   Empty failed_to_assemble;
 };
@@ -137,6 +138,8 @@ struct WebUISource {
   string aggregatable_debug_key_piece;
   // String is used for the same reasons as described for `trigger_specs_json`.
   string attribution_scopes_data_json;
+  // String is used for the same reasons as described for `trigger_specs_json`.
+  string aggregatable_named_budgets;
 
   enum Attributability {
     kAttributable,

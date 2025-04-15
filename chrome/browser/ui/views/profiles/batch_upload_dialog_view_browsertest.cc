@@ -10,17 +10,15 @@
 #include "base/strings/to_string.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
-#include "chrome/browser/profiles/batch_upload/batch_upload_controller.h"
-#include "chrome/browser/profiles/batch_upload/batch_upload_data_provider.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/input/native_web_keyboard_event.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/sync/base/data_type.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -32,52 +30,38 @@
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/test/widget_test.h"
 
+using signin::constants::kNoHostedDomainFound;
+
 namespace {
 
 const std::map<syncer::DataType,
                std::vector<syncer::LocalDataItemModel::DataId>>
     kEmptySelectedMap;
 
-class BatchUploadDataProviderFake : public BatchUploadDataProvider {
- public:
-  explicit BatchUploadDataProviderFake(syncer::DataType type, int item_count)
-      : BatchUploadDataProvider(type), item_count_(item_count) {}
-
-  bool HasLocalData() const override { return item_count_ > 0; }
-
-  syncer::LocalDataDescription GetLocalData() const override {
-    // IDs used here are arbitrary and should not be checked.
-    syncer::LocalDataDescription description;
-    description.type = GetDataType();
-    // Add arbitrary items.
-    for (int i = 0; i < item_count_; ++i) {
-      syncer::LocalDataItemModel item;
-      std::string index_string = base::ToString(i);
-      item.id = syncer::LocalDataItemModel::DataId(index_string);
-      item.title = "data_title_" + index_string;
-      item.subtitle = "data_subtitle_" + index_string;
-      description.local_data_models.push_back(std::move(item));
-    }
-    return description;
+syncer::LocalDataDescription GetFakeLocalData(syncer::DataType type,
+                                              int item_count) {
+  // IDs used here are arbitrary and should not be checked.
+  syncer::LocalDataDescription description;
+  description.type = type;
+  // Add arbitrary items.
+  for (int i = 0; i < item_count; ++i) {
+    syncer::LocalDataItemModel item;
+    std::string index_string = base::ToString(i);
+    item.id = syncer::LocalDataItemModel::DataId(index_string);
+    item.title = "data_title_" + index_string;
+    item.subtitle = "data_subtitle_" + index_string;
+    description.local_data_models.push_back(std::move(item));
   }
+  return description;
+}
 
-  bool MoveToAccountStorage(
-      const std::vector<syncer::LocalDataItemModel::DataId>& item_ids_to_move)
-      override {
-    return true;
+std::vector<syncer::LocalDataItemModel::DataId> GetItemIds(int item_count) {
+  std::vector<syncer::LocalDataItemModel::DataId> item_ids;
+  for (int i = 0; i < item_count; ++i) {
+    item_ids.emplace_back(base::ToString(i));
   }
-
-  std::vector<syncer::LocalDataItemModel::DataId> GetItemIds() {
-    std::vector<syncer::LocalDataItemModel::DataId> item_ids;
-    for (int i = 0; i < item_count_; ++i) {
-      item_ids.push_back(syncer::LocalDataItemModel::DataId(base::ToString(i)));
-    }
-    return item_ids;
-  }
-
- private:
-  int item_count_ = 0;
-};
+  return item_ids;
+}
 
 // Unable to use `content::SimulateKeyPress()` helper function since it sets
 // `event.skip_if_unhandled` to true which stops the propagation of the event to
@@ -104,6 +88,7 @@ class BatchUploadDialogViewBrowserTest : public InProcessBrowserTest {
   BatchUploadDialogView* CreateBatchUploadDialogView(
       Profile* profile,
       std::vector<syncer::LocalDataDescription> local_data_description_list,
+      BatchUploadService::EntryPoint entry_point,
       BatchUploadSelectedDataTypeItemsCallback complete_callback) {
     content::TestNavigationObserver observer{
         GURL(chrome::kChromeUIBatchUploadURL)};
@@ -111,7 +96,7 @@ class BatchUploadDialogViewBrowserTest : public InProcessBrowserTest {
 
     BatchUploadDialogView* dialog_view =
         BatchUploadDialogView::CreateBatchUploadDialogView(
-            *browser(), std::move(local_data_description_list),
+            *browser(), std::move(local_data_description_list), entry_point,
             std::move(complete_callback));
 
     observer.Wait();
@@ -150,10 +135,6 @@ class BatchUploadDialogViewBrowserTest : public InProcessBrowserTest {
   }
 
   base::HistogramTester histogram_tester_;
-
-  // Needed to make sure the mojo binders are set.
-  base::test::ScopedFeatureList scoped_feature_list_{
-      switches::kBatchUploadDesktop};
 };
 
 IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
@@ -162,11 +143,14 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   base::MockCallback<BatchUploadSelectedDataTypeItemsCallback> mock_callback;
 
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type = syncer::DataType::PASSWORDS;
+  descriptions.push_back(GetFakeLocalData(type, 1));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordManagerSettings;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
 
   EXPECT_CALL(mock_callback, Run(kEmptySelectedMap)).Times(1);
 
@@ -179,10 +163,10 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
       {"Sync.BatchUpload.DialogCloseReason", 1}};
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectUniqueSample(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DataTypeAvailable",
+                                        DataTypeHistogramValue(type), 1);
   histogram_tester().ExpectUniqueSample(
       "Sync.BatchUpload.DialogCloseReason",
       BatchUploadDialogCloseReason::kCancelClicked, 1);
@@ -196,12 +180,14 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   syncer::DataType input_type = syncer::DataType::PASSWORDS;
   EXPECT_CALL(mock_callback, Run(kEmptySelectedMap)).Times(1);
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordManagerSettings;
   {
-    BatchUploadDataProviderFake fake_provider(input_type, 1);
     std::vector<syncer::LocalDataDescription> descriptions;
-    descriptions.push_back(fake_provider.GetLocalData());
+    descriptions.push_back(GetFakeLocalData(input_type, 1));
     BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-        browser()->profile(), std::move(descriptions), mock_callback.Get());
+        browser()->profile(), std::move(descriptions), entry_point,
+        mock_callback.Get());
 
     // Simulate the widget closing without user action.
     views::Widget* widget = dialog_view->GetWidget();
@@ -217,7 +203,8 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
   histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DataTypeAvailable",
                                         DataTypeHistogramValue(input_type), 1);
   histogram_tester().ExpectUniqueSample(
@@ -230,11 +217,14 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   SigninWithFullInfo();
 
   base::MockCallback<BatchUploadSelectedDataTypeItemsCallback> mock_callback;
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type = syncer::DataType::PASSWORDS;
+  descriptions.push_back(GetFakeLocalData(type, 1));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordPromoCard;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
 
   // Pressing the escape key should dismiss the dialog and return empty result.
   EXPECT_CALL(mock_callback, Run(kEmptySelectedMap)).Times(1);
@@ -249,10 +239,10 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectUniqueSample(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DataTypeAvailable",
+                                        DataTypeHistogramValue(type), 1);
   histogram_tester().ExpectUniqueSample(
       "Sync.BatchUpload.DialogCloseReason",
       BatchUploadDialogCloseReason::kDismissed, 1);
@@ -274,11 +264,14 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   EXPECT_CALL(mock_callback, Run(kEmptySelectedMap)).Times(1);
 
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type = syncer::DataType::PASSWORDS;
+  descriptions.push_back(GetFakeLocalData(type, 1));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordPromoCard;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
   ASSERT_TRUE(dialog_view->GetWidget()->IsVisible());
 
   // Signing out should close the dialog.
@@ -292,10 +285,10 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectUniqueSample(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DataTypeAvailable",
+                                        DataTypeHistogramValue(type), 1);
   histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DialogCloseReason",
                                         BatchUploadDialogCloseReason::kSignout,
                                         1);
@@ -317,11 +310,14 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   EXPECT_CALL(mock_callback, Run(kEmptySelectedMap)).Times(1);
 
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type = syncer::DataType::PASSWORDS;
+  descriptions.push_back(GetFakeLocalData(type, 1));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordPromoCard;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
   ASSERT_TRUE(dialog_view->GetWidget()->IsVisible());
 
   // Signing out should close the dialog.
@@ -335,10 +331,10 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectUniqueSample(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.DataTypeAvailable",
+                                        DataTypeHistogramValue(type), 1);
   histogram_tester().ExpectUniqueSample(
       "Sync.BatchUpload.DialogCloseReason",
       BatchUploadDialogCloseReason::kSiginPending, 1);
@@ -350,20 +346,23 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   base::MockCallback<BatchUploadSelectedDataTypeItemsCallback> mock_callback;
 
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
-  BatchUploadDataProviderFake fake_provider2(syncer::DataType::CONTACT_INFO, 2);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  descriptions.push_back(fake_provider2.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type1 = syncer::DataType::PASSWORDS;
+  int count1 = 1;
+  descriptions.push_back(GetFakeLocalData(type1, count1));
+  syncer::DataType type2 = syncer::DataType::CONTACT_INFO;
+  int count2 = 2;
+  descriptions.push_back(GetFakeLocalData(type2, count2));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordPromoCard;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
 
   std::map<syncer::DataType, std::vector<syncer::LocalDataItemModel::DataId>>
       result;
-  result.insert_or_assign(fake_provider.GetDataType(),
-                          fake_provider.GetItemIds());
-  result.insert_or_assign(fake_provider2.GetDataType(),
-                          fake_provider2.GetItemIds());
+  result.insert_or_assign(type1, GetItemIds(count1));
+  result.insert_or_assign(type2, GetItemIds(count2));
   EXPECT_CALL(mock_callback, Run(result)).Times(1);
   dialog_view->OnDialogSelectionMade(result);
   views::test::WidgetDestroyedWaiter(dialog_view->GetWidget()).Wait();
@@ -377,19 +376,16 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider2.GetDataType()), 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeSelected",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeSelected",
-      DataTypeHistogramValue(fake_provider2.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeAvailable",
+                                       DataTypeHistogramValue(type1), 1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeAvailable",
+                                       DataTypeHistogramValue(type2), 1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeSelected",
+                                       DataTypeHistogramValue(type1), 1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeSelected",
+                                       DataTypeHistogramValue(type2), 1);
   histogram_tester().ExpectUniqueSample(
       "Sync.BatchUpload.DataTypeSelectedItemPercentage", 100, 2);
   histogram_tester().ExpectUniqueSample(
@@ -403,24 +399,27 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
 
   base::MockCallback<BatchUploadSelectedDataTypeItemsCallback> mock_callback;
 
-  BatchUploadDataProviderFake fake_provider(syncer::DataType::PASSWORDS, 1);
-  BatchUploadDataProviderFake fake_provider2(syncer::DataType::CONTACT_INFO, 2);
   std::vector<syncer::LocalDataDescription> descriptions;
-  descriptions.push_back(fake_provider.GetLocalData());
-  descriptions.push_back(fake_provider2.GetLocalData());
-  BatchUploadDialogView* dialog_view = CreateBatchUploadDialogView(
-      browser()->profile(), std::move(descriptions), mock_callback.Get());
+  syncer::DataType type1 = syncer::DataType::PASSWORDS;
+  descriptions.push_back(GetFakeLocalData(type1, 1));
+  syncer::DataType type2 = syncer::DataType::CONTACT_INFO;
+  int count2 = 2;
+  descriptions.push_back(GetFakeLocalData(type2, count2));
+  BatchUploadService::EntryPoint entry_point =
+      BatchUploadService::EntryPoint::kPasswordPromoCard;
+  BatchUploadDialogView* dialog_view =
+      CreateBatchUploadDialogView(browser()->profile(), std::move(descriptions),
+                                  entry_point, mock_callback.Get());
 
   std::map<syncer::DataType, std::vector<syncer::LocalDataItemModel::DataId>>
       result;
   std::vector<syncer::LocalDataItemModel::DataId> empty;
-  result.insert_or_assign(fake_provider.GetDataType(), empty);
+  result.insert_or_assign(type1, empty);
   // Remove one element of the two.
-  auto partial_selection_ids_descriptions_2 = fake_provider2.GetItemIds();
+  auto partial_selection_ids_descriptions_2 = GetItemIds(count2);
   partial_selection_ids_descriptions_2.pop_back();
   ASSERT_GE(partial_selection_ids_descriptions_2.size(), 1u);
-  result.insert_or_assign(fake_provider2.GetDataType(),
-                          partial_selection_ids_descriptions_2);
+  result.insert_or_assign(type2, partial_selection_ids_descriptions_2);
   EXPECT_CALL(mock_callback, Run(result)).Times(1);
   // Result is of the form {{}, {"0"}}.
   dialog_view->OnDialogSelectionMade(result);
@@ -435,19 +434,16 @@ IN_PROC_BROWSER_TEST_F(BatchUploadDialogViewBrowserTest,
   };
   EXPECT_THAT(histogram_tester().GetTotalCountsForPrefix("Sync.BatchUpload."),
               testing::ContainerEq(expected_histograms_count));
-  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", true, 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeAvailable",
-      DataTypeHistogramValue(fake_provider2.GetDataType()), 1);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeSelected",
-      DataTypeHistogramValue(fake_provider.GetDataType()), 0);
-  histogram_tester().ExpectBucketCount(
-      "Sync.BatchUpload.DataTypeSelected",
-      DataTypeHistogramValue(fake_provider2.GetDataType()), 1);
+  histogram_tester().ExpectUniqueSample("Sync.BatchUpload.Opened", entry_point,
+                                        1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeAvailable",
+                                       DataTypeHistogramValue(type1), 1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeAvailable",
+                                       DataTypeHistogramValue(type2), 1);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeSelected",
+                                       DataTypeHistogramValue(type1), 0);
+  histogram_tester().ExpectBucketCount("Sync.BatchUpload.DataTypeSelected",
+                                       DataTypeHistogramValue(type2), 1);
   histogram_tester().ExpectUniqueSample(
       "Sync.BatchUpload.DataTypeSelectedItemPercentage", 50, 1);
   histogram_tester().ExpectUniqueSample(

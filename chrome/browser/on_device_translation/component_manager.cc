@@ -113,11 +113,10 @@ ComponentManager& ComponentManager::GetInstance() {
 }
 
 // static
-void ComponentManager::SetForTesting(ComponentManager* manager) {
-  // There should not be any testing manager when setting a testing manager.
-  // Also there should be a testing manager when resetting it.
-  CHECK_EQ(!component_manager_for_test_, !!manager);
-  component_manager_for_test_ = manager;
+base::AutoReset<ComponentManager*> ComponentManager::SetForTesting(
+    ComponentManager* manager) {
+  return base::AutoReset<ComponentManager*>(&component_manager_for_test_,
+                                            manager);
 }
 
 ComponentManager::ComponentManager()
@@ -226,7 +225,7 @@ ComponentManager::GetLanguagePackInfoFromCommandLine() {
 #endif  // BUILDFLAG(IS_WIN)
                         base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
   if (splitted_strings.size() % 3 != 0) {
-    LOG(ERROR) << "Invalid --translate-kit-packages flag";
+    LOG(ERROR) << "Invalid --" << kTranslateKitPackagePaths << " flag.";
     return std::nullopt;
   }
 
@@ -234,7 +233,7 @@ ComponentManager::GetLanguagePackInfoFromCommandLine() {
   auto it = splitted_strings.begin();
   while (it != splitted_strings.end()) {
     if (!base::IsStringASCII(*it) || !base::IsStringASCII(*(it + 1))) {
-      LOG(ERROR) << "Invalid --translate-kit-packages flag";
+      LOG(ERROR) << "Invalid --" << kTranslateKitPackagePaths << " flag.";
       return std::nullopt;
     }
     LanguagePackInfo package;

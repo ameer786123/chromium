@@ -16,10 +16,9 @@
 #include "base/threading/thread_checker.h"
 #include "base/token.h"
 #include "media/capture/video_capture_types.h"
-#include "third_party/blink/public/common/media/video_capture.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/platform/media/video_capture.h"
 #include "third_party/blink/public/platform/web_common.h"
-#include "third_party/blink/public/platform/web_vector.h"
 
 namespace blink {
 
@@ -143,7 +142,7 @@ class BLINK_PLATFORM_EXPORT WebVideoCaptureImplManager {
   void UnrefDevice(const media::VideoCaptureSessionId& id);
 
   // Devices currently in use.
-  WebVector<DeviceEntry> devices_;
+  std::vector<DeviceEntry> devices_;
 
   // This is an internal ID for identifying clients of VideoCaptureImpl.
   // The ID is global for the render process.

@@ -19,13 +19,15 @@ import android.util.Pair;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.FeatureList;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -44,6 +46,7 @@ import java.util.concurrent.TimeoutException;
 @Config(manifest = Config.NONE)
 public class MerchantTrustMessageSchedulerTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private MessageDispatcher mMockMessageDispatcher;
 
     @Mock private WebContents mMockWebContents;
@@ -60,8 +63,6 @@ public class MerchantTrustMessageSchedulerTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-
         doAnswer(
                         invocation -> {
                             Runnable runnable = (Runnable) invocation.getArguments()[0];
@@ -111,12 +112,10 @@ public class MerchantTrustMessageSchedulerTest {
 
     @Test
     public void testSchedule_DisableMessageForImpactStudy() throws TimeoutException {
-        FeatureList.TestValues testValues = new FeatureList.TestValues();
-        testValues.addFieldTrialParamOverride(
+        FeatureOverrides.overrideParam(
                 ChromeFeatureList.COMMERCE_MERCHANT_VIEWER,
                 MerchantViewerConfig.TRUST_SIGNALS_MESSAGE_DISABLED_FOR_IMPACT_STUDY_PARAM,
-                "true");
-        FeatureList.setTestValues(testValues);
+                true);
 
         MerchantTrustSignalsCallbackHelper callbackHelper =
                 new MerchantTrustSignalsCallbackHelper();

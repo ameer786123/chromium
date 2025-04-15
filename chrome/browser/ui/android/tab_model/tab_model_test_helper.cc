@@ -40,7 +40,8 @@ void TestTabModel::CreateTab(TabAndroid* parent,
 void TestTabModel::HandlePopupNavigation(TabAndroid* parent,
                                          NavigateParams* params) {}
 
-content::WebContents* TestTabModel::CreateNewTabForDevTools(const GURL& url) {
+content::WebContents* TestTabModel::CreateNewTabForDevTools(const GURL& url,
+                                                            bool new_window) {
   return nullptr;
 }
 
@@ -49,7 +50,11 @@ bool TestTabModel::IsSessionRestoreInProgress() const {
 }
 
 bool TestTabModel::IsActiveModel() const {
-  return false;
+  return is_active_;
+}
+
+void TestTabModel::SetIsActiveModel(bool is_active) {
+  is_active_ = is_active;
 }
 
 TabAndroid* TestTabModel::GetTabAt(int index) const {
@@ -57,6 +62,8 @@ TabAndroid* TestTabModel::GetTabAt(int index) const {
 }
 
 void TestTabModel::SetActiveIndex(int index) {}
+
+void TestTabModel::ForceCloseAllTabs() {}
 
 void TestTabModel::CloseTabAt(int index) {}
 
@@ -91,3 +98,7 @@ int TestTabModel::GetTabCountNavigatedInTimeWindow(
 
 void TestTabModel::CloseTabsNavigatedInTimeWindow(const base::Time& begin_time,
                                                   const base::Time& end_time) {}
+
+bool TestTabModel::IsTabInTabGroup(TabAndroid* tab) {
+  return false;
+}

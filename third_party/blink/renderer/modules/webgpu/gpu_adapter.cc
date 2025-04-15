@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/webgpu/gpu_adapter.h"
 
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -32,99 +27,30 @@ namespace blink {
 
 namespace {
 
-std::optional<V8GPUFeatureName::Enum> ToV8FeatureNameEnum(wgpu::FeatureName f) {
-  switch (f) {
-    case wgpu::FeatureName::Depth32FloatStencil8:
-      return V8GPUFeatureName::Enum::kDepth32FloatStencil8;
-    case wgpu::FeatureName::TimestampQuery:
-      return V8GPUFeatureName::Enum::kTimestampQuery;
-    case wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses:
-      return V8GPUFeatureName::Enum::
-          kChromiumExperimentalTimestampQueryInsidePasses;
-    case wgpu::FeatureName::TextureCompressionBC:
-      return V8GPUFeatureName::Enum::kTextureCompressionBc;
-    case wgpu::FeatureName::TextureCompressionETC2:
-      return V8GPUFeatureName::Enum::kTextureCompressionEtc2;
-    case wgpu::FeatureName::TextureCompressionASTC:
-      return V8GPUFeatureName::Enum::kTextureCompressionAstc;
-    case wgpu::FeatureName::IndirectFirstInstance:
-      return V8GPUFeatureName::Enum::kIndirectFirstInstance;
-    case wgpu::FeatureName::DepthClipControl:
-      return V8GPUFeatureName::Enum::kDepthClipControl;
-    case wgpu::FeatureName::RG11B10UfloatRenderable:
-      return V8GPUFeatureName::Enum::kRg11B10UfloatRenderable;
-    case wgpu::FeatureName::BGRA8UnormStorage:
-      return V8GPUFeatureName::Enum::kBgra8UnormStorage;
-    case wgpu::FeatureName::ChromiumExperimentalSubgroups:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalSubgroups;
-    case wgpu::FeatureName::ChromiumExperimentalSubgroupUniformControlFlow:
-      return V8GPUFeatureName::Enum::
-          kChromiumExperimentalSubgroupUniformControlFlow;
-    case wgpu::FeatureName::ShaderF16:
-      return V8GPUFeatureName::Enum::kShaderF16;
-    case wgpu::FeatureName::Float32Filterable:
-      return V8GPUFeatureName::Enum::kFloat32Filterable;
-    case wgpu::FeatureName::Float32Blendable:
-      return V8GPUFeatureName::Enum::kFloat32Blendable;
-    case wgpu::FeatureName::DualSourceBlending:
-      return V8GPUFeatureName::Enum::kDualSourceBlending;
-    case wgpu::FeatureName::Subgroups:
-      return V8GPUFeatureName::Enum::kSubgroups;
-    case wgpu::FeatureName::SubgroupsF16:
-      return V8GPUFeatureName::Enum::kSubgroupsF16;
-    case wgpu::FeatureName::ClipDistances:
-      return V8GPUFeatureName::Enum::kClipDistances;
-    case wgpu::FeatureName::MultiDrawIndirect:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalMultiDrawIndirect;
-    case wgpu::FeatureName::Unorm16TextureFormats:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalUnorm16TextureFormats;
-    case wgpu::FeatureName::Snorm16TextureFormats:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalSnorm16TextureFormats;
-    default:
-      return std::nullopt;
-  }
-}
-
-}  // anonymous namespace
-
-namespace {
-
-GPUSupportedFeatures* MakeFeatureNameSet(wgpu::Adapter adapter,
-                                         ExecutionContext* execution_context) {
+// TODO(crbug.com/351564777): should be UNSAFE_BUFFER_USAGE
+GPUSupportedFeatures* MakeFeatureNameSet(wgpu::Adapter adapter) {
   GPUSupportedFeatures* features = MakeGarbageCollected<GPUSupportedFeatures>();
   DCHECK(features->FeatureNameSet().empty());
 
-  size_t feature_count = adapter.EnumerateFeatures(nullptr);
-  DCHECK(feature_count <= std::numeric_limits<wtf_size_t>::max());
-
-  Vector<wgpu::FeatureName> feature_names(
-      static_cast<wtf_size_t>(feature_count));
-  adapter.EnumerateFeatures(feature_names.data());
-
-  for (wgpu::FeatureName f : feature_names) {
-    auto feature_name_enum_optional = ToV8FeatureNameEnum(f);
+  wgpu::SupportedFeatures supported_features;
+  adapter.GetFeatures(&supported_features);
+  // SAFETY: Required from caller
+  const auto features_span = UNSAFE_BUFFERS(base::span<const wgpu::FeatureName>(
+      supported_features.features, supported_features.featureCount));
+  for (const auto& f : features_span) {
+    auto feature_name_enum_optional =
+        GPUSupportedFeatures::ToV8FeatureNameEnum(f);
     if (feature_name_enum_optional) {
-      V8GPUFeatureName::Enum feature_name_enum =
-          feature_name_enum_optional.value();
-      // Subgroups features are under OT.
-      // TODO(crbug.com/349125474): remove this check after subgroups features
-      // OT finished.
-      if ((feature_name_enum_optional == V8GPUFeatureName::Enum::kSubgroups) ||
-          (feature_name_enum_optional ==
-           V8GPUFeatureName::Enum::kSubgroupsF16)) {
-        if (!RuntimeEnabledFeatures::WebGPUSubgroupsFeaturesEnabled(
-                execution_context)) {
-          continue;
-        }
+      features->AddFeatureName(
+          V8GPUFeatureName(feature_name_enum_optional.value()));
       }
-      features->AddFeatureName(V8GPUFeatureName(feature_name_enum));
-    }
   }
   return features;
 }
 
 }  // anonymous namespace
 
+// TODO(crbug.com/351564777): should be UNSAFE_BUFFER_USAGE
 GPUAdapter::GPUAdapter(
     GPU* gpu,
     wgpu::Adapter handle,
@@ -133,6 +59,9 @@ GPUAdapter::GPUAdapter(
     : DawnObject(dawn_control_client, std::move(handle), String()), gpu_(gpu) {
   wgpu::AdapterInfo info = {};
   wgpu::ChainedStructOut** propertiesChain = &info.nextInChain;
+  wgpu::AdapterPropertiesSubgroups subgroupsProperties = {};
+  *propertiesChain = &subgroupsProperties;
+  propertiesChain = &(*propertiesChain)->nextInChain;
   wgpu::AdapterPropertiesMemoryHeaps memoryHeapProperties = {};
   if (GetHandle().HasFeature(wgpu::FeatureName::AdapterPropertiesMemoryHeaps)) {
     *propertiesChain = &memoryHeapProperties;
@@ -152,11 +81,14 @@ GPUAdapter::GPUAdapter(
     *propertiesChain = &vkProperties;
     propertiesChain = &(*propertiesChain)->nextInChain;
   }
+  wgpu::DawnAdapterPropertiesPowerPreference powerProperties{};
+  *propertiesChain = &powerProperties;
+  propertiesChain = &(*propertiesChain)->nextInChain;
+
   GetHandle().GetInfo(&info);
   is_fallback_adapter_ = info.adapterType == wgpu::AdapterType::CPU;
   adapter_type_ = info.adapterType;
   backend_type_ = info.backendType;
-  is_compatibility_mode_ = info.compatibilityMode;
 
   // TODO(crbug.com/359418629): Report xr compatibility in GetInfo()
   is_xr_compatible_ = options->xrCompatible();
@@ -172,7 +104,7 @@ GPUAdapter::GPUAdapter(
   driver_ = String::FromUTF8(info.description);
   for (size_t i = 0; i < memoryHeapProperties.heapCount; ++i) {
     memory_heaps_.push_back(MakeGarbageCollected<GPUMemoryHeapInfo>(
-        memoryHeapProperties.heapInfo[i]));
+        UNSAFE_TODO(memoryHeapProperties.heapInfo[i])));
   }
   if (supportsPropertiesD3D) {
     d3d_shader_model_ = d3dProperties.shaderModel;
@@ -180,34 +112,38 @@ GPUAdapter::GPUAdapter(
   if (supportsPropertiesVk) {
     vk_driver_version_ = vkProperties.driverVersion;
   }
+  subgroup_min_size_ = subgroupsProperties.subgroupMinSize;
+  subgroup_max_size_ = subgroupsProperties.subgroupMaxSize;
+  power_preference_ = powerProperties.powerPreference;
 
-  features_ = MakeFeatureNameSet(GetHandle(), gpu_->GetExecutionContext());
+  features_ = MakeFeatureNameSet(GetHandle());
 
-  wgpu::SupportedLimits limits = {};
-  // Chain to get experimental subgroup limits, if support subgroups feature.
-  wgpu::DawnExperimentalSubgroupLimits subgroupLimits = {};
-  // TODO(crbug.com/349125474): Remove deprecated ChromiumExperimentalSubgroups.
-  if (features_->has(V8GPUFeatureName::Enum::kChromiumExperimentalSubgroups) ||
-      features_->has(V8GPUFeatureName::Enum::kSubgroups)) {
-    limits.nextInChain = &subgroupLimits;
-  }
-
+  wgpu::Limits limits = {};
   GetHandle().GetLimits(&limits);
   limits_ = MakeGarbageCollected<GPUSupportedLimits>(limits);
 
+  info_ = CreateAdapterInfoForAdapter();
+}
+
+GPUAdapterInfo* GPUAdapter::CreateAdapterInfoForAdapter() {
+  GPUAdapterInfo* info;
   if (RuntimeEnabledFeatures::WebGPUDeveloperFeaturesEnabled()) {
     // If WebGPU developer features have been enabled then provide all available
     // adapter info values.
-    info_ = MakeGarbageCollected<GPUAdapterInfo>(
-        vendor_, architecture_, device_, description_, driver_,
+    info = MakeGarbageCollected<GPUAdapterInfo>(
+        vendor_, architecture_, subgroup_min_size_, subgroup_max_size_,
+        is_fallback_adapter_, device_, description_, driver_,
         FromDawnEnum(backend_type_), FromDawnEnum(adapter_type_),
-        d3d_shader_model_, vk_driver_version_);
+        d3d_shader_model_, vk_driver_version_, FromDawnEnum(power_preference_));
     for (GPUMemoryHeapInfo* memory_heap : memory_heaps_) {
-      info_->AppendMemoryHeapInfo(memory_heap);
+      info->AppendMemoryHeapInfo(memory_heap);
     }
   } else {
-    info_ = MakeGarbageCollected<GPUAdapterInfo>(vendor_, architecture_);
+    info = MakeGarbageCollected<GPUAdapterInfo>(
+        vendor_, architecture_, subgroup_min_size_, subgroup_max_size_,
+        is_fallback_adapter_);
   }
+  return info;
 }
 
 void GPUAdapter::AddConsoleWarning(ExecutionContext* execution_context,
@@ -251,10 +187,6 @@ bool GPUAdapter::SupportsMultiPlanarFormats() const {
   return GetHandle().HasFeature(wgpu::FeatureName::DawnMultiPlanarFormats);
 }
 
-bool GPUAdapter::isCompatibilityMode() const {
-  return is_compatibility_mode_;
-}
-
 void GPUAdapter::OnRequestDeviceCallback(
     GPUDevice* device,
     const GPUDeviceDescriptor* descriptor,
@@ -284,7 +216,7 @@ void GPUAdapter::OnRequestDeviceCallback(
       if (device_lost_info) {
         // Ensure the Dawn device is marked as lost as well.
         device->InjectError(
-            wgpu::ErrorType::DeviceLost,
+            wgpu::ErrorType::Internal,
             "Device was marked as lost due to a stale adapter.");
       }
 
@@ -298,8 +230,7 @@ void GPUAdapter::OnRequestDeviceCallback(
     }
 
     case wgpu::RequestDeviceStatus::Error:
-    case wgpu::RequestDeviceStatus::Unknown:
-    case wgpu::RequestDeviceStatus::InstanceDropped:
+    case wgpu::RequestDeviceStatus::CallbackCancelled:
       if (dawn_device) {
         // A device provided with an error is already a lost device on the Dawn
         // side, reflect that by resolving the lost property immediately.
@@ -331,7 +262,7 @@ ScriptPromise<GPUDevice> GPUAdapter::requestDevice(
 
   wgpu::DeviceDescriptor dawn_desc = {};
 
-  wgpu::RequiredLimits required_limits = {};
+  wgpu::Limits required_limits = {};
   if (descriptor->hasRequiredLimits()) {
     dawn_desc.requiredLimits = &required_limits;
     GPUSupportedLimits::MakeUndefined(&required_limits);
@@ -357,7 +288,7 @@ ScriptPromise<GPUDevice> GPUAdapter::requestDevice(
     HashSet<wgpu::FeatureName> required_features_set;
     for (const V8GPUFeatureName& f : descriptor->requiredFeatures()) {
       // If the feature is not a valid feature reject with a type error.
-      if (!features_->has(f.AsEnum())) {
+      if (!features_->Has(f.AsEnum())) {
         resolver->RejectWithTypeError(
             String::Format("Unsupported feature: %s", f.AsCStr()));
         return promise;
@@ -387,12 +318,7 @@ ScriptPromise<GPUDevice> GPUAdapter::requestDevice(
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   auto* device = MakeGarbageCollected<GPUDevice>(
       execution_context, GetDawnControlClient(), this, descriptor->label());
-  dawn_desc.SetUncapturedErrorCallback(
-      device->error_callback()->UnboundCallback(),
-      device->error_callback()->AsUserdata());
-  dawn_desc.SetDeviceLostCallback(wgpu::CallbackMode::AllowSpontaneous,
-                                  device->lost_callback()->UnboundCallback(),
-                                  device->lost_callback()->AsUserdata());
+  device->SetDescriptorCallbacks(dawn_desc);
 
   auto* callback = MakeWGPUOnceCallback(resolver->WrapCallbackInScriptScope(
       WTF::BindOnce(&GPUAdapter::OnRequestDeviceCallback, WrapPersistent(this),
@@ -404,11 +330,6 @@ ScriptPromise<GPUDevice> GPUAdapter::requestDevice(
   EnsureFlush(ToEventLoop(script_state));
 
   return promise;
-}
-
-ScriptPromise<GPUAdapterInfo> GPUAdapter::requestAdapterInfo(
-    ScriptState* script_state) {
-  return ToResolvedPromise<GPUAdapterInfo>(script_state, info_);
 }
 
 void GPUAdapter::Trace(Visitor* visitor) const {

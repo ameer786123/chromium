@@ -40,7 +40,6 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/event_handler_registry.h"
@@ -119,7 +118,8 @@ TouchAction AdjustTouchActionForElement(TouchAction touch_action,
                                         Element* element) {
   Element* document_element = element->GetDocument().documentElement();
   bool scrolls_overflow = builder.ScrollsOverflow();
-  if (element == element->GetDocument().FirstBodyElement()) {
+  if (IsA<HTMLBodyElement>(element) &&
+      element == element->GetDocument().FirstBodyElement()) {
     // Body scrolls overflow if html root overflow is not visible or the
     // propagation of overflow is stopped by containment.
     if (parent_style.IsOverflowVisibleAlongBothAxes()) {
@@ -132,9 +132,14 @@ TouchAction AdjustTouchActionForElement(TouchAction touch_action,
   bool is_child_document =
       element == document_element && element->GetDocument().LocalOwner();
   if (scrolls_overflow || is_child_document) {
-    return touch_action | TouchAction::kPan |
-           TouchAction::kInternalPanXScrolls |
-           TouchAction::kInternalNotWritable;
+    touch_action |= TouchAction::kPan | TouchAction::kInternalPanXScrolls |
+                    TouchAction::kInternalNotWritable;
+    // TODO(crbug.com/378027646): Remove after making a decision regarding
+    // handwriting enablement.
+    touch_action |= TouchAction::kInternalHandwritingPanningRules;
+  }
+  if (is_child_document) {
+    touch_action |= TouchAction::kInternalHandwriting;
   }
   return touch_action;
 }
@@ -149,6 +154,28 @@ bool HostIsInputFile(const Element* element) {
     }
   }
   return false;
+}
+
+// We need to avoid to inlinify children of <fieldset>, <audio>, and <video>.
+// They create dedicated LayoutObjects, and assume only block children.
+bool ShouldBeInlinified(const Element* element) {
+  if (!element) {
+    return true;
+  }
+  const Element* parent;
+  if (RuntimeEnabledFeatures::RubyFieldsetCrashFixEnabled()) {
+    parent = FlatTreeTraversal::ParentElement(*element);
+    while (parent) {
+      const ComputedStyle* parent_style = parent->GetComputedStyle();
+      if (!parent_style || parent_style->Display() != EDisplay::kContents) {
+        break;
+      }
+      parent = FlatTreeTraversal::ParentElement(*parent);
+    }
+  } else {
+    parent = element->ParentOrShadowHostElement();
+  }
+  return !IsA<HTMLFieldSetElement>(parent) && !IsA<HTMLMediaElement>(parent);
 }
 
 }  // namespace
@@ -267,11 +294,9 @@ static EDisplay EquivalentBlockDisplay(EDisplay display) {
     case EDisplay::kRubyText:
       return EDisplay::kBlock;
     case EDisplay::kNone:
-      NOTREACHED_IN_MIGRATION();
-      return display;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return EDisplay::kBlock;
+  NOTREACHED();
 }
 
 // https://drafts.csswg.org/css-display/#inlinify
@@ -327,11 +352,9 @@ static EDisplay EquivalentInlineDisplay(EDisplay display) {
       return display;
 
     case EDisplay::kNone:
-      NOTREACHED_IN_MIGRATION();
-      return display;
+      NOTREACHED();
   }
-  NOTREACHED_IN_MIGRATION();
-  return EDisplay::kBlock;
+  NOTREACHED();
 }
 
 static bool IsOutermostSVGElement(const Element* element) {
@@ -396,9 +419,9 @@ void StyleAdjuster::AdjustStyleForEditing(ComputedStyleBuilder& builder,
 void StyleAdjuster::AdjustStyleForTextCombine(ComputedStyleBuilder& builder) {
   DCHECK_EQ(builder.Display(), EDisplay::kInlineBlock);
   // Set box sizes
-  const Font& font = builder.GetFont();
-  DCHECK(font.GetFontDescription().IsVerticalBaseline());
-  const auto one_em = ComputedStyle::ComputedFontSizeAsFixed(builder.GetFont());
+  const Font* font = builder.GetFont();
+  DCHECK(font->GetFontDescription().IsVerticalBaseline());
+  const auto one_em = ComputedStyle::ComputedFontSizeAsFixed(*font);
   const auto line_height = builder.FontHeight();
   const auto size =
       LengthSize(Length::Fixed(line_height), Length::Fixed(one_em));
@@ -430,7 +453,7 @@ void StyleAdjuster::AdjustStyleForCombinedText(ComputedStyleBuilder& builder) {
   builder.UpdateFontOrientation();
 
 #if DCHECK_IS_ON()
-  DCHECK_EQ(builder.GetFont().GetFontDescription().Orientation(),
+  DCHECK_EQ(builder.GetFont()->GetFontDescription().Orientation(),
             FontOrientation::kHorizontal);
   const ComputedStyle* cloned_style = builder.CloneStyle();
   LayoutTextCombine::AssertStyleIsValid(*cloned_style);
@@ -487,6 +510,10 @@ static void AdjustStyleForMarker(ComputedStyleBuilder& builder,
 
 static void AdjustStyleForHTMLElement(ComputedStyleBuilder& builder,
                                       HTMLElement& element) {
+  if (builder.HasBaseSelectAppearance()) {
+    builder.SetInBaseSelectAppearance(true);
+  }
+
   // <div> and <span> are the most common elements on the web, we skip all the
   // work for them.
   if (IsA<HTMLDivElement>(element) || IsA<HTMLSpanElement>(element)) {
@@ -670,8 +697,9 @@ void StyleAdjuster::AdjustOverflow(ComputedStyleBuilder& builder,
 // g-issues.chromium.org/issues/349835587
 // https://github.com/WICG/canvas-place-element
 static bool IsCanvasPlacedElement(const Element* element) {
-  if (RuntimeEnabledFeatures::CanvasPlaceElementEnabled() && element) {
-    // Only want to do the different layout if placeElement has been called.
+  if (RuntimeEnabledFeatures::CanvasPlaceElementEnabled() && element &&
+      element->IsInCanvasSubtree()) {
+    // Placed elements are always immediate children of the canvas.
     if (const auto* canvas =
             DynamicTo<HTMLCanvasElement>(element->parentElement())) {
       return canvas->HasPlacedElements();
@@ -681,10 +709,23 @@ static bool IsCanvasPlacedElement(const Element* element) {
   return false;
 }
 
-static void AdjustStyleForDisplay(ComputedStyleBuilder& builder,
-                                  const ComputedStyle& layout_parent_style,
-                                  const Element* element,
-                                  Document* document) {
+static bool IsCanvasWithPlacedElements(const Element* element) {
+  if (!RuntimeEnabledFeatures::CanvasPlaceElementEnabled() || !element) {
+    return false;
+  }
+
+  if (const auto* canvas = DynamicTo<HTMLCanvasElement>(element)) {
+    return canvas->HasPlacedElements();
+  }
+
+  return false;
+}
+
+void StyleAdjuster::AdjustStyleForDisplay(
+    ComputedStyleBuilder& builder,
+    const ComputedStyle& layout_parent_style,
+    const Element* element,
+    Document* document) {
   bool is_canvas_placed_element = IsCanvasPlacedElement(element);
 
   if ((layout_parent_style.BlockifiesChildren() && !HostIsInputFile(element)) ||
@@ -706,11 +747,8 @@ static void AdjustStyleForDisplay(ComputedStyleBuilder& builder,
     }
   }
 
-  // We need to avoid to inlinify children of a <fieldset>, which creates a
-  // dedicated LayoutObject and it assumes only block children.
   if (layout_parent_style.InlinifiesChildren() &&
-      !builder.HasOutOfFlowPosition() &&
-      !(element && IsA<HTMLFieldSetElement>(element->parentNode()))) {
+      !builder.HasOutOfFlowPosition() && ShouldBeInlinified(element)) {
     if (builder.IsFloating()) {
       builder.SetFloating(EFloat::kNone);
       if (document) {
@@ -729,9 +767,7 @@ static void AdjustStyleForDisplay(ComputedStyleBuilder& builder,
     }
   }
 
-  // TODO(332396355): Remove temporary blockifing of ::scroll-marker pseudo
-  // elements.
-  if (builder.StyleType() == kPseudoIdScrollMarker) {
+  if (builder.StyleType() == kPseudoIdScrollMarkerGroup) {
     builder.SetDisplay(EquivalentBlockDisplay(builder.Display()));
   }
 
@@ -768,8 +804,7 @@ static void AdjustStyleForDisplay(ComputedStyleBuilder& builder,
   }
 
   // display: -webkit-box when used with (-webkit)-line-clamp
-  if (RuntimeEnabledFeatures::CSSLineClampWebkitBoxBlockificationEnabled() &&
-      builder.BoxOrient() == EBoxOrient::kVertical &&
+  if (builder.BoxOrient() == EBoxOrient::kVertical &&
       (builder.WebkitLineClamp() != 0 || builder.StandardLineClamp() != 0 ||
        builder.HasAutoStandardLineClamp())) {
     if (builder.Display() == EDisplay::kWebkitBox) {
@@ -889,18 +924,45 @@ void StyleAdjuster::AdjustEffectiveTouchAction(
     element_touch_action &= ~TouchAction::kInternalPanXScrolls;
   }
 
-  // TODO(crbug.com/1346169): Full style invalidation is needed when this
+  const bool is_writable = IsEditableElement(element, builder) &&
+                           !IsPasswordFieldWithUnrevealedPassword(element);
+  // TODO(crbug.com/40232387): Full style invalidation is needed when this
   // feature status changes at runtime as it affects the computed style.
   if (RuntimeEnabledFeatures::StylusHandwritingEnabled() &&
       (element_touch_action & TouchAction::kPan) == TouchAction::kPan &&
-      IsEditableElement(element, builder) &&
-      !IsPasswordFieldWithUnrevealedPassword(element)) {
+      is_writable) {
     element_touch_action &= ~TouchAction::kInternalNotWritable;
   }
 
+  const TouchAction effective_touch_action =
+      (element_touch_action & inherited_action) | enforced_by_policy;
   // Apply the adjusted parent effective touch actions.
-  builder.SetEffectiveTouchAction((element_touch_action & inherited_action) |
-                                  enforced_by_policy);
+  builder.SetEffectiveTouchAction(effective_touch_action);
+
+  if (is_writable && effective_touch_action != TouchAction::kNone) {
+    const auto would_lose_handwriting =
+        [effective_touch_action](TouchAction handwriting_touch_action) {
+          return (effective_touch_action & handwriting_touch_action) !=
+                 handwriting_touch_action;
+        };
+    // TODO(crbug.com/378027646) : This use counter counts how many pages would
+    // lose handwriting capabilities on platforms that support it if the
+    // handwriting keyword were implemented on this CSS attribute.
+    if (would_lose_handwriting(TouchAction::kInternalHandwriting)) {
+      UseCounter::Count(
+          element->GetDocument(),
+          WebFeature::kNonNoneTouchActionWouldLoseEditableHandwriting);
+    }
+    // Similar to the use counter above, but this will measure how many pages
+    // would lose handwriting capabilities if the handwriting keyword follows
+    // the rules for panning (being re-enabled when on a scrollable element).
+    if (would_lose_handwriting(TouchAction::kInternalHandwritingPanningRules)) {
+      UseCounter::Count(
+          element->GetDocument(),
+          WebFeature::
+              kNonNoneTouchActionWouldLoseEditableHandwritingRestoredByScroller);
+    }
+  }
 
   // Propagate touch action to child frames.
   if (auto* frame_owner = DynamicTo<HTMLFrameOwnerElement>(element)) {
@@ -914,30 +976,44 @@ void StyleAdjuster::AdjustEffectiveTouchAction(
 
 static void AdjustStyleForInert(ComputedStyleBuilder& builder,
                                 Element* element) {
+  if (RuntimeEnabledFeatures::CSSInertEnabled()) {
+    if (builder.Interactivity() == EInteractivity::kInert &&
+        !builder.InteractivityIsInherited()) {
+      // If the computed value of 'interactivity' is 'inert', set the internal
+      // inertness flag to true. With this flag set, it is not possible to
+      // escape the inertness in the subtree, even if 'interactivity' is set to
+      // 'auto' in a descendant. This is not in line with the current spec.
+      builder.SetIsInert(true);
+      builder.SetIsInertIsInherited(false);
+      return;
+    }
+  }
+
   if (!element) {
     return;
   }
 
-  Document& document = element->GetDocument();
-  if (element->IsInertRoot()) {
-    UseCounter::Count(document, WebFeature::kInertAttribute);
-    builder.SetIsHTMLInert(true);
-    builder.SetIsHTMLInertIsInherited(false);
-    return;
+  if (!RuntimeEnabledFeatures::CSSInertEnabled()) {
+    if (element->IsInertRoot()) {
+      builder.SetIsInert(true);
+      builder.SetIsInertIsInherited(false);
+      return;
+    }
   }
 
+  Document& document = element->GetDocument();
   const Element* modal_element = document.ActiveModalDialog();
   if (!modal_element) {
     modal_element = Fullscreen::FullscreenElementFrom(document);
   }
   if (modal_element == element) {
-    builder.SetIsHTMLInert(false);
-    builder.SetIsHTMLInertIsInherited(false);
+    builder.SetIsInert(false);
+    builder.SetIsInertIsInherited(false);
     return;
   }
   if (modal_element && element == document.documentElement()) {
-    builder.SetIsHTMLInert(true);
-    builder.SetIsHTMLInertIsInherited(false);
+    builder.SetIsInert(true);
+    builder.SetIsInertIsInherited(false);
     return;
   }
 
@@ -945,8 +1021,8 @@ static void AdjustStyleForInert(ComputedStyleBuilder& builder,
     if (base_data->GetBaseComputedStyle()->Display() == EDisplay::kNone) {
       // Elements which are transitioning to display:none should become inert:
       // https://github.com/w3c/csswg-drafts/issues/8389
-      builder.SetIsHTMLInert(true);
-      builder.SetIsHTMLInertIsInherited(false);
+      builder.SetIsInert(true);
+      builder.SetIsInertIsInherited(false);
       return;
     }
   }
@@ -1002,9 +1078,15 @@ void StyleAdjuster::AdjustForForcedColorsMode(ComputedStyleBuilder& builder,
 }
 
 void StyleAdjuster::AdjustForSVGTextElement(ComputedStyleBuilder& builder) {
+  // TODO(mstensho): We only need to reset the properties that may actually
+  // enable multicol here. As of multicol level 1, that's just `column-count`
+  // and `column-width`. Once speccing of level 2 `column-wrap` and
+  // `column-height` is done, these may also become such properties, though.
   builder.SetColumnGap(ComputedStyleInitialValues::InitialColumnGap());
   builder.SetColumnWidthInternal(
       ComputedStyleInitialValues::InitialColumnWidth());
+  builder.SetColumnHeightInternal(
+      ComputedStyleInitialValues::InitialColumnHeight());
   builder.SetColumnRuleStyle(
       ComputedStyleInitialValues::InitialColumnRuleStyle());
   builder.SetColumnRuleWidthInternal(
@@ -1019,7 +1101,10 @@ void StyleAdjuster::AdjustForSVGTextElement(ComputedStyleBuilder& builder) {
       ComputedStyleInitialValues::InitialHasAutoColumnCount());
   builder.SetHasAutoColumnWidthInternal(
       ComputedStyleInitialValues::InitialHasAutoColumnWidth());
+  builder.SetHasAutoColumnHeightInternal(
+      ComputedStyleInitialValues::InitialHasAutoColumnHeight());
   builder.ResetColumnFill();
+  builder.ResetColumnWrap();
   builder.ResetColumnSpan();
 }
 
@@ -1079,8 +1164,24 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
     AdjustStyleForFirstLetter(builder);
     AdjustStyleForMarker(builder, parent_style, &state.GetElement());
 
-    AdjustStyleForDisplay(builder, layout_parent_style, element,
-                          element ? &element->GetDocument() : nullptr);
+    if (builder.StyleType() != kPseudoIdScrollMarker) {
+      AdjustStyleForDisplay(builder, layout_parent_style, element,
+                            element ? &element->GetDocument() : nullptr);
+    }
+
+    if (builder.StyleType() == kPseudoIdScrollMarkerGroup) {
+      // A scroll marker group always needs layout containment, since it
+      // modifies its layout box structure during layout. Only in-flow
+      // positioned scroll marker groups need size containment, though, since
+      // the size of out-of-flow positioned scroll marker groups don't affect
+      // anything on the outside (which is precisely why we DO need it for
+      // in-flow groups).
+      unsigned containment = builder.Contain() | kContainsLayout;
+      if (!builder.HasOutOfFlowPosition()) {
+        containment |= kContainsSize;
+      }
+      builder.SetContain(containment);
+    }
 
     // If this is a child of a LayoutCustom, we need the name of the parent
     // layout function for invalidation purposes.
@@ -1118,7 +1219,7 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
       builder.Overlay() == EOverlay::kAuto ||
       builder.StyleType() == kPseudoIdBackdrop ||
       builder.StyleType() == kPseudoIdViewTransition ||
-      IsCanvasPlacedElement(element)) {
+      IsCanvasPlacedElement(element) || IsCanvasWithPlacedElements(element)) {
     builder.SetForcesStackingContext(true);
   }
 
@@ -1161,7 +1262,8 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
   AdjustForForcedColorsMode(builder, state.GetDocument());
 
   // Let the theme also have a crack at adjusting the style.
-  LayoutTheme::GetTheme().AdjustStyle(element, builder);
+  LayoutTheme::GetTheme().AdjustStyle(
+      element ? element : state.GetPseudoElement(), builder);
 
   AdjustStyleForInert(builder, element);
 
@@ -1234,9 +1336,7 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
     builder.SetElementIsViewTransitionParticipant();
   }
 
-  if (RuntimeEnabledFeatures::
-          CSSContentVisibilityImpliesContainIntrinsicSizeAutoEnabled() &&
-      builder.ContentVisibility() == EContentVisibility::kAuto) {
+  if (builder.ContentVisibility() == EContentVisibility::kAuto) {
     builder.SetContainIntrinsicSizeAuto();
   }
 }

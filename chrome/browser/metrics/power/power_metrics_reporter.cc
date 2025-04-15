@@ -64,8 +64,7 @@ const char* GetMetricSuffixFromProcessType(MonitoredProcessType type) {
     case MonitoredProcessType::kOther:
       return "OtherProcess";
     default:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+      NOTREACHED();
   }
 }
 
@@ -199,11 +198,6 @@ void PowerMetricsReporter::ReportMetrics(
   // suffix.
   const std::vector<const char*> long_interval_suffixes{
       "", long_interval_scenario_params.histogram_suffix};
-
-  if (aggregated_process_metrics.cpu_usage) {
-    TRACE_COUNTER("power", "AverageCPU.Total",
-                  *aggregated_process_metrics.cpu_usage);
-  }
 
   // Report process metrics histograms.
   ReportAggregatedProcessMetricsHistograms(aggregated_process_metrics,

@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "ash/auth/views/auth_input_row_view.h"
 #include "ash/auth/views/auth_view_utils.h"
@@ -26,7 +27,6 @@
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "chromeos/ash/components/cryptohome/auth_factor.h"
-#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -59,13 +59,13 @@ class PinObserverAdapter : public PinContainerView::Observer {
   PinObserverAdapter& operator=(const PinObserverAdapter&) = delete;
 
   // PinContainerView::Observer:
-  void OnSubmit(const std::u16string& text) override {
+  void OnSubmit(std::u16string_view text) override {
     auth_container_->PinSubmit(text);
   }
 
   void OnEscape() override { auth_container_->Escape(); }
 
-  void OnContentsChanged(const std::u16string& text) override {
+  void OnContentsChanged(std::u16string_view text) override {
     auth_container_->ContentsChanged();
   }
 
@@ -86,13 +86,13 @@ class PasswordObserverAdapter : public AuthInputRowView::Observer {
   PasswordObserverAdapter& operator=(const PasswordObserverAdapter&) = delete;
 
   // AuthInputRowView::Observer:
-  void OnSubmit(const std::u16string& text) override {
+  void OnSubmit(std::u16string_view text) override {
     auth_container_->PasswordSubmit(text);
   }
 
   void OnEscape() override { auth_container_->Escape(); }
 
-  void OnContentsChanged(const std::u16string& text) override {
+  void OnContentsChanged(std::u16string_view text) override {
     auth_container_->ContentsChanged();
   }
 
@@ -164,6 +164,8 @@ AuthContainerView::AuthContainerView(AuthFactorSet auth_factors)
   AddPinStatusView();
 
   AddFingerprintView();
+
+  GetViewAccessibility().SetIsInvisible(true);
 }
 
 AuthContainerView::~AuthContainerView() {
@@ -266,10 +268,6 @@ gfx::Size AuthContainerView::CalculatePreferredSize(
   return gfx::Size(kAuthContainerViewWidthDp, preferred_height);
 }
 
-void AuthContainerView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->AddState(ax::mojom::State::kInvisible);
-}
-
 std::string AuthContainerView::GetObjectName() const {
   return "AuthContainerView";
 }
@@ -327,7 +325,7 @@ void AuthContainerView::SetPinStatus(
   PreferredSizeChanged();
 }
 
-const std::u16string& AuthContainerView::GetPinStatusMessage() const {
+std::u16string_view AuthContainerView::GetPinStatusMessage() const {
   return pin_status_->GetCurrentText();
 }
 
@@ -427,13 +425,13 @@ void AuthContainerView::UpdateSwitchButtonState() {
   }
 }
 
-void AuthContainerView::PinSubmit(const std::u16string& pin) const {
+void AuthContainerView::PinSubmit(std::u16string_view pin) const {
   for (auto& observer : observers_) {
     observer.OnPinSubmit(pin);
   }
 }
 
-void AuthContainerView::PasswordSubmit(const std::u16string& password) const {
+void AuthContainerView::PasswordSubmit(std::u16string_view password) const {
   for (auto& observer : observers_) {
     observer.OnPasswordSubmit(password);
   }

@@ -11,7 +11,13 @@ import("//build/toolchain/toolchain.gni")
 import("//build_overrides/build.gni")
 
 if (is_ios) {
-  import("//build/config/ios/ios_sdk.gni")
+  import("//build/config/apple/mobile_config.gni")
+}
+
+declare_args() {
+  # Allow building official with ASAN enabled to help with
+  # debugging https://crbug.com/371135823.
+  ios_allow_asan_for_official_to_debug_371135823 = false
 }
 
 # libfuzzer can't cope with shared objects being unloaded, which sometimes
@@ -89,7 +95,11 @@ if ((is_apple || is_win) && (is_asan || is_ubsan_any)) {
     }
   } else if (is_ios) {
     if (is_asan) {
-      _clang_rt_dso_path = "darwin/libclang_rt.asan_iossim_dynamic.dylib"
+      if (target_environment == "simulator") {
+        _clang_rt_dso_path = "darwin/libclang_rt.asan_iossim_dynamic.dylib"
+      } else {
+        _clang_rt_dso_path = "darwin/libclang_rt.asan_ios_dynamic.dylib"
+      }
     } else {
       assert(is_ubsan_any)
       _clang_rt_dso_path = "darwin/libclang_rt.ubsan_iossim_dynamic.dylib"
@@ -309,10 +319,12 @@ config("common_sanitizer_flags") {
   if (using_sanitizer) {
     assert(is_clang, "sanitizers only supported with clang")
 
-    # Allow non-default toolchains to enable sanitizers in toolchain_args even
-    # in official builds.
-    assert(current_toolchain != default_toolchain || !is_official_build,
-           "sanitizers not supported in official builds")
+    if (!is_ios || !ios_allow_asan_for_official_to_debug_371135823) {
+      # Allow non-default toolchains to enable sanitizers in toolchain_args even
+      # in official builds.
+      assert(current_toolchain != default_toolchain || !is_official_build,
+             "sanitizers not supported in official builds")
+    }
 
     cflags += [
       # Column info in debug data confuses Visual Studio's debugger, so don't
@@ -461,7 +473,15 @@ config("coverage_flags") {
   if (use_centipede) {
     # Centipede intercepts calls such as memcmp and memcpy in order to improve
     # its testcase generation.
-    cflags += [ "-fno-builtin" ]
+    #
+    # We explicitly list the intercepted calls instead of opting out of all
+    # builtins to work around a miscompile (crbug.com/380508212).
+    cflags += [
+      "-fno-builtin-memcmp",
+      "-fno-builtin-pthread_create",
+      "-fno-builtin-strcmp",
+      "-fno-builtin-strncmp",
+    ]
   }
 }
 
@@ -539,6 +559,7 @@ config("ubsan_flags") {
       "-fsanitize=null",
       "-fsanitize=nonnull-attribute",
       "-fsanitize=object-size",
+      "-fsanitize=pointer-overflow",
       "-fsanitize=return",
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=shift",
@@ -588,6 +609,7 @@ config("ubsan_vptr_flags") {
 config("fuzzing_build_mode") {
   if (use_fuzzing_engine) {
     defines = [ "FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION" ]
+    rustflags = [ "--cfg=FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION" ]
   }
 }
 

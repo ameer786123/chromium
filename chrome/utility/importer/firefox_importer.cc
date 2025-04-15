@@ -34,6 +34,8 @@
 
 namespace {
 
+inline constexpr sql::Database::Tag kDatabaseTag{"FirefoxImporter"};
+
 // Original definition is in:
 //   toolkit/components/places/nsINavBookmarksService.idl
 enum BookmarkItemType {
@@ -81,7 +83,7 @@ bool CanImportURL(const GURL& url) {
 
 // Initializes |favicon_url| and |png_data| members of given FaviconUsageData
 // structure with provided favicon data. Returns true if data is valid.
-bool SetFaviconData(const std::string& icon_url,
+bool SetFaviconData(std::string_view icon_url,
                     const std::vector<unsigned char>& icon_data,
                     favicon_base::FaviconUsageData* usage_data) {
   usage_data->favicon_url = GURL(icon_url);
@@ -180,7 +182,7 @@ void FirefoxImporter::ImportHistory() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -200,7 +202,7 @@ void FirefoxImporter::ImportHistory() {
 
   std::vector<ImporterURLRow> rows;
   while (s.Step() && !cancelled()) {
-    GURL url(s.ColumnString(0));
+    GURL url(s.ColumnStringView(0));
 
     // Filter out unwanted URLs.
     if (!CanImportURL(url))
@@ -225,7 +227,7 @@ void FirefoxImporter::ImportBookmarks() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -425,7 +427,7 @@ void FirefoxImporter::ImportAutofillFormData() {
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -515,8 +517,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Database* db,
                                              FaviconsLocation favicons_location,
                                              bool* empty_folder) {
   if (position >= list->size()) {
-    NOTREACHED_IN_MIGRATION();
-    return;
+    NOTREACHED();
   }
 
   std::string query =
@@ -538,7 +539,7 @@ void FirefoxImporter::GetWholeBookmarkFolder(sql::Database* db,
     std::unique_ptr<BookmarkItem> item = std::make_unique<BookmarkItem>();
     item->parent = static_cast<int>(position);
     item->id = s.ColumnInt(0);
-    item->url = GURL(s.ColumnString(1));
+    item->url = GURL(s.ColumnStringView(1));
     item->title = s.ColumnString16(2);
     item->type = static_cast<BookmarkItemType>(s.ColumnInt(3));
     item->keyword = s.ColumnString(4);
@@ -582,8 +583,9 @@ void FirefoxImporter::LoadFavicons(
         continue;
 
       favicon_base::FaviconUsageData usage_data;
-      if (!SetFaviconData(s.ColumnString(0), data, &usage_data))
+      if (!SetFaviconData(s.ColumnStringView(0), data, &usage_data)) {
         continue;
+      }
 
       usage_data.urls = i.second;
       favicons->push_back(usage_data);
@@ -599,7 +601,7 @@ void FirefoxImporter::LoadFavicons(
   if (!base::PathExists(file))
     return;
 
-  sql::Database db;
+  sql::Database db(kDatabaseTag);
   if (!db.Open(file))
     return;
 
@@ -636,8 +638,9 @@ void FirefoxImporter::LoadFavicons(
         continue;
 
       favicon_base::FaviconUsageData usage_data;
-      if (!SetFaviconData(s.ColumnString(1), data, &usage_data))
+      if (!SetFaviconData(s.ColumnStringView(1), data, &usage_data)) {
         continue;
+      }
 
       usage_data.urls.insert(entry.url);
       favicons->push_back(usage_data);

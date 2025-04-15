@@ -62,6 +62,7 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void DetachLayoutTree(bool performing_reattach) override;
 
   HTMLFormElement* formOwner() const final;
+  HTMLElement* formForBinding() const final;
 
   bool IsDisabledFormControl() const override;
 
@@ -111,18 +112,9 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
     return PopoverTriggerSupport::kNone;
   }
 
-  // The IDL reflections:
-  AtomicString popoverTargetAction() const;
-  void setPopoverTargetAction(const AtomicString& value);
-
-  Element* interestTargetElement() override;
-
-  AtomicString interestAction() const override;
+  Element* InterestTargetElement() const override;
 
   void DefaultEventHandler(Event&) override;
-
-  void SetHovered(bool hovered) override;
-  void HandlePopoverInvokerHovered(bool hovered);
 
   bool willValidate() const override;
 
@@ -175,8 +167,9 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void DidMoveToNewDocument(Document& old_document) override;
 
   FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
-  bool IsKeyboardFocusable(UpdateBehavior update_behavior =
-                               UpdateBehavior::kStyleAndLayout) const override;
+  bool IsKeyboardFocusableSlow(
+      UpdateBehavior update_behavior =
+          UpdateBehavior::kStyleAndLayout) const override;
   bool ShouldHaveFocusAppearance() const override;
 
   virtual void ResetImpl() {}
@@ -198,14 +191,14 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
 template <>
 struct DowncastTraits<HTMLFormControlElement> {
   static bool AllowFrom(const Node& node) {
-    auto* html_element = DynamicTo<HTMLElement>(node);
-    return html_element && AllowFrom(*html_element);
+    auto* element = DynamicTo<Element>(node);
+    return element && AllowFrom(*element);
   }
   static bool AllowFrom(const ListedElement& control) {
     return control.IsFormControlElement();
   }
-  static bool AllowFrom(const HTMLElement& html_element) {
-    return html_element.IsFormControlElement();
+  static bool AllowFrom(const Element& element) {
+    return element.IsFormControlElement();
   }
 };
 

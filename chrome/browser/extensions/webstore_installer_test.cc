@@ -8,7 +8,10 @@
 
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/host_port_pair.h"
 #include "net/dns/mock_host_resolver.h"
@@ -30,10 +33,10 @@ WebstoreInstallerTest::WebstoreInstallerTest(
       unverified_domain_(unverified_domain) {
 }
 
-WebstoreInstallerTest::~WebstoreInstallerTest() {}
+WebstoreInstallerTest::~WebstoreInstallerTest() = default;
 
 void WebstoreInstallerTest::SetUpCommandLine(base::CommandLine* command_line) {
-  extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
+  extensions::ExtensionPlatformBrowserTest::SetUpCommandLine(command_line);
 
   embedded_test_server()->RegisterRequestMonitor(base::BindRepeating(
       &WebstoreInstallerTest::ProcessServerRequest, base::Unretained(this)));
@@ -59,11 +62,18 @@ void WebstoreInstallerTest::SetUpCommandLine(base::CommandLine* command_line) {
 }
 
 void WebstoreInstallerTest::SetUpOnMainThread() {
-  extensions::ExtensionBrowserTest::SetUpOnMainThread();
+  extensions::ExtensionPlatformBrowserTest::SetUpOnMainThread();
 
   host_resolver()->AddRule(webstore_domain_, "127.0.0.1");
   host_resolver()->AddRule(verified_domain_, "127.0.0.1");
   host_resolver()->AddRule(unverified_domain_, "127.0.0.1");
+
+  // This policy set to 1 should not restrict webstore extension installs, even
+  // if .crx files technically fit the definition of a dangerous file type.
+  // Setting this value for every `WebstoreInstaller` allows for validation that
+  // this policy doesn't interfere with the normal extension install workflow.
+  profile()->GetPrefs()->SetInteger(policy::policy_prefs::kDownloadRestrictions,
+                                    1);
 }
 
 GURL WebstoreInstallerTest::GenerateTestServerUrl(

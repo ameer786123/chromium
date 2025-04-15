@@ -141,14 +141,12 @@ TEST_F(MediaParserAndroidTest, VideoFrameExtractionH264) {
       ExtractFrame(media::GetTestDataFilePath("bear.mp4"), "video/mp4");
   ASSERT_TRUE(result);
 
-  if (media::IsBuiltInVideoCodec(media::VideoCodec::kH264)) {
+  if (media::IsDecoderBuiltInVideoCodec(media::VideoCodec::kH264)) {
     const auto& frame = result->frame_data->get_decoded_frame();
     ASSERT_TRUE(frame);
     EXPECT_TRUE(HasValidYUVData(*frame));
     EXPECT_TRUE(frame->IsMappable());
     EXPECT_FALSE(frame->HasSharedImage());
-    EXPECT_EQ(frame->storage_type(),
-              media::VideoFrame::StorageType::STORAGE_OWNED_MEMORY);
   } else {
     EXPECT_EQ(result->frame_data->which(),
               chrome::mojom::VideoFrameData::Tag::kEncodedData);

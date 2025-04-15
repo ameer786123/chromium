@@ -37,6 +37,7 @@ export enum ContentSettingsTypes {
   JAVASCRIPT_OPTIMIZER = 'javascript-optimizer',
   KEYBOARD_LOCK = 'keyboard-lock',
   LOCAL_FONTS = 'local-fonts',
+  LOCAL_NETWORK_ACCESS = 'local-network-access',
   MIC = 'media-stream-mic',  // AKA Microphone.
   MIDI_DEVICES = 'midi-sysex',
   MIXEDSCRIPT = 'mixed-script',
@@ -95,6 +96,9 @@ export enum ChooserType {
   HID_DEVICES = 'hid-devices-data',
   BLUETOOTH_DEVICES = 'bluetooth-devices-data',
   PRIVATE_NETWORK_DEVICES = 'private-network-devices-data',
+  // <if expr="is_chromeos">
+  SMART_CARD_READERS_DEVICES = 'smart-card-readers-data',
+  // </if>
 }
 
 /**

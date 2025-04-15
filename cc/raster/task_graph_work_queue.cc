@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <algorithm>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -14,7 +15,6 @@
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/not_fatal_until.h"
-#include "base/ranges/algorithm.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_id_helper.h"
 #include "base/trace_event/typed_macros.h"
@@ -84,9 +84,9 @@ class DependentIterator {
     } while (graph_->edges[current_index_].task != task_);
 
     // Now find the node for the dependent of this edge.
-    auto it = base::ranges::find(graph_->nodes,
-                                 graph_->edges[current_index_].dependent.get(),
-                                 &TaskGraph::Node::task);
+    auto it = std::ranges::find(graph_->nodes,
+                                graph_->edges[current_index_].dependent.get(),
+                                &TaskGraph::Node::task);
     CHECK(it != graph_->nodes.end(), base::NotFatalUntil::M130);
     current_node_ = &(*it);
 
@@ -182,8 +182,8 @@ void TaskGraphWorkQueue::ScheduleTasks(NamespaceToken token, TaskGraph* graph) {
     // Remove any old nodes that are associated with this task. The result is
     // that the old graph is left with all nodes not present in this graph,
     // which we use below to determine what tasks need to be canceled.
-    auto old_it = base::ranges::find(task_namespace.graph.nodes, node.task,
-                                     &TaskGraph::Node::task);
+    auto old_it = std::ranges::find(task_namespace.graph.nodes, node.task,
+                                    &TaskGraph::Node::task);
     if (old_it != task_namespace.graph.nodes.end()) {
       std::swap(*old_it, task_namespace.graph.nodes.back());
       // If old task is scheduled to run again and not yet started running,
@@ -305,15 +305,18 @@ bool TaskGraphWorkQueue::ExternalDependencyCompletedForTask(
     NamespaceToken token,
     scoped_refptr<Task> task) {
   TaskNamespace* task_namespace = GetNamespaceForToken(token);
-  CHECK(task_namespace);
-  auto iter = base::ranges::find(task_namespace->graph.nodes, task.get(),
-                                 &TaskGraph::Node::task);
-  if (iter == task_namespace->graph.nodes.end()) {
-    return false;
+  CHECK(task_namespace || task->state().IsCanceled());
+  if (task_namespace) {
+    auto iter = std::ranges::find(task_namespace->graph.nodes, task.get(),
+                                  &TaskGraph::Node::task);
+    if (iter == task_namespace->graph.nodes.end()) {
+      return false;
+    }
+    iter->has_external_dependency = false;
+    return DecrementNodeDependencies(*iter, task_namespace,
+                                     /*rebuild_heap*/ true);
   }
-  iter->has_external_dependency = false;
-  return DecrementNodeDependencies(*iter, task_namespace,
-                                   /*rebuild_heap*/ true);
+  return false;
 }
 
 bool TaskGraphWorkQueue::DecrementNodeDependencies(
@@ -370,8 +373,8 @@ void TaskGraphWorkQueue::CompleteTask(PrioritizedTask completed_task) {
   scoped_refptr<Task> task(std::move(completed_task.task));
 
   // Remove task from |running_tasks|.
-  auto it = base::ranges::find(task_namespace->running_tasks, task,
-                               &CategorizedTask::second);
+  auto it = std::ranges::find(task_namespace->running_tasks, task,
+                              &CategorizedTask::second);
   CHECK(it != task_namespace->running_tasks.end(), base::NotFatalUntil::M130);
   std::swap(*it, task_namespace->running_tasks.back());
   task_namespace->running_tasks.pop_back();

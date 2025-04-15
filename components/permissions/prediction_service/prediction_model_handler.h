@@ -22,7 +22,7 @@ class PredictionModelHandler : public optimization_guide::ModelHandler<
       optimization_guide::OptimizationGuideModelProvider* model_provider,
       optimization_guide::proto::OptimizationTarget optimization_target);
 
-  ~PredictionModelHandler() override = default;
+  ~PredictionModelHandler() override;
   PredictionModelHandler(const PredictionModelHandler&) = delete;
   PredictionModelHandler& operator=(const PredictionModelHandler&) = delete;
 
@@ -38,15 +38,20 @@ class PredictionModelHandler : public optimization_guide::ModelHandler<
       ExecutionCallback callback,
       std::unique_ptr<GeneratePredictionsRequest> proto_request);
 
+  // Returns the holdback chance for the model if ModelAvailable().
+  std::optional<float> HoldBackProbability();
+
  private:
   base::RunLoop model_load_run_loop_;
-
-  std::optional<WebPermissionPredictionsModelMetadata> GetModelMetaData();
 
   std::unique_ptr<
       optimization_guide::ModelExecutor<GeneratePredictionsResponse,
                                         const PredictionModelExecutorInput&>>
   GetExecutor();
+
+  std::optional<optimization_guide::proto::Any> GetModelHandshakeProto();
+  std::optional<WebPermissionPredictionsModelMetadata>
+      prediction_model_metadata_;
 };
 
 }  // namespace permissions

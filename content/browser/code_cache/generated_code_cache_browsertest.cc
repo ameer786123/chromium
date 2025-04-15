@@ -22,6 +22,7 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/test/content_browser_test_utils_internal.h"
+#include "net/base/features.h"
 #include "net/dns/mock_host_resolver.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/page/v8_compile_hints_histograms.h"
@@ -561,7 +562,6 @@ class CodeCacheSizeChecker {
   const GURL url_;
   const GURL origin_;
   const size_t expected_size_;
-  size_t actual_size_ = 0;
   base::OnceClosure done_callback_;
 };
 

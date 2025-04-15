@@ -27,6 +27,7 @@ export const FaceGazeActions: MacroName[] = [
   MacroName.RESET_CURSOR,
   MacroName.MOUSE_CLICK_LEFT,
   MacroName.MOUSE_CLICK_LEFT_DOUBLE,
+  MacroName.MOUSE_CLICK_LEFT_TRIPLE,
   MacroName.MOUSE_CLICK_RIGHT,
   MacroName.MOUSE_LONG_CLICK_LEFT,
   MacroName.TOGGLE_DICTATION,
@@ -47,6 +48,13 @@ export const FaceGazeLocationDependentActions: MacroName[] = [
   MacroName.MOUSE_LONG_CLICK_LEFT,
   MacroName.TOGGLE_SCROLL_MODE,
 ];
+
+// A map of actions to their informational text ID, which further describes
+// their behavior to the user.
+export const ComplexActions: Partial<Record<MacroName, string>> = {
+  [MacroName.MOUSE_LONG_CLICK_LEFT]: 'faceGazeMacroSubLabelLongClickLeft',
+  [MacroName.TOGGLE_SCROLL_MODE]: 'faceGazeMacroSubLabelToggleScrollMode',
+};
 
 // All possible facial gestures.
 // Values are extracted here for ease of use.
@@ -73,15 +81,13 @@ export const ConflictingGestures: Partial<
   // Conflicts because MOUTH_FUNNEL is essentially a MOUTH_PUCKER with an open
   // mouth.
   [FacialGesture.MOUTH_FUNNEL]: [FacialGesture.MOUTH_PUCKER],
+  [FacialGesture.MOUTH_PUCKER]: [FacialGesture.MOUTH_FUNNEL],
   // Conflicts because lips may be pursed when performing MOUTH_LEFT and
   // MOUTH_RIGHT.
   [FacialGesture.MOUTH_LEFT]: [FacialGesture.MOUTH_PUCKER],
   [FacialGesture.MOUTH_RIGHT]: [FacialGesture.MOUTH_PUCKER],
-  [FacialGesture.MOUTH_SMILE]: [
-    FacialGesture.MOUTH_UPPER_UP,
-    FacialGesture.EYE_SQUINT_LEFT,
-    FacialGesture.EYE_SQUINT_RIGHT,
-  ],
+  [FacialGesture.MOUTH_SMILE]: [FacialGesture.MOUTH_UPPER_UP],
+  [FacialGesture.MOUTH_UPPER_UP]: [FacialGesture.MOUTH_SMILE],
 };
 
 export interface KeyCombination {
@@ -151,10 +157,10 @@ export class AssignedKeyCombo {
 }
 
 export const FACEGAZE_COMMAND_PAIR_ADDED_EVENT_NAME =
-    'facegaze-command-pair-added' as const;
+    'facegaze-command-pair-added';
 
 export const FACEGAZE_ACTION_ASSIGN_GESTURE_EVENT_NAME =
-    'facegaze-assign-gesture' as const;
+    'facegaze-assign-gesture';
 
 export class FaceGazeUtils {
   /**
@@ -244,7 +250,7 @@ export class FaceGazeUtils {
       case FacialGesture.MOUTH_SMILE:
         return 'smile';
       case FacialGesture.MOUTH_UPPER_UP:
-        return 'wrinkle-nose';
+        return 'mouth-upper-up';
       default:
         console.error(
             'Icon requested for unsupported FacialGesture ' + gesture);
@@ -265,6 +271,8 @@ export class FaceGazeUtils {
         return 'faceGazeMacroLabelClickLeft';
       case MacroName.MOUSE_CLICK_LEFT_DOUBLE:
         return 'faceGazeMacroLabelClickLeftDouble';
+      case MacroName.MOUSE_CLICK_LEFT_TRIPLE:
+        return 'faceGazeMacroLabelClickLeftTriple';
       case MacroName.MOUSE_CLICK_RIGHT:
         return 'faceGazeMacroLabelClickRight';
       case MacroName.MOUSE_LONG_CLICK_LEFT:

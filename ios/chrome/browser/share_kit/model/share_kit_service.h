@@ -10,9 +10,16 @@
 #import "base/memory/weak_ptr.h"
 #import "components/keyed_service/core/keyed_service.h"
 
+@protocol ShareKitAvatarPrimitive;
+@class ShareKitAvatarConfiguration;
+@class ShareKitDeleteConfiguration;
 @class ShareKitFacePileConfiguration;
 @class ShareKitJoinConfiguration;
+@class ShareKitLeaveConfiguration;
+@class ShareKitLookupGaiaIDConfiguration;
 @class ShareKitManageConfiguration;
+@class ShareKitReadGroupWithTokenConfiguration;
+@class ShareKitReadGroupsConfiguration;
 @class ShareKitShareGroupConfiguration;
 
 // Service for ShareKit, allowing to manage tab groups sharing.
@@ -27,17 +34,57 @@ class ShareKitService : public KeyedService {
   // execution of the application.
   virtual bool IsSupported() const = 0;
 
-  // Initiates the share group flow for the given `config`.
-  virtual void ShareGroup(ShareKitShareGroupConfiguration* config) = 0;
+  // Ensures that the service is using the current primary account.
+  virtual void PrimaryAccountChanged() = 0;
 
-  // Initiates the flow to manage the group, using `config`.
-  virtual void ManageGroup(ShareKitManageConfiguration* config) = 0;
+  // Cancels the current `sessionID` flow.
+  virtual void CancelSession(NSString* session_id) = 0;
 
-  // Initiates the flow to join the group, using `config`.
-  virtual void JoinGroup(ShareKitJoinConfiguration* config) = 0;
+  // Initiates the share group flow for the given `config` and returns its
+  // sessionID.
+  virtual NSString* ShareTabGroup(ShareKitShareGroupConfiguration* config) = 0;
 
+  // Initiates the flow to manage the group, using `config` and returns its
+  // sessionID.
+  virtual NSString* ManageTabGroup(ShareKitManageConfiguration* config) = 0;
+
+  // Initiates the flow to join the group, using `config` and returns its
+  // sessionID.
+  virtual NSString* JoinTabGroup(ShareKitJoinConfiguration* config) = 0;
+
+  // Deprecated.
   // Returns a new FacePile view controller for the given `config`.
-  virtual UIViewController* FacePile(ShareKitFacePileConfiguration* config) = 0;
+  virtual UIViewController* FacePile(ShareKitFacePileConfiguration* config);
+
+  // Returns a new FacePile view for the given `config`.
+  virtual UIView* FacePileView(ShareKitFacePileConfiguration* config) = 0;
+
+  // Reads the info for the groups passed in `config` and returns the result
+  // through the config callback.
+  virtual void ReadGroups(ShareKitReadGroupsConfiguration* config) = 0;
+
+  // Reads the info for the group passed in `config` and returns the result
+  // through the config callback.
+  virtual void ReadGroupWithToken(
+      ShareKitReadGroupWithTokenConfiguration* config) = 0;
+
+  // Leaves the group passed in `config` and returns the result through the
+  // config callback.
+  virtual void LeaveGroup(ShareKitLeaveConfiguration* config) = 0;
+
+  // Deletes the group passed in `config` and returns the result through the
+  // config callback.
+  virtual void DeleteGroup(ShareKitDeleteConfiguration* config) = 0;
+
+  // Looks up the gaia ID associated with the email from `config` and returns
+  // the result through the config callback.
+  virtual void LookupGaiaIdByEmail(
+      ShareKitLookupGaiaIDConfiguration* config) = 0;
+
+  // Returns a wrapper object of the avatar image for the avatar URL passed in
+  // `config`.
+  virtual id<ShareKitAvatarPrimitive> AvatarImage(
+      ShareKitAvatarConfiguration* config) = 0;
 };
 
 #endif  // IOS_CHROME_BROWSER_SHARE_KIT_MODEL_SHARE_KIT_SERVICE_H_

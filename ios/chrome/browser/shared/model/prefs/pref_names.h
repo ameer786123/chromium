@@ -45,19 +45,20 @@ inline constexpr char kBrowserLockdownModeEnabled[] =
 // to load them.
 inline constexpr char kProfileInfoCache[] = "profile.info_cache";
 
+// The name of the profile that's used as the "personal" profile (used for
+// consumer accounts), as opposed to managed profiles (linked to a managed aka
+// Enterprise account).
+inline constexpr char kPersonalProfileName[] = "profile.personal";
+
 // Name of the last used profile.
-// TODO(crbug.com/325921947): Remove use of this key, kLastActiveProfiles
-// should be used.
 inline constexpr char kLastUsedProfile[] = "profile.last_used";
-
-// List of names of the profiles used during the last run of Chrome.
-inline constexpr char kLastActiveProfiles[] = "profile.last_active_profiles";
-
-// Total number of profile created for this Chrome installation.
-inline constexpr char kNumberOfProfiles[] = "profile.profiles_created";
 
 // A map of a scene and a profile.
 inline constexpr char kProfileForScene[] = "ios.multiprofile.profile_for_scene";
+
+// List of profiles' name that has been marked for deletion.
+inline constexpr char kProfilesToRemove[] =
+    "ios.multiprofile.profiles_marked_for_deletion";
 
 // A string of NSUUID used to access the WebKit storage per Profile.
 inline constexpr char kBrowserStateStorageIdentifier[] = "profile.storage_id";
@@ -86,9 +87,18 @@ inline constexpr char kDetectAddressesAccepted[] =
 inline constexpr char kDetectAddressesEnabled[] =
     "ios.settings.detect_addresses_enabled";
 
-// Whether to send the DNT header.
-// Note: The pref name is identical to the non-ios `kEnableDoNotTrack`.
-inline constexpr char kEnableDoNotTrackIos[] = "enable_do_not_track";
+// The pref to enable the Download Auto-deletion system on the device.
+inline constexpr char kDownloadAutoDeletionEnabled[] =
+    "ios.download.auto_deletion_enabled";
+
+// The pref tracks whether Auto-deletion's IPH has been shown to the user.
+inline constexpr char kDownloadAutoDeletionIPHShown[] =
+    "ios.download.auto_deletion_iph_shown";
+
+// A list of dictionaries that represent the files scheduled for automatic
+// deletion.
+inline constexpr char kDownloadAutoDeletionScheduledFiles[] =
+    "ios.auto_deletion.scheduled_files";
 
 // Number of times the First Follow UI has been shown.
 inline constexpr char kFirstFollowUIShownCount[] =
@@ -103,6 +113,11 @@ inline constexpr char kFirstFollowUpdateUIShownCount[] =
 // to send notifications to the user. This is stored in Profile prefs.
 inline constexpr char kFeaturePushNotificationPermissions[] =
     "push_notifications.feature_permissions";
+
+// A boolean indicating if the user has ever switched accounts via an account
+// menu triggered from a web flow.
+inline constexpr char kHasSwitchedAccountsViaWebFlow[] =
+    "ios.signin.has_switched_accounts_via_web_flow";
 
 // Prefs for persisting HttpServerProperties.
 inline constexpr char kHttpServerProperties[] = "net.http_server_properties";
@@ -236,6 +251,11 @@ inline constexpr char kIosDockingPromoEligibilityMet[] =
 // A list of the latest fetched Most Visited Sites.
 inline constexpr char kIosLatestMostVisitedSites[] = "ios.most_visited_sites";
 
+// The last saved index of an NTP WebState. Only updated on app background, so
+// it does not always reflect the current WebStateList.
+inline constexpr char kIOSLastKnownNTPWebStateIndex[] =
+    "ios.last_known_ntp_web_state_index";
+
 // Integer representing the number of impressions of the Most Visited Site since
 // a freshness signal.
 inline constexpr char kIosMagicStackSegmentationMVTImpressionsSinceFreshness[] =
@@ -246,6 +266,12 @@ inline constexpr char kIosMagicStackSegmentationMVTImpressionsSinceFreshness[] =
 inline constexpr char
     kIosMagicStackSegmentationParcelTrackingImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.parcel_tracking_freshness";
+
+// Integer representing the number of impressions of the ShopCard module
+// since a freshness signal.
+inline constexpr char
+    kIosMagicStackSegmentationShopCardImpressionsSinceFreshness[] =
+        "ios.magic_stack_segmentation.shop_card_freshness";
 
 // Integer representing the number of impressions of Shortcuts since a freshness
 // signal.
@@ -262,25 +288,6 @@ inline constexpr char
 inline constexpr char
     kIosMagicStackSegmentationTabResumptionImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.tab_resumption_freshness";
-
-// Boolean to represent if the parcel tracking opt-in prompt has met its display
-// limit for the user. Was previously kIosParcelTrackingOptInPromptDisplayed.
-inline constexpr char kIosParcelTrackingOptInPromptDisplayLimitMet[] =
-    "ios.parcel_tracking.opt_in_prompt_displayed";
-
-// Integer that maps to IOSParcelTrackingOptInStatus, the enum type of the
-// user's preference for automatically tracking parcels.
-inline constexpr char kIosParcelTrackingOptInStatus[] =
-    "ios.parcel_tracking.opt_in_status";
-
-// Boolean to represent if the user has swiped down on the parcel trackinf
-// opt-in prompt.
-inline constexpr char kIosParcelTrackingOptInPromptSwipedDown[] =
-    "ios.parcel_tracking.opt_in_prompt_swiped_down";
-
-// Boolean to represent if Parcel Tracking is enabled for enterprise users.
-inline constexpr char kIosParcelTrackingPolicyEnabled[] =
-    "ios.parcel_tracking.policy_enabled";
 
 // The number of consecutive times the user dismissed the password bottom sheet.
 // This gets reset to 0 whenever the user selects a password from the bottom
@@ -337,6 +344,12 @@ inline constexpr char kIosSafetyCheckManagerSafeBrowsingCheckResult[] =
 inline constexpr char kIosSafetyCheckManagerInsecurePasswordCounts[] =
     "ios.safety_check_manager.insecure_password_counts";
 
+// Time preference containing the timestamp when a Safety Check notification was
+// first set to present in the device's notification center and has not been
+// interacted with or dismissed.
+inline constexpr char kIosSafetyCheckNotificationFirstPresentTimestamp[] =
+    "ios.safety_check.notifications.first_present_timestamp";
+
 // Integer preference containing which Safety Check notification type was sent
 // last.
 inline constexpr char kIosSafetyCheckNotificationsLastSent[] =
@@ -356,6 +369,11 @@ inline constexpr char kIosSaveToDriveDefaultGaiaId[] =
 // policy.
 inline constexpr char kIosSaveToDriveDownloadManagerPolicySettings[] =
     "ios.save_to_drive.download_manager_policy";
+
+// Integer preference indicating whether Choose from Drive is enabled by
+// enterprise policy.
+inline constexpr char kIosChooseFromDriveFilePickerPolicySettings[] =
+    "ios.choose_from_drive.file_picker_policy";
 
 // String preference containing the default account to use for saving images to
 // Google Photos.
@@ -497,7 +515,7 @@ inline constexpr char kTabPickupLastDisplayedURL[] =
 inline constexpr char kTrackPricesOnTabsEnabled[] =
     "track_prices_on_tabs.enabled";
 
-// Boolean indicating if Lens camera assited searches are allowed by enterprise
+// Boolean indicating if Lens camera assisted searches are allowed by enterprise
 // policy.
 inline constexpr char kLensCameraAssistedSearchPolicyAllowed[] =
     "ios.lens_camera_assited_search_policy.allowed";
@@ -567,6 +585,10 @@ inline constexpr char kPushNotificationAuthorizationStatus[] =
 inline constexpr char kIncognitoAuthenticationSetting[] =
     "ios.settings.incognito_authentication_enabled";
 
+// Bool used for the incognito soft lock setting.
+inline constexpr char kIncognitoSoftLockSetting[] =
+    "ios.settings.incognito_soft_lock_enabled";
+
 // Timestamp tracking the time in which Chrome was last backgrounded for the
 // purposes of locking incognito content.
 inline constexpr char kLastBackgroundedTime[] = "ios.last_backgrounded_time";
@@ -594,10 +616,6 @@ inline constexpr char kNewTabPageLocationOverride[] =
 
 // A boolean specifying whether HTTPS-Only Mode is enabled.
 inline constexpr char kHttpsOnlyModeEnabled[] = "ios.https_only_mode_enabled";
-
-// A boolean specifying whether Mixed Content Autoupgrading is enabled.
-inline constexpr char kMixedContentAutoupgradeEnabled[] =
-    "ios.mixed_content_autoupgrade_enabled";
 
 // An int counting the remaining number of times the autofill branding icon
 // should show inside form input accessories.
@@ -667,6 +685,11 @@ inline constexpr char kHomeCustomizationMagicStackParcelTrackingEnabled[] =
     "ios.home_customization.magic_stack.parcel_tracking.enabled";
 inline constexpr char kHomeCustomizationMagicStackTipsEnabled[] =
     "ios.home_customization.magic_stack.tips.enabled";
+inline constexpr char
+    kHomeCustomizationMagicStackShopCardPriceTrackingEnabled[] =
+        "ios.home_customization.magic_stack.shop_card_price_tracking.enabled";
+inline constexpr char kHomeCustomizationMagicStackShopCardReviewsEnabled[] =
+    "ios.home_customization.magic_stack.shop_card_price_reviews.enabled";
 
 // List preference that stores the positions in the Magic Stack where the Safety
 // Check module with the notifications opt-in button is shown.
@@ -692,6 +715,40 @@ inline constexpr char kIdentityConfirmationSnackbarDisplayCount[] =
 // Customization menu's entrypoint.
 inline constexpr char kNTPHomeCustomizationNewBadgeImpressionCount[] =
     "ios.home_customization.new_badge_impressions";
+
+// The number of times that the prominence alert about the user's push
+// notification silent authorization state has been shown.
+inline constexpr char kProminenceNotificationAlertImpressionCount[] =
+    "ios.push_notification.prominence_alert_impressions";
+
+// Integer value controlling the data region to store covered data from Chrome.
+// By default, no preference is selected.
+// - 0: No preference
+// - 1: United States
+// - 2: Europe
+inline constexpr char kChromeDataRegionSetting[] = "chrome_data_region_setting";
+
+// A boolean used to determine if the Youtube Incognito Interstitial sheet has
+// been shown.
+inline constexpr char kYoutubeIncognitoHasBeenShown[] =
+    "ios.youtube_incognito.has_been_shown";
+
+// A dictionary to store reminders that the user has set.
+inline constexpr char kReminderNotifications[] = "ios.notifications.reminders";
+
+// A bool checking that keys used to add multi-profile support to widgets are
+// set.
+inline constexpr char kMigrateWidgetsPrefs[] =
+    "ios.widgets.update_to_support_mim";
+
+// A boolean specifying whether provisional notifications are allowed by policy.
+inline constexpr char kProvisionalNotificationsAllowedByPolicy[] =
+    "ios.notifications.provisional.allowed_by_policy";
+
+// Timestamp tracking when the sync error infobar was dismissed the last time
+// (either explicitly swiped by the user or through the dismissal timeout).
+inline constexpr char kIosSyncInfobarErrorLastDismissedTimestamp[] =
+    "ios.sync_infobar_error.last_dismissed_timestamp";
 
 }  // namespace prefs
 

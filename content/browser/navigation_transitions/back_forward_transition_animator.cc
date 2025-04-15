@@ -5,8 +5,10 @@
 #include "content/browser/navigation_transitions/back_forward_transition_animator.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/ranges.h"
+#include "base/time/time.h"
 #include "cc/slim/layer.h"
 #include "cc/slim/solid_color_layer.h"
 #include "cc/slim/surface_layer.h"
@@ -19,16 +21,23 @@
 #include "content/browser/renderer_host/navigation_transitions/navigation_entry_screenshot.h"
 #include "content/browser/renderer_host/navigation_transitions/navigation_entry_screenshot_cache.h"
 #include "content/browser/renderer_host/navigation_transitions/navigation_transition_config.h"
+#include "content/browser/renderer_host/navigation_transitions/navigation_transition_utils.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view_android.h"
+#include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "content/public/common/url_constants.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "ui/android/window_android.h"
+#include "ui/base/prediction/linear_resampling.h"
+#include "ui/base/prediction/one_euro_filter.h"
 #include "ui/display/screen.h"
 #include "ui/events/back_gesture_event.h"
+#include "ui/gfx/geometry/point_f.h"
+#include "url/gurl.h"
 
 namespace content {
 
@@ -45,7 +54,41 @@ using IgnoringInputReason = BackForwardTransitionAnimator::IgnoringInputReason;
 using AnimationAbortReason =
     BackForwardTransitionAnimator::AnimationAbortReason;
 
+static constexpr char kAnimationAbortedReason[] =
+    "Navigation.GestureTransition.AnimationAbortReason";
+static constexpr char kNewCommitInPrimaryMainFrame[] =
+    "Navigation.GestureTransition.NewCommitInPrimaryMainFrame";
+static constexpr char kNewCommitWhileDisplayingCanceledAnimation[] =
+    "Navigation.GestureTransition.NewCommitWhileDisplayingCanceledAnimation";
+static constexpr char kNewCommitWhileDisplayingCrossFadeAnimation[] =
+    "Navigation.GestureTransition.NewCommitWhileDisplayingCrossFadeAnimation";
+static constexpr char kNewCommitWhileWaitingForNewRendererToDraw[] =
+    "Navigation.GestureTransition.NewCommitWhileWaitingForNewRendererToDraw";
+
+// Indicates the type of the scheme of the navigation request.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(NavigationRequestSchemeType)
+enum class NavigationRequestSchemeType {
+  kOther = 0,
+  kChrome = 1,
+  kChromeNative = 2,
+
+  kMaxValue = kChromeNative,
+};
+
+// LINT.ThenChange(//tools/metrics/histograms/metadata/navigation/enums.xml:NavigationRequestSchemeType)
+
 static constexpr base::TimeDelta kDismissScreenshotAfter = base::Seconds(4);
+
+static constexpr double kOneEuroFilterMincutoff =
+    ui::OneEuroFilter::kDefaultMincutoff;
+// Beta is in a different scale than the default because the filter for the
+// animator deals with small values (0 to 1.0).
+static constexpr double kOneEuroFilterBeta =
+    ui::OneEuroFilter::kDefaultBeta * 100.;
 
 void ResetTransformForLayer(cc::slim::Layer* layer) {
   CHECK(layer);
@@ -74,8 +117,11 @@ bool ShouldUseFallbackScreenshot(
       cache_hit_or_miss_reason = NavigationTransitionData::
           CacheHitOrMissReason::kCacheMissScreenshotOrientation;
     } else {
-      CHECK_EQ(cache_hit_or_miss_reason.value(),
-               NavigationTransitionData::CacheHitOrMissReason::kCacheHit);
+      // TODO(crbug.com/377566662): Identify why the cache hit or miss reason is
+      // not set correctly at this point. This is to avoid the crashes addressed
+      // in crbug.com/377338996.
+      cache_hit_or_miss_reason =
+          NavigationTransitionData::CacheHitOrMissReason::kCacheHit;
     }
   }
 
@@ -86,6 +132,16 @@ bool ShouldUseFallbackScreenshot(
                                 CacheHitOrMissReason::kCacheMissColdStart));
 
   return use_fallback_screenshot;
+}
+
+NavigationRequestSchemeType GetNavigationRequestSchemeType(
+    NavigationRequest* request) {
+  if (request->GetURL().SchemeIs(content::kChromeNativeScheme)) {
+    return NavigationRequestSchemeType::kChromeNative;
+  } else if (request->GetURL().SchemeIs(content::kChromeUIScheme)) {
+    return NavigationRequestSchemeType::kChrome;
+  }
+  return NavigationRequestSchemeType::kOther;
 }
 
 const char* IgnoringInputReasonToString(IgnoringInputReason reason) {
@@ -131,10 +187,6 @@ const char* AnimationAbortReasonToString(AnimationAbortReason abort_reason) {
       return "kRenderWidgetHostDestroyed";
     case AnimationAbortReason::kMainCommitOnSubframeTransition:
       return "kMainCommitOnSubframeTransition";
-    case AnimationAbortReason::kNewCommitInPrimaryMainFrame:
-      return "kNewCommitInPrimaryMainFrame";
-    case AnimationAbortReason::kNewCommitWhileDisplayingCanceledAnimation:
-      return "kNewCommitWhileDisplayingCanceledAnimation";
     case AnimationAbortReason::kMultipleNavigationRequestsCreated:
       return "kMultipleNavigationRequestsCreated";
     case AnimationAbortReason::kNavigationEntryDeletedBeforeCommit:
@@ -149,9 +201,14 @@ const char* AnimationAbortReasonToString(AnimationAbortReason abort_reason) {
       return "kCompositorDetached";
     case AnimationAbortReason::kAnimationManagerDestroyed:
       return "kAnimationManagerDestroyed";
-    case BackForwardTransitionAnimator::AnimationAbortReason::
-        kPhysicalSizeChanged:
+    case AnimationAbortReason::kPhysicalSizeChanged:
       return "kPhysicalSizeChanged";
+    case AnimationAbortReason::kAnimationFinished:
+      return "kAnimationFinished";
+    case AnimationAbortReason::kPrimaryMainFrameRenderProcessDestroyed:
+      return "kPrimaryMainFrameRenderProcessDestroyed";
+    case AnimationAbortReason::kSameDocNavRestarts:
+      return "kSameDocNavRestarts";
   }
   NOTREACHED();
 }
@@ -211,24 +268,13 @@ static constexpr LinearModelConfig<float, 2u> kCrossFadeAnimation{
                    }}};
 
 //=============================== Scrim animation ==============================
-// The scrim range is from 0.2 to 0 in dark mode and 0.1 to 0 in light mode. The
-// scrim value is a linear function of the top layer's position.
-static constexpr LinearModelConfig<float, 2u> kScrimAnimationLightMode{
+// The scrim range is from 0.65 to 0 in both light and dark modes.
+// The scrim value is a linear function of the top layer's position.
+static constexpr LinearModelConfig<float, 2u> kScrimAnimation{
     .target_property = TargetProperty::kScrim,
     .key_frames = {KeyFrame{
                        .time = base::TimeDelta(),
-                       .value = 0.1f,
-                   },
-                   KeyFrame{
-                       .time = kFittedTimelineDuration,
-                       .value = 0.0f,
-                   }}};
-
-static constexpr LinearModelConfig<float, 2u> kScrimAnimationDarkMode{
-    .target_property = TargetProperty::kScrim,
-    .key_frames = {KeyFrame{
-                       .time = base::TimeDelta(),
-                       .value = 0.2f,
+                       .value = 0.65f,
                    },
                    KeyFrame{
                        .time = kFittedTimelineDuration,
@@ -273,6 +319,13 @@ constexpr static int kRRectSizeDip = 56;
 constexpr static float kRRectRadiusDip = 20.f;
 // Relative position of the favicon with respect to the rounded rectangle.
 constexpr static int kFaviconPosDip = 16;
+
+// Returns true for an internal url.
+bool IsInternalScheme(const GURL& url) {
+  ContentBrowserClient* content_browser_client = GetContentClient()->browser();
+  return url.SchemeIs(kChromeUIScheme) ||
+         content_browser_client->IsInternalScheme(url);
+}
 
 static constexpr LinearModelConfig<float, 4u> kRRectOpacityModel{
     .target_property = TargetProperty::kFaviconOpacity,
@@ -329,6 +382,10 @@ static constexpr float kFloatTolerance = 0.001f;
   return a > b || AlmostEqual(a, b);
 }
 
+#define CREATE_SCOPED_CRASH_KEYS()                                          \
+  SCOPED_CRASH_KEY_STRING1024("DNT", "States", serialized_states_.c_str()); \
+  SCOPED_CRASH_KEY_STRING1024("DNT", "Request", serialized_request_.c_str());
+
 }  // namespace
 
 std::unique_ptr<BackForwardTransitionAnimator>
@@ -348,10 +405,16 @@ BackForwardTransitionAnimator::Factory::Create(
 }
 
 BackForwardTransitionAnimator::~BackForwardTransitionAnimator() {
+  CREATE_SCOPED_CRASH_KEYS();
   TRACE_EVENT("browser,navigation",
               "BackForwardTransitionAnimator::~BackForwardTransitionAnimator");
 
   CHECK(IsTerminalState()) << StateToString(state_);
+
+  if (state_ == State::kAnimationFinished) {
+    base::UmaHistogramEnumeration(kAnimationAbortedReason,
+                                  AnimationAbortReason::kAnimationFinished);
+  }
 
   switch (ignoring_input_reason_) {
     case IgnoringInputReason::kAnimationInvokedOccurred: {
@@ -385,9 +448,6 @@ BackForwardTransitionAnimator::~BackForwardTransitionAnimator() {
   ResetTransformForLayer(animation_manager_->web_contents_view_android()
                              ->parent_for_web_page_widgets());
 
-  // TODO(crbug.com/40283503): If there is the old visual state hovering
-  // above the RWHV layer, we need to remove that as well.
-
   if (screenshot_layer_) {
     screenshot_scrim_->RemoveFromParent();
     screenshot_scrim_.reset();
@@ -414,19 +474,14 @@ BackForwardTransitionAnimator::~BackForwardTransitionAnimator() {
     }
   }
 
-  // This can happen if the animation is forced to abort before Viz activates
-  // the first frame post-navigation.
-  if (new_render_widget_host_) {
-    CHECK_EQ(state_, State::kAnimationAborted) << StateToString(state_);
-    UnregisterNewFrameActivationObserver();
-  }
+  UnregisterNewFrameActivationObserver();
 }
 
 // protected.
 BackForwardTransitionAnimator::BackForwardTransitionAnimator(
     WebContentsViewAndroid* web_contents_view_android,
     NavigationControllerImpl* controller,
-    const ui::BackGestureEvent& gesture,
+    const ui::BackGestureEvent& first_gesture,
     NavigationDirection nav_direction,
     SwipeEdge initiating_edge,
     NavigationEntryImpl* destination_entry,
@@ -434,7 +489,8 @@ BackForwardTransitionAnimator::BackForwardTransitionAnimator(
     BackForwardTransitionAnimationManagerAndroid* animation_manager)
     : nav_direction_(nav_direction),
       initiating_edge_(initiating_edge),
-      destination_entry_id_(destination_entry->GetUniqueID()),
+      destination_entry_id_(
+          destination_entry->navigation_transition_data().unique_id()),
       animation_manager_(animation_manager),
       is_copied_from_embedder_(destination_entry->navigation_transition_data()
                                    .is_copied_from_embedder()),
@@ -443,7 +499,9 @@ BackForwardTransitionAnimator::BackForwardTransitionAnimator(
                                ->GetDipScale()),
       physics_model_(GetViewportWidthPx(),
                      web_contents_view_android->GetNativeView()->GetDipScale()),
-      latest_progress_gesture_(gesture) {
+      input_predictor_(std::make_unique<ui::LinearResampling>()),
+      input_filter_(std::make_unique<ui::OneEuroFilter>(kOneEuroFilterMincutoff,
+                                                        kOneEuroFilterBeta)) {
   if (ShouldUseFallbackScreenshot(animation_manager_, destination_entry)) {
     fallback_ux_ = {
         .color_config = animation_manager_->web_contents_view_android()
@@ -455,7 +513,7 @@ BackForwardTransitionAnimator::BackForwardTransitionAnimator(
     };
   }
   state_ = State::kStarted;
-  SetupForScreenshotPreview(std::move(embedder_content));
+  SetupForScreenshotPreview(std::move(embedder_content), first_gesture);
   ProcessState();
 }
 
@@ -469,27 +527,28 @@ void BackForwardTransitionAnimator::OnGestureProgressed(
   // swiped.
   CHECK(IsGreaterThanOrEqual(gesture.progress(), 0.f));
   CHECK(IsLessThanOrEqual(gesture.progress(), 1.f));
-
-  float progress_delta =
-      gesture.progress() - latest_progress_gesture_.progress();
-  const float movement = progress_delta * GetViewportWidthPx();
-  latest_progress_gesture_ = gesture;
-
-  const PhysicsModel::Result result =
-      physics_model_.OnGestureProgressed(movement, base::TimeTicks::Now());
-  CHECK(!result.done);
-  // The gesture animations are never considered "finished".
-  bool animations_finished = SetLayerTransformationAndTickEffect(result);
-  CHECK(!animations_finished);
+  gfx::PointF progress_position(gesture.progress(), 0.f);
+  ui::InputPredictor::InputData input(progress_position, gesture.time());
+  input_predictor_->Update(input);
+  if (input_predictor_->HasPrediction()) {
+    animation_manager_->web_contents_view_android()
+        ->GetTopLevelNativeWindow()
+        ->SetNeedsAnimate();
+  } else {
+    // Animate the layers now for a new trajectory.
+    OnAnimateGestureProgressed(gesture);
+  }
 }
 
 void BackForwardTransitionAnimator::OnGestureCancelled() {
+  CREATE_SCOPED_CRASH_KEYS();
   CHECK_EQ(state_, State::kStarted);
   StartInputSuppression(IgnoringInputReason::kAnimationCanceledOccurred);
   AdvanceAndProcessState(State::kDisplayingCancelAnimation);
 }
 
 void BackForwardTransitionAnimator::OnGestureInvoked() {
+  CREATE_SCOPED_CRASH_KEYS();
   CHECK_EQ(state_, State::kStarted);
 
   StartInputSuppression(IgnoringInputReason::kAnimationInvokedOccurred);
@@ -519,6 +578,7 @@ void BackForwardTransitionAnimator::OnGestureInvoked() {
 }
 
 void BackForwardTransitionAnimator::OnContentForNavigationEntryShown() {
+  CREATE_SCOPED_CRASH_KEYS();
   // Might be called multiple times if user swipes again before NTP fade
   // has finished.
   if (state_ != State::kWaitingForContentForNavigationEntryShown) {
@@ -527,21 +587,18 @@ void BackForwardTransitionAnimator::OnContentForNavigationEntryShown() {
         "BackForwardTransitionAnimator::OnContentForNavigationEntryShown");
     return;
   }
-  if (!embedder_live_content_clone_) {
-    // The embedder has finished cross-fading from the screenshot to the new
-    // content. Unregister `this` from the `RenderWidgetHost` to stop the
-    // `OnRenderWidgetHostDestroyed()` notification.
-    CHECK(new_render_widget_host_);
-    new_render_widget_host_->RemoveObserver(animation_manager_);
-    new_render_widget_host_ = nullptr;
-  }
+  UnregisterNewFrameActivationObserver();
   AdvanceAndProcessState(State::kAnimationFinished);
 }
 
 AnimationStage BackForwardTransitionAnimator::GetCurrentAnimationStage() {
   switch (state_) {
-    case State::kDisplayingInvokeAnimation:
-      return AnimationStage::kInvokeAnimation;
+    case State::kDisplayingInvokeAnimation: {
+      if (!progress_bar_) {
+        return AnimationStage::kInvokeAnimation;
+      }
+      return AnimationStage::kInvokeAnimationWithProgressBar;
+    }
     case State::kWaitingForContentForNavigationEntryShown:
       return AnimationStage::kWaitingForEmbedderContentForCommittedEntry;
     case State::kAnimationFinished:
@@ -557,6 +614,15 @@ void BackForwardTransitionAnimator::OnAnimate(
   bool animation_finished = false;
 
   switch (state_) {
+    case State::kStarted:
+      // This state of the animation is purely driven by the progress of the
+      // user gesture.
+      if (auto input = input_predictor_->GeneratePrediction(frame_begin_time)) {
+        input_filter_->Filter(input->time_stamp, &input->pos);
+        OnAnimateGestureProgressed(
+            ui::BackGestureEvent(input->pos.x(), input->time_stamp));
+      }
+      break;
     case State::kDisplayingCancelAnimation: {
       PhysicsModel::Result result = physics_model_.OnAnimate(frame_begin_time);
       std::ignore = SetLayerTransformationAndTickEffect(result);
@@ -566,6 +632,17 @@ void BackForwardTransitionAnimator::OnAnimate(
     case State::kDisplayingInvokeAnimation: {
       PhysicsModel::Result result = physics_model_.OnAnimate(frame_begin_time);
       animation_finished = SetLayerTransformationAndTickEffect(result);
+
+      // https://crbug.com/371534496: If the navigation hasn't committed at
+      // when the animation has reached commit-pending, show the progress bar
+      // for native pages.
+      if (!progress_bar_ && physics_model_.ReachedCommitPending() &&
+          navigation_state_ != NavigationState::kCommitted) {
+        SetupProgressBar();
+        // `kInvokeAnimation` => `kInvokeAnimationWithProgressBar`. Inform Java
+        // UI that C++ is displaying a progress bar.
+        animation_manager_->OnAnimationStageChanged();
+      }
 
       if (progress_bar_) {
         progress_bar_->Animate(frame_begin_time);
@@ -583,7 +660,6 @@ void BackForwardTransitionAnimator::OnAnimate(
       animation_finished = effect_.keyframe_models().empty();
       break;
     }
-    case State::kStarted:
     case State::kWaitingForBeforeUnloadUserInteraction:
     case State::kWaitingForNewRendererToDraw:
     case State::kWaitingForContentForNavigationEntryShown:
@@ -624,6 +700,7 @@ void BackForwardTransitionAnimator::OnAnimate(
 
 void BackForwardTransitionAnimator::OnRenderWidgetHostDestroyed(
     RenderWidgetHost* widget_host) {
+  CREATE_SCOPED_CRASH_KEYS();
   if (widget_host != new_render_widget_host_) {
     return;
   }
@@ -639,6 +716,9 @@ void BackForwardTransitionAnimator::OnRenderWidgetHostDestroyed(
 // cancelled.
 void BackForwardTransitionAnimator::OnRenderFrameMetadataChangedAfterActivation(
     base::TimeTicks activation_time) {
+  AppendToSerializeStates("FrameMetadataChanged");
+  CREATE_SCOPED_CRASH_KEYS();
+
   CHECK(tracked_request_);
   // We shouldn't get this notification for subframe navigations because we
   // never subscribe to the `RenderWidgetHost` for subframes.
@@ -702,6 +782,11 @@ void BackForwardTransitionAnimator::DidStartNavigation(
   TRACE_EVENT("browser,navigation",
               "BackForwardTransitionAnimator::DidStartNavigation",
               "navigation_id", navigation_handle->GetNavigationId());
+  AppendToSerializeStates(
+      "DidStartNav " +
+      base::NumberToString(navigation_handle->GetNavigationId()));
+  CREATE_SCOPED_CRASH_KEYS();
+
   // We need to set this state here since for same-document navigations, the
   // commit message is sent before the animator starts tracking the navigation.
   if (is_starting_navigation_) {
@@ -752,6 +837,10 @@ void BackForwardTransitionAnimator::ReadyToCommitNavigation(
   TRACE_EVENT("browser,navigation",
               "BackForwardTransitionAnimator::ReadyToCommitNavigation",
               "navigation_id", navigation_handle->GetNavigationId());
+  AppendToSerializeStates(
+      "ReadyToCommitNav " +
+      base::NumberToString(navigation_handle->GetNavigationId()));
+  CREATE_SCOPED_CRASH_KEYS();
 
   CHECK(!navigation_handle->IsSameDocument());
 
@@ -804,6 +893,11 @@ void BackForwardTransitionAnimator::DidFinishNavigation(
   TRACE_EVENT("browser,navigation",
               "BackForwardTransitionAnimator::DidFinishNavigation",
               "navigation_id", navigation_handle->GetNavigationId());
+  AppendToSerializeStates(
+      "DidFinishNav " +
+      base::NumberToString(navigation_handle->GetNavigationId()));
+  CREATE_SCOPED_CRASH_KEYS();
+
   // If we haven't started tracking a navigation, or if `navigation_handle`
   // isn't what we tracked, or if this `navigation_handle` has committed, ignore
   // it.
@@ -813,6 +907,12 @@ void BackForwardTransitionAnimator::DidFinishNavigation(
   // ignored completely. We should decide what to do before launch.
   if (!tracked_request_ ||
       tracked_request_->navigation_id != navigation_handle->GetNavigationId()) {
+    return;
+  }
+
+  if (static_cast<NavigationRequest*>(navigation_handle)
+          ->was_reset_for_cross_document_restart()) {
+    AbortAnimation(AnimationAbortReason::kSameDocNavRestarts);
     return;
   }
 
@@ -849,8 +949,7 @@ void BackForwardTransitionAnimator::DidFinishNavigation(
     old_surface_clone_->RemoveFromParent();
     old_surface_clone_.reset();
   }
-  // TODO(crbug.com/41482488): We might need a better UX than
-  // just display the cancel animation.
+  UnregisterNewFrameActivationObserver();
   AdvanceAndProcessState(State::kDisplayingCancelAnimation);
 }
 
@@ -861,6 +960,10 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
   TRACE_EVENT(
       "browser,navigation",
       "BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit");
+  AppendToSerializeStates(
+      "PreCommit " +
+      base::NumberToString(navigation_request->GetNavigationId()));
+  CREATE_SCOPED_CRASH_KEYS();
 
   // If a navigation commits in the primary main frame while we are tracking the
   // subframe requests, abort the animation immediately.
@@ -875,12 +978,15 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
 
   switch (state_) {
     case State::kStarted:
+      // A new navigation finished in the primary main frame to C while the user
+      // is swiping across the screen from B to A. The live page B will be
+      // replaced by C and the swipe will navigate the user from C to A as
+      // expected.
       CHECK(!tracked_request_);
       CHECK_EQ(navigation_state_, NavigationState::kNotStarted);
-      // A new navigation finished in the primary main frame while the user is
-      // swiping across the screen. For simplicity, destroy this class if the
-      // new navigation was from the primary main frame.
-      abort_reason = AnimationAbortReason::kNewCommitInPrimaryMainFrame;
+      base::UmaHistogramEnumeration(
+          kNewCommitInPrimaryMainFrame,
+          GetNavigationRequestSchemeType(navigation_request));
       break;
     case State::kDisplayingInvokeAnimation: {
       // We can only get to `kDisplayingInvokeAnimation` if we have started
@@ -911,10 +1017,14 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
         navigation_state_ = NavigationState::kCommitted;
         physics_model_.OnNavigationFinished(/*navigation_committed=*/true);
 
-        if (error_or_cross_origin_redirect) {
-          // If we encountered a cross-origin redirect, start cross-fading as
-          // soon as the invoke animation has finished playing. Do not wait for
-          // Viz to activate the first frame.
+        if (primary_main_frame_navigation_entry_item_sequence_number_ == -1 ||
+            error_or_cross_origin_redirect) {
+          // The destination FrameNavigationEntry doesn't have a valid
+          // item_sequence_number when the navigation starts. Immediately
+          // crossfade to the new content to avoid the screenshot timeout.
+          // Moreoever, if we encountered a cross-origin redirect, start
+          // cross-fading as soon as the invoke animation has finished playing.
+          // Do not wait for Viz to activate the first frame.
           PostNavigationFirstFrameActivated();
         } else {
           // This is a same-doc navigation (where redirect cannot happen), or
@@ -935,6 +1045,9 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
         // Before a dialog is shown, another navigation can start and commit.
         // We don't need to abort the animation since when the other navigation
         // commits, we just swap out the live page.
+        base::UmaHistogramEnumeration(
+            kNewCommitInPrimaryMainFrame,
+            GetNavigationRequestSchemeType(navigation_request));
       } else {
         // Our navigation has already committed while a second navigation
         // commits. This can be a client redirect: A.com -> B.com and B.com's
@@ -942,6 +1055,9 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
         // commit-pending invoke animation to bring B.com's screenshot to the
         // center of the viewport.
         CHECK_EQ(navigation_state_, NavigationState::kCommitted);
+        base::UmaHistogramEnumeration(
+            kNewCommitInPrimaryMainFrame,
+            GetNavigationRequestSchemeType(navigation_request));
         // TODO(https://crbug.com/375478872): Ideally, we only need to fake
         // Viz's frame notification if the redirect is cross-origin. We
         // shouldn't need to fake the frame notification for same-doc
@@ -952,15 +1068,11 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
       break;
     }
     case State::kDisplayingCancelAnimation: {
-      CHECK(navigation_state_ == NavigationState::kNotStarted ||
-            navigation_state_ == NavigationState::kCancelled ||
-            navigation_state_ == NavigationState::kCancelledBeforeStart)
-          << NavigationStateToString(navigation_state_);
-
-      // A navigation finished while we are displaying the cancel animation.
-      // For simplicity, destroy `this` and reset everything.
-      abort_reason =
-          AnimationAbortReason::kNewCommitWhileDisplayingCanceledAnimation;
+      // A new navigation to C commits while we are displaying the cancel
+      // animation. The live page will be replaced by C.
+      base::UmaHistogramEnumeration(
+          kNewCommitWhileDisplayingCanceledAnimation,
+          GetNavigationRequestSchemeType(navigation_request));
       break;
     }
     case State::kWaitingForNewRendererToDraw:
@@ -969,13 +1081,16 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
       // redirects to C.com, before B.com's renderer even submits a new frame.
       CHECK_EQ(navigation_state_, NavigationState::kCommitted);
       CHECK(tracked_request_);
+      base::UmaHistogramEnumeration(
+          kNewCommitWhileWaitingForNewRendererToDraw,
+          GetNavigationRequestSchemeType(navigation_request));
       PostNavigationFirstFrameActivated();
       break;
     case State::kWaitingForContentForNavigationEntryShown:
       // Our navigation has already committed while waiting for a native
-      // entry to be finished drawing by the embedder.
-      CHECK_EQ(navigation_state_, NavigationState::kCommitted);
-      CHECK(tracked_request_);
+      // entry to be finished drawing by the embedder; or the cancel animation
+      // is finished and a new navigation commits before the live entry is
+      // redrawn by the embedder.
       OnContentForNavigationEntryShown();
       break;
     case State::kDisplayingCrossFadeAnimation: {
@@ -985,6 +1100,9 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
       // to whatever is underneath the screenshot.
       CHECK_EQ(navigation_state_, NavigationState::kCommitted);
       CHECK(tracked_request_);
+      base::UmaHistogramEnumeration(
+          kNewCommitWhileDisplayingCrossFadeAnimation,
+          GetNavigationRequestSchemeType(navigation_request));
       break;
     }
     case State::kWaitingForBeforeUnloadUserInteraction: {
@@ -1006,6 +1124,11 @@ void BackForwardTransitionAnimator::OnDidNavigatePrimaryMainFramePreCommit(
 
 void BackForwardTransitionAnimator::OnNavigationCancelledBeforeStart(
     NavigationHandle* navigation_handle) {
+  AppendToSerializeStates(
+      "CancelledBeforeStart " +
+      base::NumberToString(navigation_handle->GetNavigationId()));
+  CREATE_SCOPED_CRASH_KEYS();
+
   if (!tracked_request_ ||
       tracked_request_->navigation_id != navigation_handle->GetNavigationId()) {
     // A unrelated request is cancelled before start.
@@ -1110,6 +1233,9 @@ void BackForwardTransitionAnimator::MaybeRecordIgnoredInput(
 
 void BackForwardTransitionAnimator::OnBeforeUnloadDialogShown(
     int64_t navigation_id) {
+  AppendToSerializeStates("BUShown " + base::NumberToString(navigation_id));
+  CREATE_SCOPED_CRASH_KEYS();
+
   if (!tracked_request_ || tracked_request_->navigation_id != navigation_id) {
     return;
   }
@@ -1127,8 +1253,8 @@ void BackForwardTransitionAnimator::AbortAnimation(
   TRACE_EVENT("browser,navigation",
               "BackForwardTransitionAnimator::AbortAnimation", "abort_reason",
               AnimationAbortReasonToString(abort_reason));
-  base::UmaHistogramEnumeration(
-      "Navigation.GestureTransition.AnimationAbortReason", abort_reason);
+  base::UmaHistogramEnumeration(kAnimationAbortedReason, abort_reason);
+  abort_reason_ = abort_reason;
   AdvanceAndProcessState(State::kAnimationAborted);
 }
 
@@ -1197,9 +1323,15 @@ void BackForwardTransitionAnimator::OnTransformAnimated(
 }
 
 void BackForwardTransitionAnimator::OnCancelAnimationDisplayed() {
-  CHECK_EQ(effect_.keyframe_models()[0]->TargetProperty(),
-           static_cast<int>(TargetProperty::kScrim));
+  CREATE_SCOPED_CRASH_KEYS();
   if (navigation_state_ == NavigationState::kBeforeUnloadDispatched) {
+    if (effect_.keyframe_models().empty()) {
+      // http://crbug.com/377341853: We occasionally exhaust the scrim model and
+      // the opacity/transform models for the rrect/favicon when the cancel
+      // animation finishes. We need to add the scrim back as the user can still
+      // proceed the navigation, for which we need to play the invoke animation.
+      InitializeEffectForGestureProgressAnimation();
+    }
     AdvanceAndProcessState(State::kWaitingForBeforeUnloadUserInteraction);
     return;
   }
@@ -1212,6 +1344,7 @@ void BackForwardTransitionAnimator::OnCancelAnimationDisplayed() {
 }
 
 void BackForwardTransitionAnimator::OnInvokeAnimationDisplayed() {
+  CREATE_SCOPED_CRASH_KEYS();
   ResetLiveOverlayLayer();
 
   if (progress_bar_) {
@@ -1233,6 +1366,7 @@ void BackForwardTransitionAnimator::OnInvokeAnimationDisplayed() {
 }
 
 void BackForwardTransitionAnimator::OnCrossFadeAnimationDisplayed() {
+  CREATE_SCOPED_CRASH_KEYS();
   CHECK(effect_.keyframe_models().empty());
   AdvanceAndProcessState(State::kAnimationFinished);
 }
@@ -1331,17 +1465,8 @@ void BackForwardTransitionAnimator::
   // at which we must have no models yet.
   CHECK(effect_.keyframe_models().empty());
 
-  const blink::web_pref::WebPreferences& web_prefs =
-      animation_manager_->web_contents_view_android()
-          ->web_contents()
-          ->GetOrCreateWebPreferences();
+  AddLinearModelToEffect(kScrimAnimation, this, effect_);
 
-  if (web_prefs.preferred_color_scheme ==
-      blink::mojom::PreferredColorScheme::kDark) {
-    AddLinearModelToEffect(kScrimAnimationDarkMode, this, effect_);
-  } else {
-    AddLinearModelToEffect(kScrimAnimationLightMode, this, effect_);
-  }
   if (rounded_rectangle_) {
     CHECK(fallback_ux_);
     AddLinearModelToEffect(kRRectOpacityModel, this, effect_);
@@ -1368,13 +1493,30 @@ void BackForwardTransitionAnimator::
         },
         this, effect_);
   }
+  // The effect is assumed to start at time zero.
+  effect_.Tick(base::TimeTicks());
 }
 
 void BackForwardTransitionAnimator::InitializeEffectForCrossfadeAnimation() {
+  CREATE_SCOPED_CRASH_KEYS();
   // Before we add the cross-fade model, the scrim model must have finished.
   CHECK(effect_.keyframe_models().empty());
 
   AddLinearModelToEffect(kCrossFadeAnimation, this, effect_);
+}
+
+// Called by OnAnimate when the user is still executing the gesture.
+void BackForwardTransitionAnimator::OnAnimateGestureProgressed(
+    const ui::BackGestureEvent& gesture) {
+  float progress = std::clamp(gesture.progress(), 0.f, 1.f);
+  const float movement = (progress - latest_progress_) * GetViewportWidthPx();
+  latest_progress_ = progress;
+  const PhysicsModel::Result result =
+      physics_model_.OnGestureProgressed(movement, gesture.time());
+  CHECK(!result.done);
+  // The gesture animations are never considered "finished".
+  bool animations_finished = SetLayerTransformationAndTickEffect(result);
+  CHECK(!animations_finished);
 }
 
 void BackForwardTransitionAnimator::AdvanceAndProcessState(State state) {
@@ -1393,10 +1535,12 @@ void BackForwardTransitionAnimator::AdvanceAndProcessState(State state) {
   if (previous_animation_stage != GetCurrentAnimationStage()) {
     animation_manager_->OnAnimationStageChanged();
   }
+  AppendToSerializeStates(FormatStateAndNavigationState());
   ProcessState();
 }
 
 void BackForwardTransitionAnimator::ProcessState() {
+  CREATE_SCOPED_CRASH_KEYS();
   switch (state_) {
     case State::kStarted: {
       DeferDialogs();
@@ -1477,7 +1621,6 @@ void BackForwardTransitionAnimator::ProcessState() {
 
       CHECK(animation_manager_->web_contents_view_android()
                 ->GetTopLevelNativeWindow());
-      SetupProgressBar();
       animation_manager_->web_contents_view_android()
           ->GetTopLevelNativeWindow()
           ->SetNeedsAnimate();
@@ -1528,16 +1671,18 @@ void BackForwardTransitionAnimator::ProcessState() {
 }
 
 void BackForwardTransitionAnimator::SetupForScreenshotPreview(
-    SkBitmap embedder_content) {
+    SkBitmap embedder_content,
+    const ui::BackGestureEvent& first_gesture) {
   NavigationControllerImpl* nav_controller =
       animation_manager_->navigation_controller();
-  auto* destination_entry =
-      nav_controller->GetEntryWithUniqueID(destination_entry_id_);
+  int entry_index =
+      NavigationTransitionUtils::FindEntryIndexForNavigationTransitionID(
+          nav_controller, destination_entry_id_);
+  auto* destination_entry = nav_controller->GetEntryAtIndex(entry_index);
   CHECK(destination_entry);
   auto* preview = static_cast<NavigationEntryScreenshot*>(
       destination_entry->GetUserData(NavigationEntryScreenshot::kUserDataKey));
-  CHECK(fallback_ux_ ||
-        preview->navigation_entry_id() == destination_entry_id_);
+  CHECK(fallback_ux_ || preview->unique_id() == destination_entry_id_);
 
   // The layers can be reused. We need to make sure there is no ongoing
   // transform on the layer of the current `WebContents`'s view.
@@ -1575,11 +1720,19 @@ void BackForwardTransitionAnimator::SetupForScreenshotPreview(
   screenshot_layer_->AddChild(screenshot_scrim_);
   screenshot_scrim_->SetContentsOpaque(false);
 
+  SkBitmap favicon_bitmap;
+  if (IsInternalScheme(destination_entry->GetURL())) {
+    // If internal url, set a privileged internal icon as the favicon in the
+    // fallback ux and should draw rrect.
+    favicon_bitmap = animation_manager_
+                         ->GetBackForwardTransitionFallbackUXInternalPageIcon();
+  } else {
+    favicon_bitmap = destination_entry->navigation_transition_data().favicon();
+  }
+
   // Add the rounded rectangle and the favicon. We need to do this after setting
   // up the scrim because the scrim shouldn't be applied to the rounded
   // rectangle and the favicon.
-  const auto& favicon_bitmap =
-      destination_entry->navigation_transition_data().favicon();
   // Do not draw the rrect if we don't have a valid bitmap.
   bool should_draw_rrect = fallback_ux_ && !favicon_bitmap.drawsNothing();
   if (should_draw_rrect) {
@@ -1608,7 +1761,7 @@ void BackForwardTransitionAnimator::SetupForScreenshotPreview(
 
   // Calling `OnGestureProgressed` manually. This will ask the physics model to
   // move the layers to their respective initial positions.
-  OnGestureProgressed(latest_progress_gesture_);
+  OnGestureProgressed(first_gesture);
 }
 
 void BackForwardTransitionAnimator::SetupProgressBar() {
@@ -1636,7 +1789,9 @@ bool BackForwardTransitionAnimator::StartNavigationAndTrackRequest() {
   NavigationControllerImpl* nav_controller =
       animation_manager_->navigation_controller();
 
-  int index = nav_controller->GetEntryIndexWithUniqueID(destination_entry_id_);
+  int index =
+      NavigationTransitionUtils::FindEntryIndexForNavigationTransitionID(
+          nav_controller, destination_entry_id_);
   if (index == -1) {
     return false;
   }
@@ -1690,7 +1845,10 @@ void BackForwardTransitionAnimator::TrackRequest(
   // the entry.
   CHECK(created_request->GetNavigationEntry());
 
-  int request_entry_id = created_request->GetNavigationEntry()->GetUniqueID();
+  auto request_entry_id =
+      static_cast<NavigationEntryImpl*>(created_request->GetNavigationEntry())
+          ->navigation_transition_data()
+          .unique_id();
 
   // `destination_entry_id_` is initialized in the same stack as
   // `GoToIndexAndReturnAllRequests()`. Thus they must equal.
@@ -1700,6 +1858,7 @@ void BackForwardTransitionAnimator::TrackRequest(
       .navigation_id = created_request->GetNavigationId(),
       .is_primary_main_frame = created_request->IsInPrimaryMainFrame(),
   };
+  SerializeNavigationRequest(created_request.get());
 
   if (created_request->IsNavigationStarted()) {
     navigation_state_ = NavigationState::kStarted;
@@ -1804,10 +1963,6 @@ bool BackForwardTransitionAnimator::SetLayerTransformationAndTickEffect(
       ->SetTransform(live_page_transform);
 
   if (old_surface_clone_) {
-    // TODO(https://crbug.com/371043197): Remove once it's fixed.
-    SCOPED_CRASH_KEY_STRING64("PredBack", "nav_state",
-                              NavigationStateToString(navigation_state_));
-    SCOPED_CRASH_KEY_STRING64("PredBack", "state", StateToString(state_));
     CHECK(navigation_state_ == NavigationState::kCommitted ||
           navigation_state_ == NavigationState::kStarted)
         << NavigationStateToString(navigation_state_);
@@ -1859,7 +2014,9 @@ void BackForwardTransitionAnimator::SetUpEmbedderContentLayerIfNeeded(
   embedder_live_content_clone_ = cc::slim::UIResourceLayer::Create();
   embedder_live_content_clone_->SetBitmap(bitmap);
   embedder_live_content_clone_->SetIsDrawable(true);
-  embedder_live_content_clone_->SetPosition(gfx::PointF(0.f, 0.f));
+  embedder_live_content_clone_->SetPosition(
+      gfx::PointF(0.f, -animation_manager_->web_contents_view_android()
+                            ->GetTopControlsHeight()));
   embedder_live_content_clone_->SetBounds(
       animation_manager_->web_contents_view_android()
           ->GetNativeView()
@@ -1870,6 +2027,7 @@ void BackForwardTransitionAnimator::SetUpEmbedderContentLayerIfNeeded(
 // `OnRenderFrameMetadataChangedAfterActivation` to the manager
 void BackForwardTransitionAnimator::SubscribeToNewRenderWidgetHost(
     NavigationRequest* navigation_request) {
+  CREATE_SCOPED_CRASH_KEYS();
   CHECK(!new_render_widget_host_);
 
   if (!navigation_request->GetNavigationEntry()) {
@@ -1895,8 +2053,6 @@ void BackForwardTransitionAnimator::SubscribeToNewRenderWidgetHost(
     return;
   }
 
-  new_render_widget_host_->render_frame_metadata_provider()->AddObserver(
-      animation_manager_);
   FrameNavigationEntry* frame_nav_entry =
       static_cast<NavigationEntryImpl*>(
           navigation_request->GetNavigationEntry())
@@ -1904,12 +2060,25 @@ void BackForwardTransitionAnimator::SubscribeToNewRenderWidgetHost(
   // This is a session history of the primary main frame. We must have a
   // valid `FrameNavigationEntry`.
   CHECK(frame_nav_entry);
-  CHECK_NE(frame_nav_entry->item_sequence_number(), -1);
+
+  // TODO(crbug.com/377355493): Each FrameNavigationEntry should ideally have a
+  // valid sequence number. This is a workaround when that's not the case - for
+  // example, it seems to happen when navigating towards a native page. See
+  // crbug.com/376944343.
+  if (frame_nav_entry->item_sequence_number() == -1) {
+    return;
+  }
+
+  new_render_widget_host_->render_frame_metadata_provider()->AddObserver(
+      animation_manager_);
   primary_main_frame_navigation_entry_item_sequence_number_ =
       frame_nav_entry->item_sequence_number();
 }
 
 void BackForwardTransitionAnimator::UnregisterNewFrameActivationObserver() {
+  if (!new_render_widget_host_) {
+    return;
+  }
   new_render_widget_host_->render_frame_metadata_provider()->RemoveObserver(
       animation_manager_);
   new_render_widget_host_->RemoveObserver(animation_manager_);
@@ -1917,17 +2086,14 @@ void BackForwardTransitionAnimator::UnregisterNewFrameActivationObserver() {
 }
 
 int BackForwardTransitionAnimator::GetViewportWidthPx() const {
-  return animation_manager_->web_contents_view_android()
-      ->GetNativeView()
-      ->GetPhysicalBackingSize()
-      .width();
+  return DipToPx(
+      animation_manager_->web_contents_view_android()->GetViewBounds().width());
 }
 
 int BackForwardTransitionAnimator::GetViewportHeightPx() const {
-  return animation_manager_->web_contents_view_android()
-      ->GetNativeView()
-      ->GetPhysicalBackingSize()
-      .height();
+  return DipToPx(animation_manager_->web_contents_view_android()
+                     ->GetViewBounds()
+                     .height());
 }
 
 void BackForwardTransitionAnimator::StartInputSuppression(
@@ -2001,8 +2167,8 @@ void BackForwardTransitionAnimator::InsertLayersInOrder() {
   const std::vector<scoped_refptr<cc::slim::Layer>> layers =
       parent_layer->children();
   auto itr =
-      base::ranges::find(layers, animation_manager_->web_contents_view_android()
-                                     ->parent_for_web_page_widgets());
+      std::ranges::find(layers, animation_manager_->web_contents_view_android()
+                                    ->parent_for_web_page_widgets());
   CHECK(itr != layers.end());
   std::ptrdiff_t web_page_widgets_index = std::distance(layers.begin(), itr);
 
@@ -2042,12 +2208,14 @@ void BackForwardTransitionAnimator::InsertLayersInOrder() {
 }
 
 void BackForwardTransitionAnimator::OnPostNavigationFirstFrameTimeout() {
+  AppendToSerializeStates("ScreenshotTimeout");
   CHECK_EQ(state_, State::kWaitingForNewRendererToDraw);
   CHECK_EQ(navigation_state_, NavigationState::kCommitted);
   PostNavigationFirstFrameActivated();
 }
 
 void BackForwardTransitionAnimator::PostNavigationFirstFrameActivated() {
+  AppendToSerializeStates("PostNavigationFirstFrameActivated");
   if (viz_has_activated_first_frame_) {
     // Viz has already activated the first frame post-navigation and has already
     // notified the browser.
@@ -2182,7 +2350,7 @@ gfx::PointF BackForwardTransitionAnimator::CalculateRRectStartPx() const {
            nav_direction_ == NavigationDirection::kForward) {
     return gfx::PointF(GetViewportWidthPx() - DipToPx(kRRectSizeDip), y_start);
   } else {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 }
 
@@ -2226,5 +2394,41 @@ void BackForwardTransitionAnimator::ResumeDialogs() {
   }
   deferred_dialog_token_ = ui::ModalDialogManagerBridge::kInvalidDialogToken;
 }
+
+void BackForwardTransitionAnimator::AppendToSerializeStates(
+    const std::string& state) {
+  if (!serialized_states_.empty()) {
+    serialized_states_.append(" ");
+  }
+  serialized_states_.append(state);
+}
+
+std::string BackForwardTransitionAnimator::FormatStateAndNavigationState()
+    const {
+  std::stringstream value;
+  value << StateToString(state_) << "("
+        << NavigationStateToString(navigation_state_);
+  if (state_ == State::kAnimationAborted && abort_reason_.has_value()) {
+    value << "," << AnimationAbortReasonToString(abort_reason_.value());
+  }
+  value << ")";
+  return value.str();
+}
+
+void BackForwardTransitionAnimator::SerializeNavigationRequest(
+    NavigationRequest* request) {
+  std::stringstream value;
+  value << "Id " << request->GetNavigationId() << " PrimaryMain "
+        << request->IsInPrimaryMainFrame() << " State "
+        << static_cast<int>(request->state());
+  if (auto* current_rfh = RenderFrameHostImpl::FromID(
+          request->GetPreviousRenderFrameHostId())) {
+    value << " from " << current_rfh->GetLastCommittedURL();
+  }
+  value << " to " << request->GetURL();
+  serialized_request_ = value.str();
+}
+
+#undef CREATE_SCOPED_CRASH_KEYS
 
 }  // namespace content

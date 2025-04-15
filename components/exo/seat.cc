@@ -235,11 +235,6 @@ void Seat::SetSelection(DataSource* source) {
 
   size_t num_data_read_callbacks = DataSource::kMaxDataTypes;
 
-  // Lacros sends additional metadata, in a custom MIME type, to sync clipboard
-  // source metadata,
-  if (endpoint_type == ui::EndpointType::kLacros)
-    ++num_data_read_callbacks;
-
   base::RepeatingClosure data_read_callback = base::BarrierClosure(
       num_data_read_callbacks,
       base::BindOnce(&Seat::OnAllReadsFinished, weak_ptr_factory_.GetWeakPtr(),
@@ -446,8 +441,7 @@ void Seat::OnKeyEvent(ui::KeyEvent* event) {
         pressed_keys_.erase(physical_code_for_currently_processing_event_);
         break;
       default:
-        NOTREACHED_IN_MIGRATION();
-        break;
+        NOTREACHED();
     }
   }
 

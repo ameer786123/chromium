@@ -59,6 +59,7 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     private final PageInfoAction mPageInfoAction;
     private LocationBarDataProvider mLocationBarDataProvider;
     private boolean mUrlHasFocus;
+    private View.OnClickListener mOnStatusIconNavigateBackButtonPress;
 
     /**
      * Creates a new {@link StatusCoordinator}.
@@ -144,17 +145,19 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
 
         if (isSearchEngineStatusIconVisible()) {
             setTooltipText(R.string.accessibility_menu_info);
-            setHoverHighlight(R.drawable.status_view_ripple);
         } else {
             setTooltipText(Resources.ID_NULL);
-            setHoverHighlight(Resources.ID_NULL);
         }
+        setBackground();
     }
 
     /** Signals that native initialization has completed. */
     public void onNativeInitialized() {
         mMediator.updateLocationBarIcon(StatusView.IconTransitionType.CROSSFADE);
-        mMediator.setStatusClickListener(this);
+        mMediator.setStatusClickListener(
+                mOnStatusIconNavigateBackButtonPress != null
+                        ? mOnStatusIconNavigateBackButtonPress
+                        : this);
         mMediator.updateStatusVisibility();
         mMediator.setStoreIconController();
     }
@@ -166,6 +169,14 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         mMediator.setUrlHasFocus(urlHasFocus);
         mUrlHasFocus = urlHasFocus;
         updateVerboseStatusVisibility();
+    }
+
+    /**
+     * @param listener The custom listener that will execute when the status view is clicked.
+     */
+    public void setOnStatusIconNavigateBackButtonPress(View.OnClickListener listener) {
+        mOnStatusIconNavigateBackButtonPress = listener;
+        mMediator.setStatusClickListener(listener != null ? listener : this);
     }
 
     /**
@@ -201,9 +212,9 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         mMediator.setTooltipText(tooltipTextResId);
     }
 
-    /** Set the hover highlight of the status view. */
-    public void setHoverHighlight(@DrawableRes int hoverHighlightResId) {
-        mMediator.setHoverHighlight(hoverHighlightResId);
+    /** Set the highlight background of the status view. */
+    public void setBackground() {
+        mMediator.setBackground();
     }
 
     /**
@@ -374,6 +385,11 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     /** Returns whether the status view is currently in the process of animating a change. */
     public boolean isStatusIconAnimating() {
         return mStatusView.isStatusIconAnimating();
+    }
+
+    /** Returns the start time (ms) of the current or most recent status icon animation. */
+    public long getAnimationStartTimeMs() {
+        return mStatusView.getAnimationStartTimeMs();
     }
 
     /**

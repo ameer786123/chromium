@@ -25,6 +25,9 @@ extern const char kLowPriceParamSeePriceHistory[];
 // Determine if the price insights and price tracking are enabled.
 bool IsPriceInsightsEnabled(ProfileIOS* profile);
 
+// Determine if Price Insights on iOS is enabled for the current region.
+bool IsPriceInsightsRegionEnabled();
+
 // Determine if the price insights high price feature is enabled.
 bool IsPriceInsightsHighPriceEnabled();
 

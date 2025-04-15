@@ -23,6 +23,7 @@
 #include "ash/webui/common/mojom/sea_pen.mojom.h"
 #include "ash/webui/common/mojom/sea_pen_generated.mojom-shared.h"
 #include "ash/webui/personalization_app/mojom/personalization_app.mojom.h"
+#include "base/check_deref.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
@@ -43,6 +44,7 @@
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/mock_personalization_app_manager.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_manager_factory.h"
+#include "chrome/browser/ash/wallpaper_handlers/mock_google_photos_wallpaper_handlers.h"
 #include "chrome/browser/ash/wallpaper_handlers/mock_wallpaper_handlers.h"
 #include "chrome/browser/ash/wallpaper_handlers/test_wallpaper_fetcher_delegate.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -62,6 +64,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_web_ui.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
@@ -79,7 +82,7 @@ namespace ash::personalization_app {
 namespace {
 
 constexpr char kFakeTestEmail[] = "fakeemail@personalization";
-constexpr char kTestGaiaId[] = "1234567890";
+constexpr GaiaId::Literal kTestGaiaId("1234567890");
 
 // Create fake Jpg image bytes.
 std::string CreateJpgBytes() {
@@ -213,6 +216,7 @@ class PersonalizationAppWallpaperProviderImplTest : public testing::Test {
 
     wallpaper_controller_client_ = std::make_unique<
         WallpaperControllerClientImpl>(
+        CHECK_DEREF(TestingBrowserProcess::GetGlobal()->local_state()),
         std::make_unique<wallpaper_handlers::TestWallpaperFetcherDelegate>());
     wallpaper_controller_client_->InitForTesting(&test_wallpaper_controller_);
 
@@ -380,8 +384,7 @@ TEST_F(PersonalizationAppWallpaperProviderImplTest, SelectWallpaperWhenBanned) {
 
   wallpaper_provider_remote()->SelectWallpaper(
       image_info.asset_id, /*preview_mode=*/false,
-      base::BindLambdaForTesting(
-          [](bool success) { NOTREACHED_IN_MIGRATION(); }));
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
 
   EXPECT_EQ("Invalid request to set wallpaper",
             bad_message_observer.WaitForBadMessage());
@@ -449,7 +452,7 @@ TEST_F(PersonalizationAppWallpaperProviderImplTest,
 TEST_F(PersonalizationAppWallpaperProviderImplTest,
        IgnoresWallpaperResizeForOtherUser) {
   const AccountId other_account_id = AccountId::FromUserEmailGaiaId(
-      "otherfakeemail@personalization", "0987654321");
+      "otherfakeemail@personalization", GaiaId("0987654321"));
   test_wallpaper_controller()->SetCurrentUser(other_account_id);
 
   test_wallpaper_controller()->ShowWallpaperImage(
@@ -597,8 +600,8 @@ TEST_F(PersonalizationAppWallpaperProviderImplTest, SetDailyRefreshBanned) {
   test_wallpaper_controller()->set_can_set_user_wallpaper(false);
   mojo::test::BadMessageObserver bad_message_observer;
   wallpaper_provider_remote()->SetDailyRefreshCollectionId(
-      collection_id, base::BindLambdaForTesting(
-                         [](bool success) { NOTREACHED_IN_MIGRATION(); }));
+      collection_id,
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
   EXPECT_EQ("Invalid request to set wallpaper",
             bad_message_observer.WaitForBadMessage());
 }
@@ -748,7 +751,7 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
   wallpaper_provider_remote()->FetchGooglePhotosAlbums(
       kResumeToken, base::BindLambdaForTesting(
                         [](mojom::FetchGooglePhotosAlbumsResponsePtr response) {
-                          NOTREACHED_IN_MIGRATION();
+                          NOTREACHED();
                         }));
   EXPECT_EQ(
       "Cannot call `FetchGooglePhotosAlbums()` without confirming that the "
@@ -811,7 +814,7 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
       item_id, album_id, kResumeToken,
       base::BindLambdaForTesting(
           [](mojom::FetchGooglePhotosPhotosResponsePtr response) {
-            NOTREACHED_IN_MIGRATION();
+            NOTREACHED();
           }));
   EXPECT_EQ(
       "Cannot call `FetchGooglePhotosPhotos()` without confirming that the "
@@ -852,9 +855,8 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
   // Test selecting a wallpaper before fetching the enterprise setting.
   wallpaper_provider_remote()->SelectGooglePhotosPhoto(
       "OmnisVirLupus", ash::WallpaperLayout::WALLPAPER_LAYOUT_CENTER_CROPPED,
-      /*preview_mode=*/false, base::BindLambdaForTesting([](bool success) {
-        NOTREACHED_IN_MIGRATION();
-      }));
+      /*preview_mode=*/false,
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
   EXPECT_EQ(
       "Cannot call `SelectGooglePhotosPhoto()` without confirming that the "
       "Google Photos enterprise setting is enabled.",
@@ -871,9 +873,8 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
   mojo::test::BadMessageObserver bad_message_observer;
   wallpaper_provider_remote()->SelectGooglePhotosPhoto(
       "OmnisVirLupus", ash::WallpaperLayout::WALLPAPER_LAYOUT_CENTER_CROPPED,
-      /*preview_mode=*/false, base::BindLambdaForTesting([](bool success) {
-        NOTREACHED_IN_MIGRATION();
-      }));
+      /*preview_mode=*/false,
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
   EXPECT_EQ(
       "Cannot call `SelectGooglePhotosPhoto()` without confirming that the "
       "Google Photos enterprise setting is enabled.",
@@ -885,8 +886,8 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
   // Test selecting an album before fetching the enterprise setting.
   mojo::test::BadMessageObserver bad_message_observer;
   wallpaper_provider_remote()->SelectGooglePhotosAlbum(
-      "OmnisVirLupus", base::BindLambdaForTesting(
-                           [](bool success) { NOTREACHED_IN_MIGRATION(); }));
+      "OmnisVirLupus",
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
   EXPECT_EQ(
       "Rejected attempt to set Google Photos wallpaper while disabled via "
       "enterprise setting.",
@@ -921,8 +922,8 @@ TEST_F(PersonalizationAppWallpaperProviderImplGooglePhotosTest,
   FetchGooglePhotosEnabled();
   mojo::test::BadMessageObserver bad_message_observer;
   wallpaper_provider_remote()->SelectGooglePhotosAlbum(
-      "OmnisVirLupus", base::BindLambdaForTesting(
-                           [](bool success) { NOTREACHED_IN_MIGRATION(); }));
+      "OmnisVirLupus",
+      base::BindLambdaForTesting([](bool success) { NOTREACHED(); }));
   EXPECT_EQ("Invalid request to select google photos album",
             bad_message_observer.WaitForBadMessage());
 }

@@ -12,7 +12,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/android/webapk/webapk_sync_service_factory.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -64,8 +63,8 @@
 #include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
-#include "components/autofill/core/browser/address_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
+#include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
+#include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/browser_sync/common_controller_builder.h"
 #include "components/password_manager/core/browser/sharing/password_receiver_service.h"
@@ -96,17 +95,16 @@
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "ash/components/arc/arc_util.h"
 #include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_package_syncable_service.h"
 #include "chrome/browser/ash/arc/arc_util.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/ash/floating_sso/floating_sso_service_factory.h"
 #include "chrome/browser/ash/printing/oauth2/authorization_zones_manager_factory.h"
 #include "chrome/browser/ash/printing/synced_printers_manager_factory.h"
 #include "chrome/browser/sync/desk_sync_service_factory.h"
 #include "chrome/browser/sync/wifi_configuration_sync_service_factory.h"
+#include "chromeos/ash/experiences/arc/arc_util.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
@@ -147,7 +145,7 @@ tab_groups::TabGroupSyncService* GetTabGroupSyncService(Profile* profile) {
       tab_groups::IsTabGroupSyncEnabled(profile->GetPrefs()) &&
       !base::FeatureList::IsEnabled(
           tab_groups::kTabGroupSyncDisableNetworkLayer);
-  tab_groups::TabGroupTrial::OnTabgroupSyncEnabled(enable_tab_group_sync);
+  tab_groups::TabGroupTrial::OnTabGroupSyncEnabled(enable_tab_group_sync);
   if (!enable_tab_group_sync) {
     return nullptr;
   }
@@ -220,10 +218,7 @@ syncer::DataTypeController::TypeVector CreateCommonControllers(
   builder.SetDataTypeStoreService(
       DataTypeStoreServiceFactory::GetForProfile(profile));
 #if !BUILDFLAG(IS_ANDROID)
-  builder.SetPasskeyModel(
-      base::FeatureList::IsEnabled(syncer::kSyncWebauthnCredentials)
-          ? PasskeyModelFactory::GetForProfile(profile)
-          : nullptr);
+  builder.SetPasskeyModel(PasskeyModelFactory::GetForProfile(profile));
 #endif  // !BUILDFLAG(IS_ANDROID)
   builder.SetPasswordReceiverService(
       PasswordReceiverServiceFactory::GetForProfile(profile));
@@ -324,6 +319,7 @@ syncer::DataTypeController::TypeVector CreateChromeControllers(
           ? ash::floating_sso::FloatingSsoServiceFactory::GetForProfile(profile)
           : nullptr);
   builder.SetOsPrefServiceSyncable(PrefServiceSyncableFromProfile(profile));
+  builder.SetPrefService(profile->GetPrefs());
   builder.SetSyncedPrintersManager(
       ash::SyncedPrintersManagerFactory::GetForBrowserContext(profile));
   builder.SetWifiConfigurationSyncService(

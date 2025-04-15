@@ -34,7 +34,6 @@
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/editing/bidi_adjustment.h"
 #include "third_party/blink/renderer/core/editing/editing_behavior.h"
 #include "third_party/blink/renderer/core/editing/editing_boundary.h"
@@ -664,7 +663,7 @@ WebInputEventResult SelectionController::UpdateSelectionForMouseDrag(
     return WebInputEventResult::kNotHandled;
   }
   const bool selection_is_directional =
-      should_extend_selection ? Selection().IsDirectional() : false;
+      should_extend_selection && Selection().IsDirectional();
   SetNonDirectionalSelectionIfNeeded(
       new_visible_selection,
       SetSelectionOptions::Builder()
@@ -1452,7 +1451,7 @@ bool IsUserNodeDraggable(const MouseEventWithHitTestResults& event) {
   }
 
   const ComputedStyle* style =
-      inner_node->GetComputedStyleForElementOrLayoutObject();
+      GetComputedStyleForElementOrLayoutObject(*inner_node);
   return style && style->UserDrag() == EUserDrag::kElement;
 }
 

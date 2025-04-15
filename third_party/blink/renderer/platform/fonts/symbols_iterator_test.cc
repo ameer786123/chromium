@@ -34,8 +34,6 @@ const bool FontVariantEmojiFlagValues[] = {true, false};
 
 class SymbolsIteratorTest : public testing::Test {
  protected:
-  void SetUp() override { ScopedFontVariantEmojiForTest scoped_feature(true); }
-
   void CheckRuns(const Vector<FallbackTestRun>& runs) {
     StringBuilder text;
     text.Ensure16Bit();
@@ -45,7 +43,7 @@ class SymbolsIteratorTest : public testing::Test {
       expect.push_back(
           FallbackExpectedRun(text.length(), run.font_fallback_priority));
     }
-    SymbolsIterator symbols_iterator(text.Characters16(), text.length());
+    SymbolsIterator symbols_iterator(text.Span16());
     VerifyRuns(&symbols_iterator, expect);
   }
 
@@ -68,9 +66,6 @@ class SymbolsIteratorTest : public testing::Test {
 class SymbolsIteratorWithFontVariantEmojiParamTest
     : public SymbolsIteratorTest,
       public testing::WithParamInterface<bool> {
-  void SetUp() override {
-    ScopedFontVariantEmojiForTest scoped_feature(GetParam());
-  }
 };
 
 INSTANTIATE_TEST_SUITE_P(SymbolsIteratorTest,
@@ -79,7 +74,7 @@ INSTANTIATE_TEST_SUITE_P(SymbolsIteratorTest,
 
 TEST_P(SymbolsIteratorWithFontVariantEmojiParamTest, Empty) {
   String empty(g_empty_string16_bit);
-  SymbolsIterator symbols_iterator(empty.Characters16(), empty.length());
+  SymbolsIterator symbols_iterator(empty.Span16());
   unsigned limit = 0;
   FontFallbackPriority symbols_font = FontFallbackPriority::kInvalid;
   DCHECK(!symbols_iterator.Consume(&limit, &symbols_font));

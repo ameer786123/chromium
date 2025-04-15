@@ -86,6 +86,7 @@
 #include "chrome/browser/chromeos/extensions/external_loader/device_local_account_external_policy_loader.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/updater/chromeos_extension_cache_delegate.h"
 #include "chrome/browser/extensions/updater/extension_cache_impl.h"
 #include "chrome/browser/extensions/updater/local_extension_cache.h"
@@ -323,7 +324,7 @@ TestingUpdateManifestProvider::Update::Update(const std::string& version,
                                               const GURL& crx_url)
     : version(version), crx_url(crx_url) {}
 
-TestingUpdateManifestProvider::Update::Update() {}
+TestingUpdateManifestProvider::Update::Update() = default;
 
 TestingUpdateManifestProvider::TestingUpdateManifestProvider(
     const std::string& relative_update_url)
@@ -374,7 +375,7 @@ TestingUpdateManifestProvider::HandleRequest(
   return std::move(http_response);
 }
 
-TestingUpdateManifestProvider::~TestingUpdateManifestProvider() {}
+TestingUpdateManifestProvider::~TestingUpdateManifestProvider() = default;
 
 bool IsSessionStarted() {
   return session_manager::SessionManager::Get()->IsSessionStarted();
@@ -449,7 +450,7 @@ class DeviceLocalAccountTest : public DevicePolicyCrosBrowserTest,
     set_exit_when_last_browser_closes(false);
   }
 
-  ~DeviceLocalAccountTest() override {}
+  ~DeviceLocalAccountTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     DevicePolicyCrosBrowserTest::SetUpCommandLine(command_line);
@@ -844,10 +845,6 @@ class ExtensionInstallObserver : public ProfileManagerObserver,
 
   // ProfileManagerObserver:
   void OnProfileAdded(Profile* profile) override {
-    // Ignore lock screen apps profile.
-    if (ash::ProfileHelper::IsLockScreenAppProfile(profile)) {
-      return;
-    }
     registry_ = extensions::ExtensionRegistry::Get(profile);
     profile_manager_observer_.Reset();
 
@@ -878,7 +875,7 @@ class FakeDelegateImpl : public ash::SessionLengthLimiter::Delegate {
   FakeDelegateImpl(const FakeDelegateImpl&) = delete;
   FakeDelegateImpl& operator=(const FakeDelegateImpl&) = delete;
 
-  ~FakeDelegateImpl() override {}
+  ~FakeDelegateImpl() override = default;
 
   const base::Clock* GetClock() const override { return &clock_; }
   void StopSession() override {
@@ -1108,6 +1105,9 @@ IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, FullscreenAllowed) {
 }
 
 IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, ExtensionsUncached) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   base::AddFeatureIdTagToTestResult(
       DeviceLocalAccountTest::kExtensionsUncachedTag);
 
@@ -1173,6 +1173,9 @@ IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, ExtensionsUncached) {
 }
 
 IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, ExtensionsCached) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   base::AddFeatureIdTagToTestResult(
       DeviceLocalAccountTest::kExtensionsCachedTag);
 
@@ -1270,6 +1273,9 @@ static void CreateFile(const base::FilePath& file,
 }
 
 IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, ExtensionCacheImplTest) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   // Make it possible to force-install a hosted app and an extension.
   ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
   scoped_refptr<TestingUpdateManifestProvider> testing_update_manifest_provider(
@@ -1573,8 +1579,7 @@ IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, LastWindowClosedLogoutReminder) {
 
   // Install and a platform app.
   scoped_refptr<extensions::CrxInstaller> installer =
-      extensions::CrxInstaller::CreateSilent(
-          extension_system->extension_service());
+      extensions::CrxInstaller::CreateSilent(profile);
   installer->set_allow_silent_install(true);
   installer->set_install_cause(extension_misc::INSTALL_CAUSE_USER_DOWNLOAD);
   installer->set_creation_flags(extensions::Extension::FROM_WEBSTORE);
@@ -2499,6 +2504,9 @@ IN_PROC_BROWSER_TEST_F(ManagedSessionsTest, ForceInstalledSafeExtension) {
 }
 
 IN_PROC_BROWSER_TEST_F(ManagedSessionsTest, ForceInstalledUnsafeExtension) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   StartTestExtensionsServer();
   AddForceInstalledUnsafeExtension();
 

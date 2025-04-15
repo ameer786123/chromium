@@ -143,7 +143,9 @@ class CORE_EXPORT MatchedPropertiesCache {
   // well with complex keys. Of course, it means we are vulnerable to hash
   // collisions, in that we cannot store more than one different cache entry
   // with the same hash.
-  using Cache = HeapHashMap<unsigned, Member<CachedMatchedProperties>>;
+  using Cache = HeapHashMap<unsigned,
+                            Member<CachedMatchedProperties>,
+                            AlreadyHashedTraits>;
 
   void CleanMatchedPropertiesCache(const LivenessBroker&);
 
@@ -172,7 +174,8 @@ template <>
 struct VectorTraits<blink::CachedMatchedProperties::Entry>
     : VectorTraitsBase<blink::CachedMatchedProperties::Entry> {
   static constexpr bool kCanClearUnusedSlotsWithMemset = true;
-  static constexpr bool kCanTraceConcurrently = true;
+  // HeapVector is evidently not concurrent.
+  static constexpr bool kCanTraceConcurrently = false;
 };
 
 }  // namespace WTF

@@ -10,6 +10,7 @@ import static org.chromium.chrome.browser.customtabs.content.CustomTabActivityNa
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Browser;
@@ -22,33 +23,33 @@ import androidx.core.app.ActivityOptionsCompat;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
+import org.chromium.base.Log;
+import org.chromium.base.PackageManagerUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.back_press.MinimizeAppAndCloseTabBackPressHandler;
 import org.chromium.chrome.browser.back_press.MinimizeAppAndCloseTabBackPressHandler.MinimizeAppAndCloseTabType;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.customtabs.BaseCustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CloseButtonNavigator;
 import org.chromium.chrome.browser.customtabs.CustomTabObserver;
-import org.chromium.chrome.browser.dependency_injection.ActivityScope;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.StartStopWithNativeObserver;
+import org.chromium.chrome.browser.preloading.PreloadingDataBridge;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
-import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.PageTransition;
+import org.chromium.ui.widget.Toast;
 import org.chromium.url.GURL;
 import org.chromium.url.Origin;
 
@@ -58,12 +59,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.function.Predicate;
 
-import javax.inject.Inject;
-
 /** Responsible for navigating to new pages and going back to previous pages. */
-@ActivityScope
 public class CustomTabActivityNavigationController
         implements StartStopWithNativeObserver, BackPressHandler {
+    private static final String TAG = "CTANavigationCtrl";
+
     @IntDef({
         FinishReason.USER_NAVIGATION,
         FinishReason.REPARENTING,
@@ -84,12 +84,11 @@ public class CustomTabActivityNavigationController
     /** A handler of back presses. */
     public interface BackHandler {
         /**
-         * Called when back button is pressed, unless already handled by another handler.
-         * The implementation should do one of the following:
-         * 1) Synchronously accept and handle the event and return true;
-         * 2) Synchronously reject the event by returning false;
-         * 3) Accept the event by returning true, handle it asynchronously, and if the handling
-         * fails, trigger the default handling routine by running the defaultBackHandler.
+         * Called when back button is pressed, unless already handled by another handler. The
+         * implementation should do one of the following: 1) Synchronously accept and handle the
+         * event and return true; 2) Synchronously reject the event by returning false; 3) Accept
+         * the event by returning true, handle it asynchronously, and if the handling fails, trigger
+         * the default handling routine by running the defaultBackHandler.
          */
         boolean handleBackPressed(Runnable defaultBackHandler);
     }
@@ -99,25 +98,14 @@ public class CustomTabActivityNavigationController
         void onFinish(@FinishReason int reason, boolean warmupOnFinish);
     }
 
-    /** Interface which gets the package name of the default web browser on the device. */
-    public interface DefaultBrowserProvider {
-        /** Returns the package name for the default browser on the device as a string. */
-        @Nullable
-        String getDefaultBrowser();
-    }
-
     private final CustomTabActivityTabController mTabController;
     private final CustomTabActivityTabProvider mTabProvider;
     private final BrowserServicesIntentDataProvider mIntentDataProvider;
     private final CustomTabObserver mCustomTabObserver;
     private final CloseButtonNavigator mCloseButtonNavigator;
-    private final ChromeBrowserInitializer mChromeBrowserInitializer;
     private final Activity mActivity;
-    private final DefaultBrowserProvider mDefaultBrowserProvider;
     private final ObservableSupplierImpl<Boolean> mBackPressStateSupplier =
             new ObservableSupplierImpl<>(false);
-
-    @Nullable private ToolbarManager mToolbarManager;
 
     @Nullable private FinishHandler mFinishHandler;
 
@@ -146,50 +134,46 @@ public class CustomTabActivityNavigationController
                 }
 
                 private boolean shouldInterceptBackPress() {
+                    // If this is the first tab created or when all other tabs are closed, we want
+                    // the OS to handle the back event then notify the registered observer that the
+                    // back event has happened.
+                    if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_PREDICTIVE_BACK_GESTURE)
+                            && mTabController.onlyOneTabRemaining()
+                            && !mIntentDataProvider.isPartialCustomTab()) {
+                        return false;
+                    }
                     return mTabProvider.getTab() != null
-                            && mChromeBrowserInitializer.isFullBrowserInitialized();
+                            && ChromeBrowserInitializer.getInstance().isFullBrowserInitialized();
                 }
             };
 
-    @Inject
     public CustomTabActivityNavigationController(
             CustomTabActivityTabController tabController,
+            CustomTabActivityTabProvider tabProvider,
             BrowserServicesIntentDataProvider intentDataProvider,
+            CustomTabObserver customTabObserver,
             CloseButtonNavigator closeButtonNavigator,
-            ChromeBrowserInitializer chromeBrowserInitializer,
-            BaseCustomTabActivity activity,
-            ActivityLifecycleDispatcher lifecycleDispatcher,
-            DefaultBrowserProvider customTabsDefaultBrowserProvider) {
+            Activity activity,
+            ActivityLifecycleDispatcher lifecycleDispatcher) {
         mTabController = tabController;
-        mTabProvider = activity.getCustomTabActivityTabProvider();
+        mTabProvider = tabProvider;
         mIntentDataProvider = intentDataProvider;
-        mCustomTabObserver = activity.getCustomTabObserver();
+        mCustomTabObserver = customTabObserver;
         mCloseButtonNavigator = closeButtonNavigator;
-        mChromeBrowserInitializer = chromeBrowserInitializer;
         mActivity = activity;
-        mDefaultBrowserProvider = customTabsDefaultBrowserProvider;
 
         lifecycleDispatcher.register(this);
         mTabProvider.addObserver(mTabObserver);
-        mChromeBrowserInitializer.runNowOrAfterFullBrowserStarted(
-                () -> {
-                    mBackPressStateSupplier.set(mTabProvider.getTab() != null);
-                });
+        ChromeBrowserInitializer.getInstance()
+                .runNowOrAfterFullBrowserStarted(
+                        () -> {
+                            mBackPressStateSupplier.set(mTabProvider.getTab() != null);
+                        });
     }
 
     /**
-     * Notifies the navigation controller that the ToolbarManager has been created and is ready for
-     * use. ToolbarManager isn't passed directly to the constructor because it's not guaranteed to
-     * be initialized yet.
-     */
-    public void onToolbarInitialized(ToolbarManager manager) {
-        assert manager != null : "Toolbar manager not initialized";
-        mToolbarManager = manager;
-    }
-
-    /**
-     * Performs navigation using given {@link LoadUrlParams}.
-     * The source Intent is used for tracking page loading times (see {@link CustomTabObserver}).
+     * Performs navigation using given {@link LoadUrlParams}. The source Intent is used for tracking
+     * page loading times (see {@link CustomTabObserver}).
      */
     public void navigate(final LoadUrlParams params, Intent sourceIntent) {
         Tab tab = mTabProvider.getTab();
@@ -230,12 +214,23 @@ public class CustomTabActivityNavigationController
         // avoid sending same-site cookies.
         params.setInitiatorOrigin(Origin.createOpaqueOrigin());
 
+        // Notifies PreloadingImpl that a navigation to CCT is happening. This is used to calculate
+        // the recall of CCT prefetch's attempt. Please see
+        // PreloadingData::setIsNavigationInDomainCallback for more details.
+        if (ChromeFeatureList.sPrefetchBrowserInitiatedTriggers.isEnabled()
+                && ChromeFeatureList.sCctNavigationalPrefetch.isEnabled()) {
+            WebContents webContents = mTabProvider.getTab().getWebContents();
+            if (webContents != null) {
+                PreloadingDataBridge.setIsNavigationInDomainCallbackForCct(webContents);
+            }
+        }
+
         tab.loadUrl(params);
     }
 
     /** Handles back button navigation. */
     public boolean navigateOnBack() {
-        if (!mChromeBrowserInitializer.isFullBrowserInitialized()) return false;
+        if (!ChromeBrowserInitializer.getInstance().isFullBrowserInitialized()) return false;
 
         boolean separateTask =
                 (mIntentDataProvider.getIntent().getFlags()
@@ -244,57 +239,17 @@ public class CustomTabActivityNavigationController
                         != 0;
         RecordUserAction.record("CustomTabs.SystemBack");
         if (mTabProvider.getTab() == null) return false;
-        if (!BackPressManager.isEnabled()) {
-            // If enabled, BackPressManager, rather than this class, will trigger their custom
-            // logic of handling back press.
-            final WebContents webContents = mTabProvider.getTab().getWebContents();
-            if (webContents != null) {
-                RenderFrameHost focusedFrame = webContents.getFocusedFrame();
-                if (focusedFrame != null && focusedFrame.signalCloseWatcherIfActive()) {
-                    BackPressManager.record(BackPressHandler.Type.CLOSE_WATCHER);
-                    BackPressManager.recordForCustomTab(
-                            BackPressHandler.Type.CLOSE_WATCHER, separateTask);
-                    return true;
-                }
-            }
 
-            if (mToolbarManager != null && mToolbarManager.back()) {
-                BackPressManager.record(BackPressHandler.Type.TAB_HISTORY);
-                BackPressManager.recordForCustomTab(
-                        BackPressHandler.Type.TAB_HISTORY, separateTask);
-                return true;
-            }
-            // If enabled, BackPressManager will record this internally. Otherwise, this should
-            // be recorded manually.
-            BackPressManager.record(BackPressHandler.Type.MINIMIZE_APP_AND_CLOSE_TAB);
-            BackPressManager.recordForCustomTab(
-                    BackPressHandler.Type.MINIMIZE_APP_AND_CLOSE_TAB, separateTask);
-        } else if (BackPressManager.correctTabNavigationOnFallback()) {
-            if (mTabProvider.getTab().canGoBack()) {
-                return false;
-            }
-        }
-
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_BEFORE_UNLOAD)
-                && mTabController.onlyOneTabRemaining()) {
-            finishActivity(separateTask);
-            return true;
-        }
-
-        if (mTabController.dispatchBeforeUnloadIfNeeded()) {
-            MinimizeAppAndCloseTabBackPressHandler.record(MinimizeAppAndCloseTabType.CLOSE_TAB);
-            MinimizeAppAndCloseTabBackPressHandler.recordForCustomTab(
-                    MinimizeAppAndCloseTabType.CLOSE_TAB, separateTask);
-            return true;
-        }
         if (mTabController.onlyOneTabRemaining()) {
             finishActivity(separateTask);
-        } else {
-            MinimizeAppAndCloseTabBackPressHandler.record(MinimizeAppAndCloseTabType.CLOSE_TAB);
-            MinimizeAppAndCloseTabBackPressHandler.recordForCustomTab(
-                    MinimizeAppAndCloseTabType.CLOSE_TAB, separateTask);
-            mTabController.closeTab();
+            return true;
         }
+
+        MinimizeAppAndCloseTabBackPressHandler.record(MinimizeAppAndCloseTabType.CLOSE_TAB);
+        MinimizeAppAndCloseTabBackPressHandler.recordForCustomTab(
+                MinimizeAppAndCloseTabType.CLOSE_TAB, separateTask);
+
+        if (!mTabController.dispatchBeforeUnloadIfNeeded()) mTabController.closeTab();
 
         return true;
     }
@@ -341,12 +296,15 @@ public class CustomTabActivityNavigationController
         }
         String url = gurl.getSpec();
         if (TextUtils.isEmpty(url)) url = mIntentDataProvider.getUrlToLoad();
+
+        assertUrlNotNullForOpenInBrowser(url, tab);
+
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.putExtra(IntentHandler.EXTRA_FROM_OPEN_IN_BROWSER, true);
-        String packageName = mDefaultBrowserProvider.getDefaultBrowser();
-        if (packageName != null) {
-            intent.setPackage(packageName);
+        ResolveInfo resolveInfo = PackageManagerUtils.resolveDefaultWebBrowserActivity();
+        if (resolveInfo != null) {
+            intent.setPackage(resolveInfo.activityInfo.packageName);
             // crbug.com/1265223
             if (intent.resolveActivity(mActivity.getPackageManager()) == null) {
                 intent.setPackage(null);
@@ -394,9 +352,19 @@ public class CustomTabActivityNavigationController
         } else {
             if (mIntentDataProvider.isInfoPage()) {
                 IntentHandler.startChromeLauncherActivityForTrustedIntent(intent);
-            } else {
+            } else if (PackageManagerUtils.canResolveActivity(intent)) {
                 mActivity.startActivity(intent, startActivityOptions);
                 finish(FinishReason.OPEN_IN_BROWSER);
+            } else {
+                Toast.makeText(
+                                mActivity,
+                                R.string.custom_tab_cant_perform_action_toast,
+                                Toast.LENGTH_LONG)
+                        .show();
+                // TODO(crbug.com/384992232): Clean up the histogram.
+                boolean isPdf = tab.isNativePage() && tab.getNativePage().isPdf();
+                RecordHistogram.recordBooleanHistogram(
+                        "Android.CustomTab.CannotOpenUrlInBrowser.IsPdf", isPdf);
             }
         }
         return true;
@@ -435,10 +403,9 @@ public class CustomTabActivityNavigationController
     }
 
     /**
-     * Sets a criterion to choose a page to land to when close button is pressed.
-     * Only one such criterion can be set.
-     * If no page in the navigation history meets the criterion, or there is no criterion, then
-     * pressing close button will finish the Custom Tab activity.
+     * Sets a criterion to choose a page to land to when close button is pressed. Only one such
+     * criterion can be set. If no page in the navigation history meets the criterion, or there is
+     * no criterion, then pressing close button will finish the Custom Tab activity.
      */
     public void setLandingPageOnCloseCriterion(Predicate<String> criterion) {
         mCloseButtonNavigator.setLandingPageCriteria(criterion);
@@ -456,5 +423,38 @@ public class CustomTabActivityNavigationController
         } else {
             mTabController.saveState();
         }
+    }
+
+    // Debug log dump for https://crbug.com/374871254.
+    private void assertUrlNotNullForOpenInBrowser(String url, @NonNull Tab tab) {
+        if (url != null) return;
+
+        String tabInfo =
+                "Tab: isInitialized "
+                        + tab.isInitialized()
+                        + " getWebContents() == null "
+                        + (tab.getWebContents() == null);
+
+        String intentDataProviderInfo =
+                " IntentDataProvider: activityType "
+                        + mIntentDataProvider.getActivityType()
+                        + " getCustomTabMode "
+                        + mIntentDataProvider.getCustomTabMode()
+                        // #getUrlToLoad "must be called only after native has
+                        // loaded".
+                        + " isFullBrowserInitialized "
+                        + ChromeBrowserInitializer.getInstance().isFullBrowserInitialized();
+
+        String assertMsg = "URL used to open browser is null. " + tabInfo + intentDataProviderInfo;
+        Log.e(TAG, assertMsg);
+        assert false : assertMsg;
+    }
+
+    public BrowserServicesIntentDataProvider getIntentDataProviderForTesting() {
+        return mIntentDataProvider;
+    }
+
+    public CustomTabActivityTabProvider.Observer getTabObserverForTesting() {
+        return mTabObserver;
     }
 }

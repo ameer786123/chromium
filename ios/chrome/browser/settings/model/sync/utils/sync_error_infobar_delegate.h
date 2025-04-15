@@ -20,6 +20,10 @@ namespace infobars {
 class InfoBarManager;
 }
 
+// Defines a period of time when the infobar should not be displayed again
+// after a previous dismissal.
+inline constexpr base::TimeDelta kSyncErrorInfobarTimeout = base::Hours(24);
+
 // Shows a sync error in an infobar.
 class SyncErrorInfoBarDelegate : public ConfirmInfoBarDelegate,
                                  public syncer::SyncServiceObserver {
@@ -45,6 +49,7 @@ class SyncErrorInfoBarDelegate : public ConfirmInfoBarDelegate,
   int GetButtons() const override;
   std::u16string GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
+  void InfoBarDismissed() override;
 
   // syncer::SyncServiceObserver implementation.
   void OnStateChanged(syncer::SyncService* sync) override;

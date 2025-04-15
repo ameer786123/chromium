@@ -13,10 +13,11 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.widget.ImageViewCompat;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.widget.R;
 import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
 
@@ -25,10 +26,11 @@ import org.chromium.components.browser_ui.widget.RoundedCornerOutlineProvider;
  *
  * Displays the title of the site beneath a large icon.
  */
+@NullMarked
 public class TileView extends FrameLayout {
     private ImageView mBadgeView;
     private TextView mTitleView;
-    private Runnable mOnFocusViaSelectionListener;
+    private @Nullable Runnable mOnFocusViaSelectionListener;
     private RoundedCornerOutlineProvider mRoundingOutline;
     protected ImageView mIconView;
     protected View mIconBackgroundView;
@@ -96,6 +98,11 @@ public class TileView extends FrameLayout {
         mTitleView.setText(title);
     }
 
+    /** Changes the appearance of a tile to indicate that it's a Custom Tile. */
+    protected void setStyleForCustomTile() {
+        mIconBackgroundView.setBackgroundResource(R.drawable.custom_tile_background);
+    }
+
     /** Specify the handler that will be invoked when this tile is highlighted by the user. */
     void setOnFocusViaSelectionListener(Runnable listener) {
         mOnFocusViaSelectionListener = listener;
@@ -113,7 +120,7 @@ public class TileView extends FrameLayout {
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
-    public @NonNull TextView getTitleView() {
+    public TextView getTitleView() {
         return mTitleView;
     }
 
@@ -123,10 +130,5 @@ public class TileView extends FrameLayout {
         if (isSelected && mOnFocusViaSelectionListener != null) {
             mOnFocusViaSelectionListener.run();
         }
-    }
-
-    @Override
-    public boolean isFocused() {
-        return super.isFocused() || isSelected();
     }
 }

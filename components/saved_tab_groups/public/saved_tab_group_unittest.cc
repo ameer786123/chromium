@@ -7,6 +7,9 @@
 #include "base/token.h"
 #include "build/build_config.h"
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
+#include "components/saved_tab_groups/public/types.h"
+#include "components/saved_tab_groups/test_support/saved_tab_group_test_utils.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -15,28 +18,18 @@
 namespace tab_groups {
 namespace {
 
+using testing::Contains;
 using testing::ElementsAre;
+using testing::SizeIs;
+using testing::UnorderedElementsAre;
 
 MATCHER_P(HasTabGuid, guid, "") {
   return arg.saved_tab_guid() == guid;
 }
 
-base::Uuid MakeUniqueGUID() {
-  static uint64_t unique_value = 0;
-  unique_value++;
-  uint64_t kBytes[] = {0, unique_value};
-  return base::Uuid::FormatRandomDataAsV4ForTesting(
-      as_bytes(base::make_span(kBytes)));
-}
-
 LocalTabID MakeUniqueTabID() {
-  static uint64_t unique_value = 0;
-  unique_value++;
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-  return unique_value;
-#else
-  return base::Token(0, unique_value);
-#endif
+  static uint32_t unique_value = 0;
+  return unique_value++;
 }
 
 SavedTabGroup CreateDefaultEmptySavedTabGroup() {
@@ -60,8 +53,8 @@ void AddTabToEndOfGroup(SavedTabGroup& group,
 }  // namespace
 
 TEST(SavedTabGroupTest, GetTabByGUID) {
-  base::Uuid tab_1_saved_guid = MakeUniqueGUID();
-  base::Uuid tab_2_saved_guid = MakeUniqueGUID();
+  base::Uuid tab_1_saved_guid = base::Uuid::GenerateRandomV4();
+  base::Uuid tab_2_saved_guid = base::Uuid::GenerateRandomV4();
 
   // create a group with a couple tabs
   SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
@@ -193,7 +186,7 @@ TEST(SavedTabGroupTest, AddTabFromSyncRespectsPositions) {
 TEST(SavedTabGroupTest, AddTabFromSyncUsesPositionAsIndexForSharedGroup) {
   // Create a shared group and 2 tabs.
   SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
-  group.SetCollaborationId("collaboration");
+  group.SetCollaborationId(CollaborationId("collaboration"));
 
   SavedTabGroupTab tab_0 = CreateDefaultSavedTabGroupTab(group.saved_guid());
   tab_0.SetPosition(0);
@@ -241,7 +234,7 @@ TEST(SavedTabGroupTest, RemoveTabFromSyncMaintainsPositions) {
   }
 
   // Remove tab_1 from the group.
-  group.RemoveTabFromSync(tab_1_saved_guid);
+  group.RemoveTabFromSync(tab_1_saved_guid, /*removed_by=*/GaiaId());
 
   // Verify only tab_2 is in the group.
   EXPECT_EQ(group.saved_tabs().size(), 1u);
@@ -254,6 +247,60 @@ TEST(SavedTabGroupTest, RemoveTabFromSyncMaintainsPositions) {
     SavedTabGroupTab* second_tab = group.GetTab(tab_2_saved_guid);
     EXPECT_EQ(&group.saved_tabs()[0], second_tab);
     EXPECT_EQ(second_tab->position(), 1u);
+  }
+}
+
+TEST(SavedTabGroupTest, RemoveSharedTabFromSyncStoresMetadata) {
+  SavedTabGroup group = CreateDefaultEmptySavedTabGroup().CloneAsSharedTabGroup(
+      CollaborationId("collaboration"));
+  SavedTabGroupTab tab_1 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+  SavedTabGroupTab tab_2 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+
+  group.AddTabLocally(tab_1);
+  group.AddTabLocally(tab_2);
+
+  GaiaId removed_by("user_id");
+  group.RemoveTabFromSync(tab_2.saved_tab_guid(), removed_by);
+
+  EXPECT_THAT(group.last_removed_tabs_metadata(),
+              UnorderedElementsAre(testing::Key(tab_2.saved_tab_guid())));
+  EXPECT_EQ(
+      group.last_removed_tabs_metadata().at(tab_2.saved_tab_guid()).removed_by,
+      removed_by);
+}
+
+TEST(SavedTabGroupTest, RemoveSharedTabFromSyncShouldCleanOldEntries) {
+  const GaiaId kRemovedBy("user_id");
+
+  SavedTabGroup group = CreateDefaultEmptySavedTabGroup().CloneAsSharedTabGroup(
+      CollaborationId("collaboration"));
+  group.AddTabLocally(CreateDefaultSavedTabGroupTab(group.saved_guid()));
+
+  // Add and remove tabs up to the limit.
+  const size_t removed_tabs_limit =
+      SavedTabGroup::GetMaxLastRemovedTabsMetadataForTesting();
+  for (size_t i = 0; i < removed_tabs_limit; ++i) {
+    SavedTabGroupTab tab = CreateDefaultSavedTabGroupTab(group.saved_guid());
+    group.AddTabLocally(tab);
+    group.RemoveTabFromSync(tab.saved_tab_guid(), kRemovedBy);
+  }
+
+  EXPECT_THAT(group.last_removed_tabs_metadata(), SizeIs(removed_tabs_limit));
+
+  // All the new tabs should replace previous ones.
+  std::vector<base::Uuid> last_removed_tabs;
+  for (size_t i = 0; i < removed_tabs_limit; ++i) {
+    SavedTabGroupTab tab = CreateDefaultSavedTabGroupTab(group.saved_guid());
+    group.AddTabLocally(tab);
+    group.RemoveTabFromSync(tab.saved_tab_guid(), kRemovedBy);
+    last_removed_tabs.push_back(tab.saved_tab_guid());
+  }
+
+  // The number of tabs metadata should remain the same.
+  EXPECT_THAT(group.last_removed_tabs_metadata(), SizeIs(removed_tabs_limit));
+  for (const base::Uuid& removed_tab_guid : last_removed_tabs) {
+    EXPECT_THAT(group.last_removed_tabs_metadata(),
+                Contains(testing::Key(removed_tab_guid)));
   }
 }
 
@@ -281,6 +328,35 @@ TEST(SavedTabGroupTest, UpdateCreatorCacheGuid) {
 
   group.SetCreatorCacheGuid(cache_guid_2);
   EXPECT_EQ(group.creator_cache_guid(), cache_guid_2);
+}
+
+TEST(SavedTabGroupTest, GetOriginatingTabGroupGuid) {
+  const base::Uuid kOriginatingTabGroupGuid = base::Uuid::GenerateRandomV4();
+
+  SavedTabGroup saved_group = CreateDefaultEmptySavedTabGroup();
+  saved_group.SetOriginatingTabGroupGuid(
+      kOriginatingTabGroupGuid,
+      /*use_originating_tab_group_guid=*/true);
+
+  EXPECT_EQ(saved_group.GetOriginatingTabGroupGuid(), kOriginatingTabGroupGuid);
+
+  SavedTabGroup shared_group =
+      saved_group.CloneAsSharedTabGroup(CollaborationId("collaboration"));
+  EXPECT_EQ(shared_group.GetOriginatingTabGroupGuid(),
+            saved_group.saved_guid());
+
+  shared_group.SetOriginatingTabGroupGuid(
+      kOriginatingTabGroupGuid,
+      /*use_originating_tab_group_guid=*/false);
+
+  // For the shared tab group, the originating tab group guid should be returned
+  // only for the user who created the group.
+  EXPECT_EQ(shared_group.GetOriginatingTabGroupGuid(), std::nullopt);
+
+  // However, for sync, the originating tab group guid should be returned
+  // regardless of the group owner.
+  EXPECT_EQ(shared_group.GetOriginatingTabGroupGuid(/*for_sync=*/true),
+            kOriginatingTabGroupGuid);
 }
 
 }  // namespace tab_groups

@@ -5,11 +5,20 @@
 syntax = "proto3";
 option optimize_for = LITE_RUNTIME;
 
+import "components/manta/proto/common.proto";
+
 package manta.proto;
 
 message ScannerInput {
   // A user selected region of their device screen as a serialized jpeg.
   bytes image = 1;
+  // The action that the user has selected to be invoked from a previous
+  // `ScannerOutput` response. This can be unset to request the full set of
+  // actions that can be performed on the selected region with unpopulated
+  // details.
+  ScannerAction selected_action = 2;
+  // The current timestamp on the user's device.
+  Timestamp current_timestamp = 3;
 }
 
 message ScannerOutput {
@@ -20,6 +29,13 @@ message ScannerOutput {
 
 message ScannerObject {
   // The actions that can be performed on this object.
+  //
+  // If the `ScannerInput` did not contain a `selected_action`, this will
+  // contain the full set of actions that can be performed on the selected
+  // region with unpopulated details.
+  //
+  // If the `ScannerInput` contained a `selected_action`, this will only
+  // contain the action that was selected with populated details.
   repeated ScannerAction actions = 1;
 }
 
@@ -46,11 +62,47 @@ message NewEventAction {
 
 // Details on creating a new Google contact.
 message NewContactAction {
+  message EmailAddress {
+    // The email address.
+    string value = 1;
+    // The type of email address. The type can be custom or one of these
+    // predefined values:
+    // - "home"
+    // - "work"
+    // - "other"
+    string type = 2;
+  }
+  message PhoneNumber {
+    // The phone number.
+    string value = 1;
+    // The type of phone number. The type can be custom or one of these
+    // predefined values:
+    // - "home"
+    // - "work"
+    // - "mobile"
+    // - "homeFax"
+    // - "workFax"
+    // - "otherFax"
+    // - "pager"
+    // - "workMobile"
+    // - "workPager"
+    // - "main"
+    // - "googleVoice"
+    // - "other"
+    string type = 2;
+  }
+
   // At least one of the following fields must be specified.
   string given_name = 1;
   string family_name = 2;
-  string email = 3;
-  string phone = 4;
+  // Deprecated. Use `email_addresses` instead.
+  // Will only be used if `email_addresses` is empty.
+  string email = 3 [deprecated = true];
+  // Deprecated. Use `phone_numbers` instead.
+  // Will only be used if `phone_numbers` is empty.
+  string phone = 4 [deprecated = true];
+  repeated EmailAddress email_addresses = 5;
+  repeated PhoneNumber phone_numbers = 6;
 }
 
 // Details on creating a new Google Doc with some initial rich text content.

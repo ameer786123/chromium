@@ -5,49 +5,41 @@
 #include "chrome/browser/ash/system_web_apps/apps/boca_web_app_info.h"
 
 #include "ash/constants/ash_features.h"
+#include "ash/webui/boca_ui/boca_app_page_handler.h"
 #include "ash/webui/boca_ui/boca_ui.h"
 #include "ash/webui/boca_ui/url_constants.h"
 #include "ash/webui/grit/ash_boca_ui_resources.h"
-#include "chrome/browser/ash/boca/boca_manager.h"
-#include "chrome/browser/ash/boca/boca_manager_factory.h"
+#include "base/functional/bind.h"
 #include "chrome/browser/ash/system_web_apps/apps/system_web_app_install_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/grit/generated_resources.h"
+#include "chromeos/ash/components/boca/boca_app_client.h"
 #include "chromeos/ash/components/boca/boca_role_util.h"
 #include "chromeos/ash/components/boca/boca_session_manager.h"
+#include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "chromeos/strings/grit/chromeos_strings.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
-std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInfoForBocaApp() {
-  GURL start_url = GURL(ash::boca::kChromeBocaAppUntrustedIndexURL);
-  auto info =
-      web_app::CreateSystemWebAppInstallInfoWithStartUrlAsIdentity(start_url);
-  info->scope = GURL(ash::boca::kChromeBocaAppUntrustedURL);
-  // TODO(aprilzhou): Convert the title to a localized string
-  info->title = u"BOCA";
-  web_app::CreateIconInfoForSystemWebApp(
-      info->start_url(),
-      {{"app_icon_120.png", 120, IDR_ASH_BOCA_UI_APP_ICON_120_PNG}}, *info);
-  info->theme_color =
-      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/false);
-  info->dark_mode_theme_color =
-      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/true);
-  info->background_color = info->theme_color;
-  info->display_mode = blink::mojom::DisplayMode::kStandalone;
-  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
+namespace {
 
-  return info;
-}
-
-// Returns whether the user is able to consume Boca sessions. Primarily used by
-// the delegate to tailor SWA UX.
-// TODO(b/352675698): Identify Boca consumer profile without feature flags.
 bool IsConsumerProfile(Profile* profile) {
-  return ash::boca_util::IsConsumer();
+  return ash::boca_util::IsConsumer(
+      ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile));
 }
+
+bool IsEnabled(Profile* profile) {
+  return ash::boca_util::IsEnabled(
+      ash::BrowserContextHelper::Get()->GetUserByBrowserContext(profile));
+}
+
+}  // namespace
 
 BocaSystemAppDelegate::BocaSystemAppDelegate(Profile* profile)
     : ash::SystemWebAppDelegate(ash::SystemWebAppType::BOCA,
@@ -57,7 +49,22 @@ BocaSystemAppDelegate::BocaSystemAppDelegate(Profile* profile)
 
 std::unique_ptr<web_app::WebAppInstallInfo>
 BocaSystemAppDelegate::GetWebAppInfo() const {
-  return CreateWebAppInfoForBocaApp();
+  GURL start_url = GURL(ash::boca::kChromeBocaAppUntrustedIndexURL);
+  auto info =
+      web_app::CreateSystemWebAppInstallInfoWithStartUrlAsIdentity(start_url);
+  info->scope = GURL(ash::boca::kChromeBocaAppUntrustedURL);
+  info->title = l10n_util::GetStringUTF16(IDS_CLASS_TOOLS_TITLE);
+  web_app::CreateIconInfoForSystemWebApp(
+      info->start_url(), {{"icon_256.png", 256, IDR_ASH_BOCA_UI_ICON_256_PNG}},
+      *info);
+  info->theme_color =
+      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/false);
+  info->dark_mode_theme_color =
+      web_app::GetDefaultBackgroundColor(/*use_dark_mode=*/true);
+  info->background_color = info->theme_color;
+  info->display_mode = blink::mojom::DisplayMode::kStandalone;
+  info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
+  return info;
 }
 
 bool BocaSystemAppDelegate::ShouldCaptureNavigations() const {
@@ -80,6 +87,10 @@ bool BocaSystemAppDelegate::ShouldHideNewTabButton() const {
   return IsConsumerProfile(profile());
 }
 
+bool BocaSystemAppDelegate::ShouldHaveExtensionsContainerInToolbar() const {
+  return IsConsumerProfile(profile());
+}
+
 bool BocaSystemAppDelegate::IsUrlInSystemAppScope(const GURL& url) const {
   // Consumer SWA will also host 3P content, so we override app scope checks to
   // prevent navigation outside the app.
@@ -92,16 +103,24 @@ bool BocaSystemAppDelegate::ShouldPinTab(GURL url) const {
 }
 
 bool BocaSystemAppDelegate::IsAppEnabled() const {
-  return ash::boca_util::IsEnabled();
+  return true;
 }
 
 bool BocaSystemAppDelegate::HasCustomTabMenuModel() const {
   return IsConsumerProfile(profile());
 }
 
+bool BocaSystemAppDelegate::ShouldShowInSearchAndShelf() const {
+  return IsEnabled(profile());
+}
+
+bool BocaSystemAppDelegate::ShouldShowInLauncher() const {
+  return IsEnabled(profile());
+}
+
 gfx::Size BocaSystemAppDelegate::GetMinimumWindowSize() const {
   if (!IsConsumerProfile(profile())) {
-    return {400, 100};
+    return {400, 400};
   }
   return SystemWebAppDelegate::GetMinimumWindowSize();
 }
@@ -128,9 +147,12 @@ Browser* BocaSystemAppDelegate::LaunchAndNavigateSystemWebApp(
   if (IsConsumerProfile(profile)) {
     // Notify downstream Boca components so they can prepare the app instance
     // for OnTask and restore contents from the previous session if needed.
-    ash::BocaManager* const boca_manager =
-        ash::BocaManagerFactory::GetInstance()->GetForProfile(profile);
-    boca_manager->GetBocaSessionManager()->NotifyAppReload();
+    ash::boca::BocaAppClient::Get()->GetSessionManager()->NotifyAppReload();
+  } else {
+    // Always launch producer app into float mode.
+    aura::Window* window = browser->window()->GetNativeWindow();
+    ash::boca::BocaAppHandler::SetFloatModeAndBoundsForWindow(
+        /*is_float_mode=*/true, window, base::BindOnce([](bool result) {}));
   }
   return browser;
 }

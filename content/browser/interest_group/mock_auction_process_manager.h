@@ -74,6 +74,7 @@ class MockBidderWorklet : public auction_worklet::mojom::BidderWorklet,
       const url::Origin& browser_signal_seller_origin,
       const std::optional<url::Origin>& browser_signal_top_level_seller_origin,
       const base::TimeDelta browser_signal_recency,
+      bool browser_signal_for_debugging_only_sampling,
       blink::mojom::BiddingBrowserSignalsPtr bidding_browser_signals,
       base::Time auction_start_time,
       const std::optional<blink::AdSize>& requested_ad_size,
@@ -99,8 +100,7 @@ class MockBidderWorklet : public auction_worklet::mojom::BidderWorklet,
       const std::optional<std::string>&
           direct_from_seller_auction_signals_header_ad_slot,
       const std::string& seller_signals_json,
-      auction_worklet::mojom::KAnonymityBidMode kanon_mode,
-      bool bid_is_kanon,
+      auction_worklet::mojom::KAnonymityStatus kanon_status,
       const GURL& browser_signal_render_url,
       double browser_signal_bid,
       const std::optional<blink::AdCurrency>& browser_signal_bid_currency,
@@ -116,6 +116,7 @@ class MockBidderWorklet : public auction_worklet::mojom::BidderWorklet,
       const std::optional<url::Origin>& browser_signal_top_level_seller_origin,
       const std::optional<base::TimeDelta> browser_signal_reporting_timeout,
       std::optional<uint32_t> bidding_signals_data_version,
+      const std::optional<std::string>& aggregate_win_signals,
       uint64_t trace_id,
       ReportWinCallback report_win_callback) override;
   void ConnectDevToolsAgent(
@@ -198,6 +199,8 @@ class MockBidderWorklet : public auction_worklet::mojom::BidderWorklet,
       base::flat_map<std::string, std::string> ad_macro_map = {},
       std::vector<auction_worklet::mojom::PrivateAggregationRequestPtr>
           pa_requests = {},
+      auction_worklet::mojom::PrivateModelTrainingRequestDataPtr
+          pmt_request_data = nullptr,
       std::vector<std::string> errors = {});
 
   // Flushes the receiver pipe.
@@ -292,6 +295,11 @@ class MockSellerWorklet : public auction_worklet::mojom::SellerWorklet {
       const std::optional<blink::AdCurrency>& bid_currency,
       const blink::AuctionConfig::NonSharedParams&
           auction_ad_config_non_shared_params,
+      auction_worklet::mojom::TrustedSignalsCacheKeyPtr
+          trusted_signals_cache_key,
+      auction_worklet::mojom::CreativeInfoWithoutOwnerPtr ad,
+      std::vector<auction_worklet::mojom::CreativeInfoWithoutOwnerPtr>
+          ad_components,
       const std::optional<GURL>& direct_from_seller_seller_signals,
       const std::optional<std::string>&
           direct_from_seller_seller_signals_header_ad_slot,
@@ -302,15 +310,13 @@ class MockSellerWorklet : public auction_worklet::mojom::SellerWorklet {
           browser_signals_other_seller,
       const std::optional<blink::AdCurrency>& component_expect_bid_currency,
       const url::Origin& browser_signal_interest_group_owner,
-      const GURL& browser_signal_render_url,
       const std::optional<std::string>&
           browser_signal_selected_buyer_and_seller_reporting_id,
       const std::optional<std::string>&
           browser_signal_buyer_and_seller_reporting_id,
-      const std::vector<GURL>& browser_signal_ad_components,
       uint32_t browser_signal_bidding_duration_msecs,
-      const std::optional<blink::AdSize>& browser_signal_render_size,
       bool browser_signal_for_debugging_only_in_cooldown_or_lockout,
+      bool browser_signal_for_debugging_only_sampling,
       const std::optional<base::TimeDelta> seller_timeout,
       uint64_t trace_id,
       const url::Origin& bidder_joining_origin,
@@ -472,7 +478,10 @@ class MockAuctionProcessManager
       auction_worklet::mojom::AuctionWorkletPermissionsPolicyStatePtr
           permissions_policy_state,
       std::optional<uint16_t> experiment_group_id,
-      auction_worklet::mojom::TrustedSignalsPublicKeyPtr public_key) override;
+      std::optional<bool> send_creative_scanning_metadata,
+      auction_worklet::mojom::TrustedSignalsPublicKeyPtr public_key,
+      mojo::PendingRemote<auction_worklet::mojom::LoadSellerWorkletClient>
+          load_seller_worklet_client) override;
 
   // Set the expected timeout for an interest group with the specified name,
   // when it's received by a bidder worklet's FinishGenerateBid() method. Must
@@ -548,10 +557,11 @@ class MockAuctionProcessManager
   size_t last_load_bidder_worklet_threads_count_ = 0;
 
   // ReceiverSet is last so that destroying `this` while there's a pending
-  // callback over the pipe will not DCHECK. Each entry has a string context,
-  // which is the display name. Used to verify that worklets are created in the
-  // right process.
-  mojo::ReceiverSet<auction_worklet::mojom::AuctionWorkletService, std::string>
+  // callback over the pipe will not DCHECK. Keeps track of the weak pointers
+  // for each WorkletProcess to make sure each process is only used for the
+  // correct worklets.
+  mojo::ReceiverSet<auction_worklet::mojom::AuctionWorkletService,
+                    base::WeakPtr<WorkletProcess>>
       receiver_set_;
 };
 

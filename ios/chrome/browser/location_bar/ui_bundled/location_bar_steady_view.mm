@@ -8,15 +8,15 @@
 #import "base/check_op.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/badges/ui_bundled/badge_view_visibility_delegate.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_collection_utils.h"
 #import "ios/chrome/browser/contextual_panel/entrypoint/ui/contextual_panel_entrypoint_visibility_delegate.h"
 #import "ios/chrome/browser/location_bar/ui_bundled/badges_container_view.h"
+#import "ios/chrome/browser/omnibox/ui_bundled/omnibox_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/dynamic_type_util.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
-#import "ios/chrome/browser/ui/omnibox/omnibox_constants.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/pointer_interaction_util.h"
@@ -137,8 +137,8 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
                       options:UIViewAnimationOptionBeginFromCurrentState
                    animations:^{
                      CGFloat alpha = highlighted ? 0.07 : 0;
-                     self.backgroundColor =
-                         [UIColor colorWithWhite:0 alpha:alpha];
+                     self.backgroundColor = [UIColor colorWithWhite:0
+                                                              alpha:alpha];
                    }
                    completion:nil];
 }
@@ -368,7 +368,7 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   if (@available(iOS 17, *)) {
     __weak __typeof(self) weakSelf = self;
     NSArray<UITrait>* traits = TraitCollectionSetForTraits(
-        @[ UITraitPreferredContentSizeCategory.self ]);
+        @[ UITraitPreferredContentSizeCategory.class ]);
     UITraitChangeHandler traitChangeHandler =
         ^(id<UITraitEnvironment> traitEnvironment,
           UITraitCollection* previousCollection) {
@@ -385,16 +385,13 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   _locationButton.accessibilityLabel =
       l10n_util::GetNSString(IDS_ACCNAME_LOCATION);
 
-  _accessibleElements = [[NSMutableArray alloc] init];
-  [_accessibleElements addObject:_locationButton];
-  [_accessibleElements addObject:_trailingButton];
-
   // These two elements must remain accessible for egtests, but will not be
   // included in accessibility navigation as they are not added to the
   // accessibleElements array.
   _locationIconImageView.isAccessibilityElement = YES;
   _locationLabel.isAccessibilityElement = YES;
 
+  _accessibleElements = [[NSMutableArray alloc] init];
   [self updateAccessibility];
 }
 

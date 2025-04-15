@@ -24,6 +24,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MATCH_RESULT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MATCH_RESULT_H_
 
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/cascade_layer_map.h"
@@ -74,10 +75,10 @@ struct CORE_EXPORT MatchedProperties {
     uint8_t padding = 0;
 
     bool operator==(const Data& other) const {
-      return memcmp(this, &other, sizeof(*this)) == 0;
+      return UNSAFE_TODO(memcmp(this, &other, sizeof(*this))) == 0;
     }
     bool operator!=(const Data& other) const {
-      return memcmp(this, &other, sizeof(*this)) != 0;
+      return UNSAFE_TODO(memcmp(this, &other, sizeof(*this))) != 0;
     }
   };
 
@@ -126,7 +127,7 @@ class CORE_EXPORT MatchResult {
   MatchResult& operator=(const MatchResult&) = delete;
 
   void AddMatchedProperties(const CSSPropertyValueSet* properties,
-                            const MatchedProperties::Data& types);
+                            MatchedProperties::Data types);
   bool HasMatchedProperties() const { return matched_properties_.size(); }
 
   void BeginAddingAuthorRulesForTreeScope(const TreeScope&);
@@ -152,11 +153,11 @@ class CORE_EXPORT MatchResult {
   bool DependsOnStyleContainerQueries() const {
     return depends_on_style_container_queries_;
   }
-  void SetDependsOnStateContainerQueries() {
-    depends_on_state_container_queries_ = true;
+  void SetDependsOnScrollStateContainerQueries() {
+    depends_on_scroll_state_container_queries_ = true;
   }
-  bool DependsOnStateContainerQueries() const {
-    return depends_on_state_container_queries_;
+  bool DependsOnScrollStateContainerQueries() const {
+    return depends_on_scroll_state_container_queries_;
   }
   void SetFirstLineDependsOnSizeContainerQueries() {
     first_line_depends_on_size_container_queries_ = true;
@@ -252,7 +253,7 @@ class CORE_EXPORT MatchResult {
   bool is_cacheable_{true};
   bool depends_on_size_container_queries_{false};
   bool depends_on_style_container_queries_{false};
-  bool depends_on_state_container_queries_{false};
+  bool depends_on_scroll_state_container_queries_{false};
   bool first_line_depends_on_size_container_queries_{false};
   bool depends_on_static_viewport_units_{false};
   bool depends_on_dynamic_viewport_units_{false};

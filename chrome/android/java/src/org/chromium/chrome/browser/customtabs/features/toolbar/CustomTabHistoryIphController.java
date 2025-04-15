@@ -55,7 +55,7 @@ public class CustomTabHistoryIphController {
         mTabObserver =
                 new ActivityTabTabObserver(mTabProvider) {
                     @Override
-                    public void onPageLoadStarted(Tab tab, GURL url) {
+                    public void onPageLoadFinished(Tab tab, GURL url) {
                         maybeShowIph();
                     }
                 };
@@ -105,7 +105,7 @@ public class CustomTabHistoryIphController {
 
         var tracker = TrackerFactory.getTrackerForProfile(mProfileSupplier.get());
         return (tracker.isInitialized()
-                && tracker.wouldTriggerHelpUI(FeatureConstants.CCT_HISTORY_FEATURE));
+                && tracker.wouldTriggerHelpUi(FeatureConstants.CCT_HISTORY_FEATURE));
     }
 
     private void turnOnHighlightForMenuItem() {

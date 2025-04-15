@@ -6,7 +6,7 @@ import {assert} from 'chrome://resources/js/assert.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
 
 // <if expr="enable_pdf_ink2">
-import type {AnnotationBrush, AnnotationBrushType} from './constants.js';
+import type {AnnotationBrush, AnnotationBrushType, AnnotationMode, Color, TextAlignment, TextStyles} from './constants.js';
 // </if>
 import type {NamedDestinationMessageData, Rect, SaveRequestType} from './constants.js';
 import type {PdfPluginElement} from './internal_plugin.js';
@@ -50,6 +50,27 @@ interface ThumbnailMessageData {
 interface AnnotationBrushMessage {
   type: string;
   data: AnnotationBrush;
+}
+
+interface AnnotationTextMessageData {
+  typeface: string;
+  fontSize: number;
+  alignment: TextAlignment;
+  style: TextStyles;
+  color: Color;
+}
+
+// setTextAnnotationFont goes from the viewer to the plugin.
+// updateTextAnnotationFont goes from the plugin to the viewer.
+// They contain the same data fields.
+interface AnnotationTextMessage {
+  type: 'setTextAnnotationFont'|'updateTextAnnotationFont';
+  data: AnnotationTextMessageData;
+}
+
+interface AnnotationFontsMessage {
+  type: 'getTextAnnotFontNames';
+  data: string[];
 }
 // </if>
 
@@ -112,6 +133,7 @@ export interface ContentController {
 /** Event types dispatched by the plugin controller. */
 export enum PluginControllerEventType {
   // <if expr="enable_pdf_ink2">
+  CONTENT_FOCUSED = 'PluginControllerEventType.CONTENT_FOCUSED',
   FINISH_INK_STROKE = 'PluginControllerEventType.FINISH_INK_STROKE',
   UPDATE_INK_THUMBNAIL = 'PluginControllerEventType.UPDATE_INK_THUMBNAIL',
   // </if>
@@ -196,10 +218,10 @@ export class PluginController implements ContentController {
   viewportChanged() {}
 
   // <if expr="enable_pdf_ink2">
-  setAnnotationMode(enable: boolean) {
+  setAnnotationMode(mode: AnnotationMode) {
     this.postMessage_({
       type: 'setAnnotationMode',
-      enable,
+      mode,
     });
   }
 
@@ -211,10 +233,36 @@ export class PluginController implements ContentController {
     });
   }
 
+  getTextAnnotFontNames(): Promise<AnnotationFontsMessage> {
+    // TODO(crbug.com/402546154): Use backend reply instead of dropping it
+    // on the ground and returning dummy data once the backend is in place.
+    this.postMessageWithReply_({
+      type: 'getTextAnnotFontNames',
+    });
+    return Promise.resolve({
+      type: 'getTextAnnotFontNames',
+      data: [
+        'Roboto',
+        'Serif',
+        'Sans',
+        'Monospace',
+      ],
+    });
+  }
+
   setAnnotationBrush(brush: AnnotationBrush) {
     const message: AnnotationBrushMessage = {
       type: 'setAnnotationBrush',
       data: brush,
+    };
+
+    this.postMessage_(message);
+  }
+
+  setTextAnnotationFont(textData: AnnotationTextMessageData) {
+    const message: AnnotationTextMessage = {
+      type: 'setTextAnnotationFont',
+      data: textData,
     };
 
     this.postMessage_(message);
@@ -336,6 +384,13 @@ export class PluginController implements ContentController {
 
   selectAll() {
     this.postMessage_({type: 'selectAll'});
+  }
+
+  highlightTextFragments(textFragments: string[]) {
+    this.postMessage_({
+      type: 'highlightTextFragments',
+      textFragments,
+    });
   }
 
   getSelectedText(): Promise<{selectedText: string}> {

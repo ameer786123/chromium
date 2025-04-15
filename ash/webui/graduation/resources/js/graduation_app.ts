@@ -9,10 +9,11 @@ import './graduation_welcome.js';
 import 'chrome://resources/ash/common/cr_elements/cros_color_overrides.css.js';
 import 'chrome://resources/ash/common/cr_elements/cr_view_manager/cr_view_manager.js';
 
-import {CrViewManagerElement} from 'chrome://resources/ash/common/cr_elements/cr_view_manager/cr_view_manager.js';
+import type {CrViewManagerElement} from 'chrome://resources/ash/common/cr_elements/cr_view_manager/cr_view_manager.js';
 import {ColorChangeUpdater} from 'chrome://resources/cr_components/color_change_listener/colors_css_updater.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
+import type {AuthResult} from '../mojom/graduation_ui.mojom-webui.js';
 import {GraduationScreen} from '../mojom/graduation_ui.mojom-webui.js';
 
 import {getTemplate} from './graduation_app.html.js';
@@ -68,12 +69,27 @@ export class GraduationApp extends PolymerElement {
     return getTemplate();
   }
 
+  private authResult: AuthResult|null = null;
   private currentScreen: Screens;
 
   override ready() {
     super.ready();
     this.addEventListeners();
-    this.switchToScreen(navigator.onLine ? Screens.WELCOME : Screens.OFFLINE);
+
+    if (!navigator.onLine) {
+      this.switchToScreen(Screens.OFFLINE);
+      return;
+    }
+
+    this.authenticate();
+    this.switchToScreen(Screens.WELCOME);
+  }
+
+  private async authenticate(): Promise<void> {
+    const authResult = await getGraduationUiHandler().authenticateWebview();
+    this.authResult = authResult.result;
+    this.shadowRoot!.querySelector(Screens.TAKEOUT_UI)!.onAuthComplete(
+        this.authResult);
   }
 
   getCurrentScreenForTest(): Screens {
@@ -100,6 +116,11 @@ export class GraduationApp extends PolymerElement {
     });
 
     window.addEventListener(ScreenSwitchEvents.ONLINE, () => {
+      // If there is no authentication result, authentication has not been
+      // attempted for the lifetime of the app, so authenticate now.
+      if (this.authResult === null) {
+        this.authenticate();
+      }
       // If the app comes back online, start from the initial screen.
       this.switchToScreen(Screens.WELCOME);
     });

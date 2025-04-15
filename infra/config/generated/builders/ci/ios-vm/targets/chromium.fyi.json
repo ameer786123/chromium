@@ -14,7 +14,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -34,9 +34,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -45,7 +44,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -65,7 +64,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -85,9 +84,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -96,7 +94,7 @@
               "path": "Runtime-ios-18.0"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -116,7 +114,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -136,9 +134,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -147,7 +144,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -167,7 +164,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -187,9 +184,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -198,7 +194,7 @@
               "path": "Runtime-ios-18.0"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -217,7 +213,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -237,9 +233,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -248,7 +243,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -267,7 +262,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -287,9 +282,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -298,7 +292,7 @@
               "path": "Runtime-ios-18.0"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -317,7 +311,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -337,9 +331,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -348,7 +341,7 @@
               "path": "Runtime-ios-17.5"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],
@@ -367,7 +360,7 @@
           "--out-dir",
           "${ISOLATED_OUTDIR}",
           "--xcode-build-version",
-          "16a242d",
+          "16c5032a",
           "--xctest"
         ],
         "merge": {
@@ -387,9 +380,8 @@
             }
           ],
           "dimensions": {
-            "cpu": "arm64",
-            "mac_model": "VirtualMac2,1",
-            "os": "Mac-14",
+            "cpu": "Apple_(Virtual)",
+            "os": "Mac",
             "pool": "chromium.tests.macvm"
           },
           "named_caches": [
@@ -398,7 +390,7 @@
               "path": "Runtime-ios-18.0"
             },
             {
-              "name": "xcode_ios_16a242d",
+              "name": "xcode_ios_16c5032a",
               "path": "Xcode.app"
             }
           ],

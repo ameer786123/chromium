@@ -63,14 +63,14 @@ export class ThemesElement extends ThemesElementBase {
     };
   }
 
-  selectedCollection: BackgroundCollection|null = null;
+  accessor selectedCollection: BackgroundCollection|null = null;
 
-  protected header_: string = '';
-  protected imageErrorDetectionEnabled_: boolean =
+  protected accessor header_: string = '';
+  protected accessor imageErrorDetectionEnabled_: boolean =
       loadTimeData.getBoolean('imageErrorDetectionEnabled');
-  protected isRefreshToggleChecked_: boolean = false;
-  private theme_?: Theme;
-  protected themes_: CollectionImage[] = [];
+  protected accessor isRefreshToggleChecked_: boolean = false;
+  private accessor theme_: Theme|undefined;
+  protected accessor themes_: CollectionImage[] = [];
 
   private callbackRouter_: CustomizeChromePageCallbackRouter;
   private pageHandler_: CustomizeChromePageHandlerInterface;
@@ -136,7 +136,7 @@ export class ThemesElement extends ThemesElementBase {
   }
 
   private onThemesRendered_() {
-    const firstTile = this.shadowRoot!.querySelector('.tile.theme');
+    const firstTile = this.shadowRoot.querySelector('.tile.theme');
     if (firstTile) {
       this.registerHelpBubble(CHROME_THEME_ELEMENT_ID, firstTile);
     }
@@ -146,9 +146,6 @@ export class ThemesElement extends ThemesElementBase {
     return !this.imageErrorDetectionEnabled_ || itemLoaded;
   }
 
-  // TODO(b:367702048) -
-  // Record 'NewTabPage.BackgroundService.Images.Headers.ErrorDetected',
-  // whenever a preview image fails to load.
   protected onPreviewImageLoad_(e: Event) {
     if (this.imageErrorDetectionEnabled_) {
       const index = Number((e.currentTarget as HTMLElement).dataset['index']);
@@ -181,7 +178,7 @@ export class ThemesElement extends ThemesElementBase {
     this.themes_ = [];
     if (this.selectedCollection) {
       this.previewImageLoadStartEpoch_ = WindowProxy.getInstance().now();
-      this.pageHandler_.getBackgroundImages(this.selectedCollection!.id)
+      this.pageHandler_.getBackgroundImages(this.selectedCollection.id)
           .then(({images}) => {
             this.themes_ = images;
           });
@@ -218,8 +215,7 @@ export class ThemesElement extends ThemesElementBase {
     }
     return !!this.theme_ && !!this.theme_.backgroundImage &&
         this.theme_.backgroundImage.dailyRefreshEnabled &&
-        this.selectedCollection!.id ===
-        this.theme_.backgroundImage.collectionId;
+        this.selectedCollection.id === this.theme_.backgroundImage.collectionId;
   }
 
   protected onRefreshDailyToggleChange_(e: CustomEvent<boolean>) {

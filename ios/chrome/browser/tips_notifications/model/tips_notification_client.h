@@ -7,6 +7,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
+
 #import <optional>
 
 #import "components/prefs/pref_change_registrar.h"
@@ -26,12 +27,18 @@ class TipsNotificationClient : public PushNotificationClient {
   ~TipsNotificationClient() override;
 
   // Override PushNotificationClient::
+  bool CanHandleNotification(UNNotification* notification) override;
   bool HandleNotificationInteraction(
       UNNotificationResponse* notification_response) override;
   std::optional<UIBackgroundFetchResult> HandleNotificationReception(
       NSDictionary<NSString*, id>* notification) override;
   NSArray<UNNotificationCategory*>* RegisterActionableNotifications() override;
   void OnSceneActiveForegroundBrowserReady() override;
+
+  // Called when the user Taps a provisional notification, but has not yet
+  // opted-in to Tips notifications.
+  void OptInIfAuthorized(base::WeakPtr<ProfileIOS> weak_profile,
+                         UNNotificationSettings* settings);
 
   // Called when the scene becomes "active foreground" and the browser is
   // ready. The closure will be called when all async operations are done.
@@ -130,6 +137,14 @@ class TipsNotificationClient : public PushNotificationClient {
   // Returns true if Tips notifications are permitted.
   bool IsPermitted();
 
+  // Returns true if the app has provisional notification authorization and the
+  // IOSReactivationNotifications feature is enabled.
+  bool CanSendReactivation();
+
+  // Updates the instance variable that stores whether provisional
+  // notifications are allowed by policy.
+  void UpdateProvisionalAllowed();
+
   // Returns true if the Dismiss Limit has been reached.
   bool DismissLimitReached();
 
@@ -137,11 +152,24 @@ class TipsNotificationClient : public PushNotificationClient {
   // changes.
   void OnPermittedPrefChanged(const std::string& name);
 
+  // Called when the pref that stores the app's notification authorization
+  // status changes.
+  void OnAuthPrefChanged(const std::string& name);
+
   // Classifies the user and sets the `user_type`, if possible.
   void ClassifyUser();
 
+  // Returns whether any identities/accounts exist on the device.
+  bool HasIdentitiesOnDevice(ProfileIOS* profile) const;
+
   // Stores whether Tips notifications are permitted.
   bool permitted_ = false;
+
+  // Stores whether provisional notifications are allowed by policy.
+  bool provisional_allowed_ = false;
+
+  // Stores the local state pref service.
+  raw_ptr<PrefService> local_state_;
 
   // Stores the user's classification.
   TipsNotificationUserType user_type_;

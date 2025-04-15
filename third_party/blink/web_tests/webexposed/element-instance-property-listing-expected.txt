@@ -110,9 +110,11 @@ namespace http://www.w3.org/1999/xhtml
     property computedName
     property computedRole
     property computedStyleMap
+    property containerTiming
     property contains
     property contentEditable
     property currentCSSZoom
+    property customElementRegistry
     property dataset
     property dir
     property dispatchEvent
@@ -142,6 +144,8 @@ namespace http://www.w3.org/1999/xhtml
     property hasAttributes
     property hasChildNodes
     property hasPointerCapture
+    property headingOffset
+    property headingReset
     property hidden
     property hidePopover
     property id
@@ -198,6 +202,7 @@ namespace http://www.w3.org/1999/xhtml
     property onchange
     property onclick
     property onclose
+    property oncommand
     property oncontentvisibilityautostatechange
     property oncontextlost
     property oncontextmenu
@@ -331,12 +336,14 @@ namespace http://www.w3.org/1999/xhtml
     property setAttributeNS
     property setAttributeNode
     property setAttributeNodeNS
+    property setHTML
     property setHTMLUnsafe
     property setPointerCapture
     property shadowRoot
     property showPopover
     property slot
     property spellcheck
+    property startViewTransition
     property style
     property tabIndex
     property tagName
@@ -363,7 +370,6 @@ html element a
     property href
     property hrefTranslate
     property hreflang
-    property interestAction
     property interestTargetElement
     property name
     property origin
@@ -387,13 +393,13 @@ html element acronym
 html element address
 html element area
     property alt
+    property attributionSrc
     property coords
     property download
     property hash
     property host
     property hostname
     property href
-    property interestAction
     property interestTargetElement
     property noHref
     property origin
@@ -515,7 +521,6 @@ html element button
     property formMethod
     property formNoValidate
     property formTarget
-    property interestAction
     property interestTargetElement
     property labels
     property name
@@ -570,7 +575,9 @@ html element details
 html element dfn
 html element dialog
     property close
+    property closedBy
     property open
+    property requestClose
     property returnValue
     property show
     property showModal
@@ -724,6 +731,7 @@ html element img
     property alt
     property attributionSrc
     property border
+    property browsingTopics
     property complete
     property crossOrigin
     property currentSrc
@@ -770,8 +778,6 @@ html element input
     property height
     property incremental
     property indeterminate
-    property interestAction
-    property interestTargetElement
     property labels
     property list
     property max
@@ -960,6 +966,8 @@ html element permission
     property invalidReason
     property isValid
     property ondismiss
+    property onpromptaction
+    property onpromptdismiss
     property onresolve
     property onvalidationstatuschange
     property permissionStatus
@@ -995,6 +1003,7 @@ html element script
     property integrity
     property noModule
     property referrerPolicy
+    property signature
     property src
     property text
     property type
@@ -1015,8 +1024,8 @@ html element select
     property options
     property reportValidity
     property required
+    property selectedContentElement
     property selectedIndex
-    property selectedOptionElement
     property selectedOptions
     property setCustomValidity
     property showPicker
@@ -1026,7 +1035,7 @@ html element select
     property validity
     property value
     property willValidate
-html element selectedoption
+html element selectedcontent
 html element slot
     property assign
     property assignedElements
@@ -1105,6 +1114,7 @@ html element template
     property content
     property parseparts
     property shadowRootClonable
+    property shadowRootCustomElementRegistry
     property shadowRootDelegatesFocus
     property shadowRootMode
     property shadowRootSerializable
@@ -1272,13 +1282,7 @@ html element video
     property volume
     property webkitAudioDecodedByteCount
     property webkitDecodedFrameCount
-    property webkitDisplayingFullscreen
     property webkitDroppedFrameCount
-    property webkitEnterFullScreen
-    property webkitEnterFullscreen
-    property webkitExitFullScreen
-    property webkitExitFullscreen
-    property webkitSupportsFullscreen
     property webkitVideoDecodedByteCount
     property width
 html element wbr
@@ -1388,8 +1392,10 @@ namespace http://www.w3.org/2000/svg
     property computedName
     property computedRole
     property computedStyleMap
+    property containerTiming
     property contains
     property currentCSSZoom
+    property customElementRegistry
     property dataset
     property dispatchEvent
     property elementTiming
@@ -1415,6 +1421,8 @@ namespace http://www.w3.org/2000/svg
     property hasAttributes
     property hasChildNodes
     property hasPointerCapture
+    property headingOffset
+    property headingReset
     property id
     property innerHTML
     property insertAdjacentElement
@@ -1459,6 +1467,7 @@ namespace http://www.w3.org/2000/svg
     property onchange
     property onclick
     property onclose
+    property oncommand
     property oncontentvisibilityautostatechange
     property oncontextlost
     property oncontextmenu
@@ -1591,10 +1600,12 @@ namespace http://www.w3.org/2000/svg
     property setAttributeNS
     property setAttributeNode
     property setAttributeNodeNS
+    property setHTML
     property setHTMLUnsafe
     property setPointerCapture
     property shadowRoot
     property slot
+    property startViewTransition
     property style
     property tabIndex
     property tagName
@@ -1611,9 +1622,10 @@ svg element a
     property getCTM
     property getScreenCTM
     property href
-    property interestAction
     property interestTargetElement
     property nearestViewportElement
+    property rel
+    property relList
     property requiredExtensions
     property systemLanguage
     property target

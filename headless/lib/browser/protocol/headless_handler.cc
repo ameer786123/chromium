@@ -5,8 +5,10 @@
 #include "headless/lib/browser/protocol/headless_handler.h"
 
 #include <memory>
+#include <variant>
 
 #include "base/base_switches.h"
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/time/time.h"
@@ -62,7 +64,7 @@ std::optional<std::vector<uint8_t>> EncodeBitmapAsWebp(int quality,
   return gfx::WebpCodec::Encode(bitmap, quality);
 }
 
-absl::variant<protocol::Response, BitmapEncoder>
+std::variant<protocol::Response, BitmapEncoder>
 GetEncoder(const std::string& format, int quality, bool optimize_for_speed) {
   if (quality < 0 || quality > 100) {
     return Response::InvalidParams(
@@ -90,7 +92,7 @@ void OnBeginFrameFinished(
     return;
   }
   if (!bitmap || bitmap->drawsNothing()) {
-    callback->sendSuccess(has_damage, Maybe<protocol::Binary>());
+    callback->sendSuccess(has_damage, std::nullopt);
     return;
   }
   std::optional<std::vector<uint8_t>> result = encoder.Run(*bitmap);
@@ -120,14 +122,14 @@ Response HeadlessHandler::Disable() {
   return Response::Success();
 }
 
-void HeadlessHandler::BeginFrame(Maybe<double> in_frame_time_ticks,
-                                 Maybe<double> in_interval,
-                                 Maybe<bool> in_no_display_updates,
-                                 Maybe<ScreenshotParams> screenshot,
+void HeadlessHandler::BeginFrame(std::optional<double> in_frame_time_ticks,
+                                 std::optional<double> in_interval,
+                                 std::optional<bool> in_no_display_updates,
+                                 std::unique_ptr<ScreenshotParams> screenshot,
                                  std::unique_ptr<BeginFrameCallback> callback) {
-  HeadlessWebContentsImpl* headless_contents =
-      HeadlessWebContentsImpl::From(browser_, web_contents_);
-  if (!headless_contents->begin_frame_control_enabled()) {
+  auto& headless_contents =
+      CHECK_DEREF(HeadlessWebContentsImpl::From(web_contents_));
+  if (!headless_contents.begin_frame_control_enabled()) {
     callback->sendFailure(Response::ServerError(
         "Command is only supported if BeginFrameControl is enabled."));
     return;
@@ -168,21 +170,21 @@ void HeadlessHandler::BeginFrame(Maybe<double> in_frame_time_ticks,
   base::TimeTicks deadline = frame_time_ticks + interval;
 
   BitmapEncoder encoder;
-  if (screenshot.has_value()) {
-    ScreenshotParams& params = screenshot.value();
+  if (screenshot) {
+    ScreenshotParams& params = *screenshot;
     auto encoder_or_response =
         GetEncoder(params.GetFormat(ScreenshotParams::FormatEnum::Png),
                    params.GetQuality(kDefaultScreenshotQuality),
                    params.GetOptimizeForSpeed(false));
-    if (absl::holds_alternative<protocol::Response>(encoder_or_response)) {
-      callback->sendFailure(absl::get<protocol::Response>(encoder_or_response));
+    if (std::holds_alternative<protocol::Response>(encoder_or_response)) {
+      callback->sendFailure(std::get<protocol::Response>(encoder_or_response));
       return;
     }
-    encoder = absl::get<BitmapEncoder>(std::move(encoder_or_response));
+    encoder = std::get<BitmapEncoder>(std::move(encoder_or_response));
   }
 
   const bool capture_screenshot = !!encoder;
-  headless_contents->BeginFrame(
+  headless_contents.BeginFrame(
       frame_time_ticks, deadline, interval, no_display_updates,
       capture_screenshot,
       base::BindOnce(&OnBeginFrameFinished, std::move(encoder),

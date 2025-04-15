@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/referrer_script_info.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_streamer.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_common.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/scriptable_document_parser.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -21,7 +22,6 @@
 #include "third_party/blink/renderer/core/lcp_critical_path_predictor/lcp_critical_path_predictor.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
-#include "third_party/blink/renderer/core/loader/subresource_integrity_helper.h"
 #include "third_party/blink/renderer/core/loader/url_matcher.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/script/document_write_intervention.h"
@@ -70,7 +70,7 @@ ClassicPendingScript* ClassicPendingScript::Fetch(
   ExecutionContext* context = element_document.GetExecutionContext();
   FetchParameters params(options.CreateFetchParameters(
       url, context->GetSecurityOrigin(), context->GetCurrentWorld(),
-      cross_origin, encoding, defer));
+      cross_origin, encoding, defer, context));
 
   ClassicPendingScript* pending_script =
       MakeGarbageCollected<ClassicPendingScript>(
@@ -103,14 +103,12 @@ ClassicPendingScript* ClassicPendingScript::Fetch(
     compile_hints_producer = &page->GetV8CrowdsourcedCompileHintsProducer();
     compile_hints_consumer = &page->GetV8CrowdsourcedCompileHintsConsumer();
   }
-  const bool v8_compile_hints_magic_comment_runtime_enabled =
-      RuntimeEnabledFeatures::JavaScriptCompileHintsMagicRuntimeEnabled(
-          element_document.GetExecutionContext());
 
   ScriptResource::Fetch(params, element_document.Fetcher(), pending_script,
                         context->GetIsolate(), ScriptResource::kAllowStreaming,
                         compile_hints_producer, compile_hints_consumer,
-                        v8_compile_hints_magic_comment_runtime_enabled);
+                        v8_compile_hints::GetMagicCommentMode(
+                            element_document.GetExecutionContext()));
   pending_script->CheckState();
   return pending_script;
 }
@@ -430,20 +428,12 @@ void ClassicPendingScript::NotifyFinished(Resource* resource) {
     return;
   }
 
-  SubresourceIntegrityHelper::DoReport(*execution_context,
-                                       resource->IntegrityReportInfo());
+  resource->IntegrityReport().SendReports(execution_context);
 
-  // It is possible to get back a script resource with integrity metadata
-  // for a request with an empty integrity attribute. In that case, the
-  // integrity check should be skipped, as the integrity may not have been
-  // "meant" for this specific request. If the resource is being served from
-  // the preload cache however, we know any associated integrity metadata and
-  // checks were destined for this request, so we cannot skip the integrity
-  // check.
   bool integrity_failure = false;
-  if (!options_.GetIntegrityMetadata().empty() || resource->IsLinkPreload()) {
-    integrity_failure = resource->IntegrityDisposition() !=
-                        ResourceIntegrityDisposition::kPassed;
+  if (!options_.GetIntegrityMetadata().empty() ||
+      resource->ForceIntegrityChecks()) {
+    integrity_failure = !resource->PassedIntegrityChecks();
   }
 
   if (intervened_) {
@@ -607,8 +597,7 @@ void ClassicPendingScript::AdvanceReadyState(ReadyState new_ready_state) {
       break;
     case kReady:
     case kErrorOccurred:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 
   // All the ready states are marked not reachable above, so we can't have been

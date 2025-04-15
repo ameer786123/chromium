@@ -4,6 +4,7 @@
 
 #include "content/browser/renderer_host/back_forward_cache_impl.h"
 
+#include <algorithm>
 #include <list>
 #include <optional>
 #include <string>
@@ -18,7 +19,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -54,6 +54,7 @@
 #include "third_party/blink/public/common/scheduler/web_scheduler_tracked_feature.h"
 #include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
 #include "third_party/blink/public/mojom/frame/sudden_termination_disabler_type.mojom-shared.h"
+#include "third_party/blink/public/mojom/script_source_location.mojom.h"
 #if BUILDFLAG(IS_ANDROID)
 #include "content/public/browser/android/child_process_importance.h"
 #endif
@@ -200,7 +201,8 @@ WebSchedulerTrackedFeatures GetDisallowedWebSchedulerTrackedFeatures() {
           WebSchedulerTrackedFeature::kSharedWorker,
           WebSchedulerTrackedFeature::kSpeechRecognizer,
           WebSchedulerTrackedFeature::kUnloadHandler,
-          WebSchedulerTrackedFeature::kWebDatabase,
+          WebSchedulerTrackedFeature::kWebAuthentication,
+          WebSchedulerTrackedFeature::kWebBluetooth,
           WebSchedulerTrackedFeature::kWebHID,
           WebSchedulerTrackedFeature::kWebLocks,
           WebSchedulerTrackedFeature::kWebOTPService,
@@ -398,10 +400,11 @@ static constexpr base::FeatureParam<CacheControlNoStoreExperimentLevel>::Option
          "restore-unless-http-only-cookie-change"},
 };
 const base::FeatureParam<CacheControlNoStoreExperimentLevel>
-    cache_control_level{&features::kCacheControlNoStoreEnterBackForwardCache,
-                        kCacheControlNoStoreExperimentLevelName,
-                        CacheControlNoStoreExperimentLevel::kDoNotStore,
-                        &cache_control_levels};
+    cache_control_level{
+        &features::kCacheControlNoStoreEnterBackForwardCache,
+        kCacheControlNoStoreExperimentLevelName,
+        CacheControlNoStoreExperimentLevel::kStoreAndRestoreUnlessCookieChange,
+        &cache_control_levels};
 
 CacheControlNoStoreExperimentLevel GetCacheControlNoStoreLevel() {
   if (!IsBackForwardCacheEnabled() ||
@@ -698,8 +701,13 @@ void BackForwardCacheImpl::UpdateCanStoreToIncludeCacheControlNoStore(
   // Note that kCacheControlNoStoreHTTPOnlyCookieModified,
   // kCacheControlNoStoreCookieModified and kCacheControlNoStore are mutually
   // exclusive.
-  if (render_frame_host->GetCookieChangeInfo()
-          .http_only_cookie_modification_count_ > 0) {
+  if (render_frame_host->IsDeviceBoundSessionTerminated() &&
+      base::FeatureList::IsEnabled(
+          features::kDeviceBoundSessionTerminationEvictBackForwardCache)) {
+    result.No(BackForwardCacheMetrics::NotRestoredReason::
+                  kCacheControlNoStoreDeviceBoundSessionTerminated);
+  } else if (render_frame_host->GetCookieChangeInfo()
+                 .http_only_cookie_modification_count_ > 0) {
     result.No(BackForwardCacheMetrics::NotRestoredReason::
                   kCacheControlNoStoreHTTPOnlyCookieModified);
   } else if (render_frame_host->GetCookieChangeInfo()
@@ -976,8 +984,12 @@ void BackForwardCacheImpl::NotRestoredReasonBuilder::
   // that are based on MPArch are allowed to be stored. To determine if this
   // is an inner WebContents we check the inner frame tree's type to see if
   // it is `kPrimary`.
-  if (rfh->frame_tree()->delegate()->GetOuterDelegateFrameTreeNodeId() &&
-      rfh->frame_tree()->is_primary()) {
+  // We also make MPArch based GuestViews ineligible. While supporting them
+  // is probably feasible, other than the case of https://crbug.com/330282443 ,
+  // there is little benefit to doing so.
+  if ((rfh->frame_tree()->delegate()->GetOuterDelegateFrameTreeNodeId() &&
+       rfh->frame_tree()->is_primary()) ||
+      rfh->frame_tree()->is_guest()) {
     result.No(BackForwardCacheMetrics::NotRestoredReason::kHaveInnerContents);
   }
 
@@ -1061,35 +1073,27 @@ void BackForwardCacheImpl::NotRestoredReasonBuilder::
   }
 
   // Handle ongoing navigations in subframes.
-  // - When kEnableBackForwardCacheForOngoingSubframeNavigation is enabled, we
-  // allow the following cases to be cached:
+  // - We allow the following cases to be cached:
   //   - 1) Subframe navigations that don't need URLLoaders and haven't reached
-  //   the pending commit stage.
+  //        the pending commit stage.
   //   - 2) Subframe navigations that need URLLoaders and haven't sent any
-  //   network requests.
+  //        network requests.
+  //
   // If there are other type of navigations in any of the subframes, we disallow
   // BFCache.
-  // - When kEnableBackForwardCacheForOngoingSubframeNavigation is disabled, do
-  // not cache if any navigation is ongoing in any of the subframes.
   if (rfh->GetParentOrOuterDocument()) {
-    if (base::FeatureList::IsEnabled(
-            features::kEnableBackForwardCacheForOngoingSubframeNavigation)) {
-      NavigationRequest* nav_request =
-          rfh->frame_tree_node()->navigation_request();
-      // Prevent BFCache if the navigation needs a URLLoader and already sent a
-      // network request. It is not enough to check that URLLoader exists,
-      // because it is reset when the request receives its response, so we must
-      // check if navigation state has already passed `WillStartRequest` to
-      // cover the navigations between sending request and starting commit.
-      if ((nav_request && nav_request->NeedsUrlLoader() &&
-           (nav_request->HasLoader() ||
-            nav_request->state() >
-                NavigationRequest::NavigationState::WILL_START_REQUEST)) ||
-          rfh->frame_tree_node()->HasPendingCommitNavigation()) {
-        result.No(
-            BackForwardCacheMetrics::NotRestoredReason::kSubframeIsNavigating);
-      }
-    } else if (rfh->frame_tree_node()->HasNavigation()) {
+    NavigationRequest* nav_request =
+        rfh->frame_tree_node()->navigation_request();
+    // Prevent BFCache if the navigation needs a URLLoader and already sent a
+    // network request. It is not enough to check that URLLoader exists,
+    // because it is reset when the request receives its response, so we must
+    // check if navigation state has already passed `WillStartRequest` to
+    // cover the navigations between sending request and starting commit.
+    if ((nav_request && nav_request->NeedsUrlLoader() &&
+         (nav_request->HasLoader() ||
+          nav_request->state() >
+              NavigationRequest::NavigationState::WILL_START_REQUEST)) ||
+        rfh->frame_tree_node()->HasPendingCommitNavigation()) {
       result.No(
           BackForwardCacheMetrics::NotRestoredReason::kSubframeIsNavigating);
     }
@@ -1153,7 +1157,7 @@ BackForwardCacheImpl::NotRestoredReasonBuilder::NotRestoredReasonBuilder(
   // Populate the reasons and build the tree.
   std::map<RenderFrameHostImpl*, BackForwardCacheCanStoreTreeResult*>
       parent_map;
-  root_rfh_->ForEachRenderFrameHost([&](RenderFrameHostImpl* rfh) {
+  root_rfh_->ForEachRenderFrameHostImpl([&](RenderFrameHostImpl* rfh) {
     auto rfh_result = PopulateReasons(rfh);
     parent_map[rfh] = rfh_result.get();
 
@@ -1233,38 +1237,69 @@ void BackForwardCacheImpl::EnforceCacheSizeLimit() {
     // First enforce the foregrounded limit. The idea is that we need to
     // strictly enforce the limit on pages using foregrounded processes because
     // Android will not kill a foregrounded process, however it will kill a
-    // backgrounded process if there is memory pressue, so we can allow more of
+    // backgrounded process if there is memory pressure, so we can allow more of
     // those to be kept in the cache.
-    EnforceCacheSizeLimitInternal(GetForegroundedEntriesCacheSize(),
-                                  /*foregrounded_only=*/true);
+    EnforceCacheSizeLimitInternal(
+        GetForegroundedEntriesCacheSize(),
+        BackForwardCacheMetrics::NotRestoredReason::kForegroundCacheLimit);
   }
-  EnforceCacheSizeLimitInternal(GetCacheSize(),
-                                /*foregrounded_only=*/false);
+  EnforceCacheSizeLimitInternal(
+      GetCacheSize(), BackForwardCacheMetrics::NotRestoredReason::kCacheLimit);
 }
 
 void BackForwardCacheImpl::Prune(size_t limit) {
-  EnforceCacheSizeLimitInternal(limit,
-                                /*foregrounded_only=*/false);
+  EnforceCacheSizeLimitInternal(
+      limit, BackForwardCacheMetrics::NotRestoredReason::kCacheLimitPruned);
 }
 
 size_t BackForwardCacheImpl::EnforceCacheSizeLimitInternal(
     size_t limit,
-    bool foregrounded_only) {
+    BackForwardCacheMetrics::NotRestoredReason reason) {
   size_t count = 0;
-  for (auto& stored_entry : entries_) {
-    if (stored_entry->render_frame_host()->is_evicted_from_back_forward_cache())
+  for (auto stored_entry_iter = entries_.begin();
+       stored_entry_iter != entries_.end(); stored_entry_iter++) {
+    Entry* stored_entry = stored_entry_iter->get();
+    RenderFrameHostImpl* rfh = stored_entry->render_frame_host();
+    // Skip the entry if it's already evicted.
+    if (rfh->is_evicted_from_back_forward_cache()) {
       continue;
-    if (foregrounded_only && !HasForegroundedProcess(*stored_entry))
+    }
+    // Skip the entry if it doesn't have foregrounded progress and the eviction
+    // is against foreground limit.
+    if (reason ==
+            BackForwardCacheMetrics::NotRestoredReason::kForegroundCacheLimit &&
+        !HasForegroundedProcess(*stored_entry)) {
       continue;
-    if (!AllRenderViewHostsReceivedAckFromRenderer(*stored_entry)) {
+    }
+    // Skip the entry if any of the RenderViewHosts in this Entry haven't
+    // received the BFCache acknowledgement yet. The current method will be
+    // called again once the acknowledgements are all received later.
+    // Note: this only applies to the case where the latest entry triggers the
+    // cache limit, for the pruning case, the entry will be counted and might be
+    // evicted.
+    if (reason !=
+            BackForwardCacheMetrics::NotRestoredReason::kCacheLimitPruned &&
+        !AllRenderViewHostsReceivedAckFromRenderer(*stored_entry)) {
       continue;
     }
     if (++count > limit) {
-      stored_entry->render_frame_host()->EvictFromBackForwardCacheWithReason(
-          foregrounded_only
-              ? BackForwardCacheMetrics::NotRestoredReason::
-                    kForegroundCacheLimit
-              : BackForwardCacheMetrics::NotRestoredReason::kCacheLimit);
+      if (base::FeatureList::IsEnabled(kBackForwardCachePrioritizedEntry)) {
+        // If it's not a pruning process that will clear all the entries, we
+        // should handle the latest prioritized entry outside the limit
+        // specially and keep it not-evicted.
+        if (limit > 0 &&
+            GetContentClient()->browser()->ShouldPrioritizeForBackForwardCache(
+                rfh->GetBrowserContext(), rfh->GetLastCommittedURL())) {
+          // If the prioritized_entry_ is already taken by some other entry, we
+          // have to evict the current one.
+          if (prioritized_entry_ == entries_.end() ||
+              prioritized_entry_ == stored_entry_iter) {
+            prioritized_entry_ = stored_entry_iter;
+            continue;
+          }
+        }
+      }
+      rfh->EvictFromBackForwardCacheWithReason(reason);
     }
   }
   return count;
@@ -1276,7 +1311,7 @@ std::unique_ptr<BackForwardCacheImpl::Entry> BackForwardCacheImpl::RestoreEntry(
   TRACE_EVENT0("navigation", "BackForwardCache::RestoreEntry");
 
   // Select the RenderFrameHostImpl matching the navigation entry.
-  auto matching_entry = base::ranges::find(
+  auto matching_entry = std::ranges::find(
       entries_, navigation_entry_id, [](std::unique_ptr<Entry>& entry) {
         return entry->render_frame_host()->nav_entry_id();
       });
@@ -1297,6 +1332,9 @@ std::unique_ptr<BackForwardCacheImpl::Entry> BackForwardCacheImpl::RestoreEntry(
                       entry);
 
   entry->SetStoredPageDelegate(nullptr);
+  if (prioritized_entry_ == matching_entry) {
+    prioritized_entry_ = entries_.end();
+  }
   entries_.erase(matching_entry);
   RemoveProcessesForEntry(*entry);
   base::TimeTicks start_time = page_restore_params->navigation_start;
@@ -1442,7 +1480,7 @@ BackForwardCacheImpl::GetEntriesForRenderViewHostImpl(
 base::expected<BackForwardCacheImpl::Entry*,
                BackForwardCacheImpl::GetEntryFailureCase>
 BackForwardCacheImpl::GetOrEvictEntry(int navigation_entry_id) {
-  auto matching_entry = base::ranges::find(
+  auto matching_entry = std::ranges::find(
       entries_, navigation_entry_id, [](std::unique_ptr<Entry>& entry) {
         return entry->render_frame_host()->nav_entry_id();
       });
@@ -1556,6 +1594,9 @@ void BackForwardCacheImpl::DestroyEvictedFrames() {
 
   std::erase_if(entries_, [this](std::unique_ptr<Entry>& entry) {
     if (entry->render_frame_host()->is_evicted_from_back_forward_cache()) {
+      if (prioritized_entry_->get() == entry.get()) {
+        prioritized_entry_ = entries_.end();
+      }
       RemoveProcessesForEntry(*entry);
       return true;
     }
@@ -1631,7 +1672,7 @@ bool BackForwardCacheImpl::
     if (entry->render_frame_host()->is_evicted_from_back_forward_cache()) {
       continue;
     }
-    entry->render_frame_host()->ForEachRenderFrameHostWithAction(
+    entry->render_frame_host()->ForEachRenderFrameHostImplWithAction(
         [&found, site_instance_group_id](RenderFrameHostImpl* rfh) {
           if (rfh->GetSiteInstance()->group()->GetId() ==
               site_instance_group_id) {
@@ -1835,11 +1876,26 @@ BackForwardCacheCanStoreTreeResult::GetWebExposedNotRestoredReasonsInternal(
         blink::mojom::SameOriginBfcacheNotRestoredDetails::New();
     not_restored_reasons->same_origin_details->url = url_;
     // Populate the reasons for same-origin frames.
-    for (auto& name : GetDocumentResult().GetStringReasons()) {
-      blink::mojom::BFCacheBlockingDetailedReasonPtr reason =
-          blink::mojom::BFCacheBlockingDetailedReason::New();
-      reason->name = name;
-      not_restored_reasons->reasons.push_back(std::move(reason));
+    auto& map = GetDocumentResult().reason_to_source_map();
+    for (const auto& [reason, sources] : map) {
+      if (base::FeatureList::IsEnabled(
+              blink::features::kBackForwardCacheUpdateNotRestoredReasonsName) &&
+          reason == "session-restored") {
+        // Session restore should return nullptr just like non-history
+        // navigations.
+        return nullptr;
+      }
+      if (sources.empty()) {
+        not_restored_reasons->reasons.push_back(
+            blink::mojom::BFCacheBlockingDetailedReason::New(
+                reason, /*source=*/nullptr));
+      } else {
+        for (const auto& source : sources) {
+          not_restored_reasons->reasons.push_back(
+              blink::mojom::BFCacheBlockingDetailedReason::New(reason,
+                                                               source.Clone()));
+        }
+      }
     }
     if (is_root_outermost_main_frame_) {
       int index_copy = exposed_cross_origin_iframe_index;

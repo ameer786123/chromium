@@ -23,6 +23,7 @@
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_test_override.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/debug_info_printer.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -41,6 +42,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
 #include "content/public/test/browser_test_utils.h"
+#include "net/base/url_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -71,7 +73,8 @@ WebAppProvider& WebAppBrowserTestBase::provider() {
 }
 
 Profile* WebAppBrowserTestBase::profile() {
-  return browser()->profile();
+  CHECK(browser_profile_);
+  return browser_profile_.get();
 }
 
 webapps::AppId WebAppBrowserTestBase::InstallPWA(const GURL& start_url) {
@@ -88,8 +91,7 @@ webapps::AppId WebAppBrowserTestBase::InstallWebApp(
   return web_app::test::InstallWebApp(profile(), std::move(web_app_info));
 }
 
-void WebAppBrowserTestBase::UninstallWebApp(
-    const webapps::AppId& app_id) {
+void WebAppBrowserTestBase::UninstallWebApp(const webapps::AppId& app_id) {
   web_app::test::UninstallWebApp(profile(), app_id);
 }
 
@@ -103,8 +105,7 @@ Browser* WebAppBrowserTestBase::LaunchWebAppBrowserAndWait(
   return web_app::LaunchWebAppBrowserAndWait(profile(), app_id);
 }
 
-Browser*
-WebAppBrowserTestBase::LaunchWebAppBrowserAndAwaitInstallabilityCheck(
+Browser* WebAppBrowserTestBase::LaunchWebAppBrowserAndAwaitInstallabilityCheck(
     const webapps::AppId& app_id) {
   Browser* browser = web_app::LaunchWebAppBrowserAndWait(profile(), app_id);
   webapps::TestAppBannerManagerDesktop::FromWebContents(
@@ -118,28 +119,8 @@ Browser* WebAppBrowserTestBase::LaunchBrowserForWebAppInTab(
   return web_app::LaunchBrowserForWebAppInTab(profile(), app_id);
 }
 
-content::WebContents* WebAppBrowserTestBase::OpenWindow(
-    content::WebContents* contents,
-    const GURL& url) {
-  content::WebContentsAddedObserver tab_added_observer;
-  EXPECT_TRUE(content::ExecJs(contents, "window.open('" + url.spec() + "');"));
-  content::WebContents* new_contents = tab_added_observer.GetWebContents();
-  EXPECT_TRUE(new_contents);
-  WaitForLoadStop(new_contents);
-
-  EXPECT_EQ(url, contents->GetController().GetLastCommittedEntry()->GetURL());
-  EXPECT_EQ(
-      content::PAGE_TYPE_NORMAL,
-      new_contents->GetController().GetLastCommittedEntry()->GetPageType());
-  EXPECT_EQ(contents->GetPrimaryMainFrame()->GetSiteInstance(),
-            new_contents->GetPrimaryMainFrame()->GetSiteInstance());
-
-  return new_contents;
-}
-
-bool WebAppBrowserTestBase::NavigateInRenderer(
-    content::WebContents* contents,
-    const GURL& url) {
+bool WebAppBrowserTestBase::NavigateInRenderer(content::WebContents* contents,
+                                               const GURL& url) {
   EXPECT_TRUE(
       content::ExecJs(contents, "window.location = '" + url.spec() + "';"));
   bool success = content::WaitForLoadStop(contents);
@@ -157,8 +138,7 @@ bool WebAppBrowserTestBase::NavigateAndAwaitInstallabilityCheck(
   return manager->WaitForInstallableCheck();
 }
 
-Browser*
-WebAppBrowserTestBase::NavigateInNewWindowAndAwaitInstallabilityCheck(
+Browser* WebAppBrowserTestBase::NavigateInNewWindowAndAwaitInstallabilityCheck(
     const GURL& url) {
   Browser* new_browser = Browser::Create(
       Browser::CreateParams(Browser::TYPE_NORMAL, profile(), true));
@@ -167,15 +147,15 @@ WebAppBrowserTestBase::NavigateInNewWindowAndAwaitInstallabilityCheck(
   return new_browser;
 }
 
-std::optional<webapps::AppId>
-WebAppBrowserTestBase::FindAppWithUrlInScope(const GURL& url) {
-  return provider().registrar_unsafe().FindAppWithUrlInScope(url);
+std::optional<webapps::AppId> WebAppBrowserTestBase::FindAppWithUrlInScope(
+    const GURL& url) {
+  return provider().registrar_unsafe().FindBestAppWithUrlInScope(
+      url, web_app::WebAppFilter::InstalledInChrome());
 }
 
-Browser* WebAppBrowserTestBase::OpenPopupAndWait(
-    Browser* browser,
-    const GURL& url,
-    const gfx::Size& popup_size) {
+Browser* WebAppBrowserTestBase::OpenPopupAndWait(Browser* browser,
+                                                 const GURL& url,
+                                                 const gfx::Size& popup_size) {
   content::WebContents* const web_contents =
       browser->tab_strip_model()->GetActiveWebContents();
 
@@ -224,6 +204,13 @@ GURL WebAppBrowserTestBase::GetInstallableAppURL() {
   return https_server()->GetURL("/banners/manifest_test_page.html");
 }
 
+GURL WebAppBrowserTestBase::GetAppURLWithManifest(
+    const std::string& manifest_url) {
+  GURL url = GetInstallableAppURL();
+  return net::AppendQueryParameter(url, "manifest",
+                                   https_server()->GetURL(manifest_url).spec());
+}
+
 // static
 const char* WebAppBrowserTestBase::GetInstallableAppName() {
   return "Manifest test app";
@@ -264,11 +251,15 @@ void WebAppBrowserTestBase::TearDownOnMainThread() {
   WebAppBrowserTestBaseParent::TearDownOnMainThread();
 }
 
-void WebAppBrowserTestBase::SetUpCommandLine(
-    base::CommandLine* command_line) {
+void WebAppBrowserTestBase::SetUpCommandLine(base::CommandLine* command_line) {
   // Browser will both run and display insecure content.
   command_line->AppendSwitch(switches::kAllowRunningInsecureContent);
   cert_verifier_.SetUpCommandLine(command_line);
+}
+
+void WebAppBrowserTestBase::PreRunTestOnMainThread() {
+  WebAppBrowserTestBaseParent::PreRunTestOnMainThread();
+  browser_profile_ = browser()->profile()->GetWeakPtr();
 }
 
 void WebAppBrowserTestBase::SetUpOnMainThread() {

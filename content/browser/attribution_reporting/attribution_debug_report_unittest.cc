@@ -962,6 +962,20 @@ TEST(AttributionDebugReportTest, AggregatableAttributionDebugging) {
          },
          "type": "trigger-aggregate-insufficient-budget"
        }])json"},
+      {CreateReportResult::InsufficientNamedBudget(/*name=*/"biddable",
+                                                   /*budget=*/10),
+       /*source_debug_key=*/std::nullopt,
+       /*trigger_debug_key=*/std::nullopt,
+       R"json([{
+         "body": {
+           "attribution_destination": "https://conversion.test",
+           "limit": "10",
+           "name": "biddable",
+           "source_event_id": "123",
+           "source_site": "https://impression.test"
+         },
+         "type": "trigger-aggregate-insufficient-named-budget"
+       }])json"},
       {CreateReportResult::ExcessiveAggregatableReports(/*max=*/10),
        /*source_debug_key=*/std::nullopt,
        /*trigger_debug_key=*/std::nullopt,
@@ -1258,21 +1272,20 @@ TEST(AttributionDebugReportTest, RegistrationHeaderErrorDebugReports) {
       },
   };
 
-    for (const auto& test_case : kTestCases) {
-      SCOPED_TRACE(test_case.name);
-      std::optional<AttributionDebugReport> report =
-          AttributionDebugReport::Create(
-              reporting_origin,
-              RegistrationHeaderError(/*header_value=*/"!!!",
-                                      test_case.details),
-              context_origin, test_case.is_within_fenced_frame,
-              test_case.is_operation_allowed);
-      EXPECT_EQ(report.has_value(), test_case.expected_body != nullptr);
-      if (test_case.expected_body) {
-        EXPECT_EQ(report->ReportBody(),
-                  base::test::ParseJson(test_case.expected_body));
-      }
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(test_case.name);
+    std::optional<AttributionDebugReport> report =
+        AttributionDebugReport::Create(
+            reporting_origin,
+            RegistrationHeaderError(/*header_value=*/"!!!", test_case.details),
+            context_origin, test_case.is_within_fenced_frame,
+            test_case.is_operation_allowed);
+    EXPECT_EQ(report.has_value(), test_case.expected_body != nullptr);
+    if (test_case.expected_body) {
+      EXPECT_EQ(report->ReportBody(),
+                base::test::ParseJson(test_case.expected_body));
     }
+  }
 }
 
 }  // namespace

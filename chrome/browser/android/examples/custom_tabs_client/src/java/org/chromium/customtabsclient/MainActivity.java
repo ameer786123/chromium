@@ -18,6 +18,9 @@ import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_ACTIVITY_SIDE_S
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_CLOSE_BUTTON_POSITION;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_INITIAL_ACTIVITY_HEIGHT_PX;
 import static androidx.browser.customtabs.CustomTabsIntent.EXTRA_TOOLBAR_CORNER_RADIUS_DP;
+import static androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_DEFAULT;
+import static androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_OFF;
+import static androidx.browser.customtabs.CustomTabsIntent.SHARE_STATE_ON;
 
 import android.app.ActivityManager;
 import android.app.ActivityOptions;
@@ -65,20 +68,25 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import androidx.annotation.DrawableRes;
 import androidx.annotation.Px;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.browser.auth.AuthTabCallback;
+import androidx.browser.auth.AuthTabColorSchemeParams;
 import androidx.browser.auth.AuthTabIntent;
+import androidx.browser.auth.AuthTabSession;
 import androidx.browser.customtabs.CustomTabsCallback;
 import androidx.browser.customtabs.CustomTabsClient;
 import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.browser.customtabs.CustomTabsService;
 import androidx.browser.customtabs.CustomTabsServiceConnection;
 import androidx.browser.customtabs.CustomTabsSession;
 import androidx.browser.customtabs.EngagementSignalsCallback;
 
 import com.google.android.material.button.MaterialButtonToggleGroup;
 
+import org.chromium.build.annotations.NullUnmarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.customtabsclient.shared.CustomTabsHelper;
 import org.chromium.customtabsclient.shared.ServiceConnection;
 import org.chromium.customtabsclient.shared.ServiceConnectionCallback;
@@ -89,6 +97,7 @@ import java.util.HashSet;
 import java.util.List;
 
 /** Example client activity for using Chrome Custom Tabs. */
+@NullUnmarked
 public class MainActivity extends AppCompatActivity
         implements OnClickListener, ServiceConnectionCallback {
     private static final String TAG = "CustomTabsClientExample";
@@ -111,6 +120,11 @@ public class MainActivity extends AppCompatActivity
     private static final String SHARED_PREF_THEME = "Theme";
     private static final String SHARED_PREF_URL_HIDING = "UrlHiding";
     private static final String SHARED_PREF_SIDE_SHEET_MAX_BUTTON = "SideSheetMaxButton";
+    private static final String SHARED_PREF_OPEN_IN_BROWSER_BUTTON = "OpenInBrowserButton";
+    private static final String SHARED_PREF_SHOW_ACTION_BUTTON = "ShowActionButton";
+    private static final String SHARED_PREF_SHOW_CLOSE_BUTTON = "ShowCloseButton";
+    private static final String SHARED_PREF_EPHEMERAL_BROWSING = "EphemeralBrowsing";
+    private static final String SHARED_PREF_SHARE_STATE = "ShareStateToggle";
     private static final String SHARED_PREF_SIDE_SHEET_ROUNDED_CORNER = "RoundedCorner";
     private static final String SHARED_PREF_CONTENT_SCROLL = "ContentScrollMayResizeTab";
     private static final String SHARED_PREF_SEARCH_IN_CCT = "SearchInCCT";
@@ -122,10 +136,10 @@ public class MainActivity extends AppCompatActivity
     private static final String SHARED_PREF_MAY_LAUNCH_BUTTON = "MayLaunchButton";
     private static final String SHARED_PREF_ENGAGEMENT_SIGNALS_BUTTON = "EngagementSignalsButton";
     private static final String SHARED_PREF_CUSTOM_SCHEME = "CustomScheme";
+    private static final String SHARED_PREF_USE_SEPARATE_TASK_BUTTON = "SeparateTaskButton";
     private static final String CCT_OPTION_REGULAR = "CCT";
     private static final String CCT_OPTION_PARTIAL = "Partial CCT";
     private static final String CCT_OPTION_INCOGNITO = "Incognito CCT";
-    private static final String CCT_OPTION_EPHEMERAL = "Ephemeral CCT";
     private static final String CCT_OPTION_AUTHTAB = "AuthTab";
     private static final int CLOSE_ICON_X = 0;
     private static final int CLOSE_ICON_BACK = 1;
@@ -143,6 +157,7 @@ public class MainActivity extends AppCompatActivity
     private static final int DEFAULT_BREAKPOINT = 840;
     private static CustomTabsClient sClient;
     private AutoCompleteTextView mEditUrl;
+    private AuthTabSession mAuthTabSession;
     private CustomTabsSession mCustomTabsSession;
     private CustomTabsServiceConnection mConnection;
     private String mPackageNameToBind;
@@ -164,6 +179,7 @@ public class MainActivity extends AppCompatActivity
     private MaterialButtonToggleGroup mDecorationType;
     private MaterialButtonToggleGroup mThemeButton;
     private MaterialButtonToggleGroup mSideSheetPositionToggle;
+    private MaterialButtonToggleGroup mShareStateButton;
 
     private TextView mToolbarCornerRadiusLabel;
     private SeekBar mToolbarCornerRadiusSlider;
@@ -173,11 +189,16 @@ public class MainActivity extends AppCompatActivity
     private CheckBox mUrlHidingCheckbox;
     private CheckBox mBackgroundInteractCheckbox;
     private CheckBox mSideSheetMaxButtonCheckbox;
+    private CheckBox mOpenInBrowserButtonCheckbox;
+    private CheckBox mShowActionButtonCheckbox;
+    private CheckBox mShowCloseButtonCheckbox;
+    private CheckBox mEphemeralCctCheckbox;
     private CheckBox mSideSheetRoundedCornerCheckbox;
     private CheckBox mContentScrollCheckbox;
     private CheckBox mSearchInCctCheckbox;
     private CheckBox mSendToExternalAppCheckbox;
     private CheckBox mShareIdentityCheckbox;
+    private CheckBox mUseSeparateTaskCheckbox;
     private TextView mPcctBreakpointLabel;
     private SeekBar mPcctBreakpointSlider;
     private TextView mPcctInitialHeightLabel;
@@ -246,9 +267,33 @@ public class MainActivity extends AppCompatActivity
                 }
             };
 
-    private static class NavigationCallback extends CustomTabsCallback {
+    private static class AuthTabNavigationCallback implements AuthTabCallback {
+        @Override
+        public void onExtraCallback(String callbackName, Bundle args) {}
+
+        @Override
+        public Bundle onExtraCallbackWithResult(String callbackName, Bundle args) {
+            // Return a signal to signal that the callback was successfully handled.
+            Bundle result = new Bundle();
+            result.putBoolean(CustomTabsService.KEY_SUCCESS, true);
+
+            return result;
+        }
+
         @Override
         public void onNavigationEvent(int navigationEvent, Bundle extras) {
+            Log.w(TAG, "onNavigationEvent: Code = " + navigationEvent);
+        }
+
+        @Override
+        public void onWarmupCompleted(Bundle extras) {
+            Log.w(TAG, "onWarmUpCompleted");
+        }
+    }
+
+    private static class NavigationCallback extends CustomTabsCallback {
+        @Override
+        public void onNavigationEvent(int navigationEvent, @Nullable Bundle extras) {
             Log.w(TAG, "onNavigationEvent: Code = " + navigationEvent);
         }
 
@@ -279,7 +324,7 @@ public class MainActivity extends AppCompatActivity
         }
 
         @Override
-        public void extraCallback(@NonNull String callbackName, @Nullable Bundle args) {
+        public void extraCallback(String callbackName, @Nullable Bundle args) {
             if (args == null) return;
 
             // CustomTabsConnection#ON_RESIZED_CALLBACK
@@ -354,7 +399,7 @@ public class MainActivity extends AppCompatActivity
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
         mSharedPref = getPreferences(Context.MODE_PRIVATE);
@@ -490,7 +535,8 @@ public class MainActivity extends AppCompatActivity
                 new ArrayAdapter<>(this, 0, packagesSupportingCustomTabs) {
 
                     @Override
-                    public View getView(int position, View convertView, ViewGroup parent) {
+                    public View getView(
+                            int position, @Nullable View convertView, ViewGroup parent) {
                         View view = convertView;
                         if (view == null) {
                             view =
@@ -559,7 +605,8 @@ public class MainActivity extends AppCompatActivity
         final ArrayAdapter<String> colorAdapter =
                 new ArrayAdapter<String>(this, 0, colorsArr) {
                     @Override
-                    public View getView(int position, View convertView, ViewGroup parent) {
+                    public View getView(
+                            int position, @Nullable View convertView, ViewGroup parent) {
                         View view = convertView;
                         if (view == null) {
                             view =
@@ -610,6 +657,17 @@ public class MainActivity extends AppCompatActivity
         } else {
             mThemeButton.check(R.id.dark_button);
         }
+
+        mShareStateButton = findViewById(R.id.share_state_button);
+        int desiredShareStateValue =
+                mSharedPref.getInt(SHARED_PREF_SHARE_STATE, SHARE_STATE_DEFAULT);
+        int desiredShareState =
+                desiredShareStateValue == SHARE_STATE_DEFAULT
+                        ? R.id.share_state_default_button
+                        : desiredShareStateValue == SHARE_STATE_ON
+                                ? R.id.share_state_on_button
+                                : R.id.share_state_off_button;
+        mShareStateButton.check(desiredShareState);
 
         mCloseButtonPositionToggle = findViewById(R.id.close_button_position_toggle);
         int buttonType =
@@ -697,6 +755,18 @@ public class MainActivity extends AppCompatActivity
         mSideSheetMaxButtonCheckbox = findViewById(R.id.side_sheet_max_button_checkbox);
         mSideSheetMaxButtonCheckbox.setChecked(
                 mSharedPref.getInt(SHARED_PREF_SIDE_SHEET_MAX_BUTTON, CHECKED) == CHECKED);
+        mOpenInBrowserButtonCheckbox = findViewById(R.id.open_in_browser_checkbox);
+        mOpenInBrowserButtonCheckbox.setChecked(
+                mSharedPref.getInt(SHARED_PREF_OPEN_IN_BROWSER_BUTTON, CHECKED) == CHECKED);
+        mShowActionButtonCheckbox = findViewById(R.id.show_action_button_checkbox);
+        mShowActionButtonCheckbox.setChecked(
+                mSharedPref.getInt(SHARED_PREF_SHOW_ACTION_BUTTON, CHECKED) == CHECKED);
+        mShowCloseButtonCheckbox = findViewById(R.id.show_close_button_checkbox);
+        mShowCloseButtonCheckbox.setChecked(
+                mSharedPref.getInt(SHARED_PREF_SHOW_CLOSE_BUTTON, CHECKED) == CHECKED);
+        mEphemeralCctCheckbox = findViewById(R.id.ephemeral_cct_checkbox);
+        mEphemeralCctCheckbox.setChecked(
+                mSharedPref.getInt(SHARED_PREF_EPHEMERAL_BROWSING, UNCHECKED) == CHECKED);
         mSideSheetRoundedCornerCheckbox = findViewById(R.id.side_sheet_rounded_corner_checkbox);
         mSideSheetRoundedCornerCheckbox.setChecked(
                 mSharedPref.getInt(SHARED_PREF_SIDE_SHEET_ROUNDED_CORNER, CHECKED) == CHECKED);
@@ -712,6 +782,9 @@ public class MainActivity extends AppCompatActivity
         mSendToExternalAppCheckbox.setChecked(
                 mSharedPref.getInt(SHARED_PREF_SEND_TO_EXTERNAL_APP, UNCHECKED) == CHECKED);
         mCustomScheme = mSharedPref.getString(SHARED_PREF_CUSTOM_SCHEME, "myscheme");
+        mUseSeparateTaskCheckbox = findViewById(R.id.use_separate_task_checkbox);
+        mUseSeparateTaskCheckbox.setChecked(
+                mSharedPref.getInt(SHARED_PREF_USE_SEPARATE_TASK_BUTTON, UNCHECKED) == CHECKED);
         EditText customSchemeEdit = (EditText) findViewById(R.id.custom_scheme);
         customSchemeEdit.setText(mCustomScheme, TextView.BufferType.NORMAL);
     }
@@ -720,11 +793,7 @@ public class MainActivity extends AppCompatActivity
         Spinner cctSpinner = (Spinner) findViewById(R.id.cct_spinner);
         String[] cctOptions =
                 new String[] {
-                    CCT_OPTION_REGULAR,
-                    CCT_OPTION_PARTIAL,
-                    CCT_OPTION_INCOGNITO,
-                    CCT_OPTION_EPHEMERAL,
-                    CCT_OPTION_AUTHTAB
+                    CCT_OPTION_REGULAR, CCT_OPTION_PARTIAL, CCT_OPTION_INCOGNITO, CCT_OPTION_AUTHTAB
                 };
         String prefCct = mSharedPref.getString(SHARED_PREF_CCT, "");
         for (int i = 0; i < cctOptions.length; i++) {
@@ -738,7 +807,8 @@ public class MainActivity extends AppCompatActivity
         final ArrayAdapter<String> cctAdapter =
                 new ArrayAdapter<String>(this, 0, cctOptions) {
                     @Override
-                    public View getView(int position, View convertView, ViewGroup parent) {
+                    public View getView(
+                            int position, @Nullable View convertView, ViewGroup parent) {
                         View view = convertView;
                         if (view == null) {
                             view =
@@ -898,6 +968,9 @@ public class MainActivity extends AppCompatActivity
             editor.putBoolean(
                     SHARED_PREF_ENGAGEMENT_SIGNALS_BUTTON, mEngagementSignalsButton.isEnabled());
             editor.putBoolean(SHARED_PREF_SEARCH_IN_CCT, mSearchInCctCheckbox.isChecked());
+            editor.putBoolean(
+                    SHARED_PREF_OPEN_IN_BROWSER_BUTTON, mOpenInBrowserButtonCheckbox.isChecked());
+            editor.putBoolean(SHARED_PREF_EPHEMERAL_BROWSING, mEphemeralCctCheckbox.isChecked());
             editor.apply();
         }
         super.onDestroy();
@@ -911,6 +984,16 @@ public class MainActivity extends AppCompatActivity
             SessionHelper.setCurrentSession(mCustomTabsSession);
         }
         return mCustomTabsSession;
+    }
+
+    private @Nullable AuthTabSession getAuthSession() {
+        if (sClient == null) {
+            mAuthTabSession = null;
+        } else if (mAuthTabSession == null) {
+            mAuthTabSession = sClient.newAuthTabSession(new AuthTabNavigationCallback(), null);
+            SessionHelper.setCurrentAuthSession(mAuthTabSession);
+        }
+        return mAuthTabSession;
     }
 
     private void bindCustomTabsService() {
@@ -989,7 +1072,9 @@ public class MainActivity extends AppCompatActivity
         CustomTabsSession session = getSession();
         CustomTabsIntent.Builder builder = new CustomTabsIntent.Builder(session);
         prepareMenuItems(builder);
-        prepareActionButton(builder);
+        if (mShowActionButtonCheckbox.isChecked()) {
+            prepareActionButton(builder);
+        }
         boolean isPcct = mCctType.equals(CCT_OPTION_PARTIAL);
         prepareAesthetics(builder, isPcct);
 
@@ -1010,6 +1095,7 @@ public class MainActivity extends AppCompatActivity
         }
 
         if (mShareIdentityCheckbox.isChecked()) builder.setShareIdentityEnabled(true);
+        if (!mShowCloseButtonCheckbox.isChecked()) builder.setCloseButtonEnabled(false);
         if (mSendToExternalAppCheckbox.isChecked()) {
             builder.setSendToExternalDefaultHandlerEnabled(true);
         }
@@ -1073,21 +1159,27 @@ public class MainActivity extends AppCompatActivity
                 builder.setSecondaryToolbarSwipeUpGesture(pi);
             }
             customTabsIntent = builder.build();
+            if (mUseSeparateTaskCheckbox.isChecked()) {
+                customTabsIntent.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
             customTabsIntent.intent.putExtra(
                     "com.google.android.apps.chrome.EXTRA_OPEN_NEW_INCOGNITO_TAB",
                     mCctType.equals(CCT_OPTION_INCOGNITO));
-            customTabsIntent.intent.putExtra(
-                    "androidx.browser.customtabs.extra.ENABLE_EPHEMERAL_BROWSING",
-                    mCctType.equals(CCT_OPTION_EPHEMERAL));
-            // TODO(crbug.com/358346921): Remove when crrev.com/c/5770644 lands.
-            customTabsIntent.intent.putExtra(
-                    "com.google.android.apps.chrome.EXTRA_OPEN_NEW_EPHEMERAL_TAB",
-                    mCctType.equals(CCT_OPTION_EPHEMERAL));
 
             customTabsIntent.intent.putExtra(EXTRA_CLOSE_BUTTON_POSITION, closeButtonPosition);
         }
 
+        if (mEphemeralCctCheckbox.isChecked()
+                && (mCctType.equals(CCT_OPTION_REGULAR) || mCctType.equals(CCT_OPTION_PARTIAL))) {
+            builder.setEphemeralBrowsingEnabled(true);
+        }
+
         customTabsIntent.intent.putExtra(EXTRA_OMNIBOX_ENABLED, mSearchInCctCheckbox.isChecked());
+
+        if (mOpenInBrowserButtonCheckbox.isChecked()) {
+            customTabsIntent.intent.putExtra(
+                    "androidx.browser.customtabs.extra.OPEN_IN_BROWSER_STATE", SHARE_STATE_ON);
+        }
 
         if (mCctType.equals(CCT_OPTION_AUTHTAB)) {
             launchAuthTab(url);
@@ -1121,12 +1213,46 @@ public class MainActivity extends AppCompatActivity
         editor.putInt(
                 SHARED_PREF_SIDE_SHEET_ROUNDED_CORNER,
                 mSideSheetRoundedCornerCheckbox.isChecked() ? CHECKED : UNCHECKED);
+        editor.putInt(
+                SHARED_PREF_SHOW_ACTION_BUTTON,
+                mShowActionButtonCheckbox.isChecked() ? CHECKED : UNCHECKED);
+        editor.putInt(
+                SHARED_PREF_SHOW_CLOSE_BUTTON,
+                mShowCloseButtonCheckbox.isChecked() ? CHECKED : UNCHECKED);
+        editor.putInt(
+                SHARED_PREF_EPHEMERAL_BROWSING,
+                mEphemeralCctCheckbox.isChecked() ? CHECKED : UNCHECKED);
+        editor.putInt(
+                SHARED_PREF_USE_SEPARATE_TASK_BUTTON,
+                mUseSeparateTaskCheckbox.isChecked() ? CHECKED : UNCHECKED);
         editor.putInt(SHARED_PREF_DECORATION, decorationType);
         editor.apply();
     }
 
     private void launchAuthTab(String url) {
-        AuthTabIntent authIntent = new AuthTabIntent.Builder().build();
+        int colorScheme = getColorSchemeFromButton(null);
+        AuthTabColorSchemeParams.Builder builder = new AuthTabColorSchemeParams.Builder();
+        if (!TextUtils.isEmpty(mToolbarColor)) {
+            builder.setToolbarColor(Color.parseColor(mToolbarColor));
+        }
+        int closeButton = mCloseButtonIcon.getCheckedButtonId();
+        @DrawableRes int closeIconId;
+        if (closeButton == R.id.check_button) {
+            closeIconId = R.drawable.baseline_check_white;
+        } else if (closeButton == R.id.back_button) {
+            closeIconId = R.drawable.ic_arrow_back;
+        } else {
+            closeIconId = R.drawable.baseline_close_white;
+        }
+        Bitmap closeIcon = BitmapFactory.decodeResource(getResources(), closeIconId);
+        AuthTabIntent authIntent =
+                new AuthTabIntent.Builder()
+                        .setSession(getAuthSession())
+                        .setColorScheme(colorScheme)
+                        .setDefaultColorSchemeParams(builder.build())
+                        .setCloseButtonIcon(closeIcon)
+                        .setEphemeralBrowsingEnabled(mEphemeralCctCheckbox.isChecked())
+                        .build();
         authIntent.intent.setPackage(mPackageNameToBind);
         String scheme = ((EditText) findViewById(R.id.custom_scheme)).getText().toString();
         if (TextUtils.isEmpty(scheme)) {
@@ -1167,16 +1293,8 @@ public class MainActivity extends AppCompatActivity
             editor.putInt(SHARED_PREF_SHOW_TITLE, UNCHECKED);
         }
         int closeButton = mCloseButtonIcon.getCheckedButtonId();
-        int colorScheme = CustomTabsIntent.COLOR_SCHEME_SYSTEM;
-        if (mThemeButton.getCheckedButtonId() == R.id.light_button) {
-            colorScheme = CustomTabsIntent.COLOR_SCHEME_LIGHT;
-            editor.putInt(SHARED_PREF_THEME, CustomTabsIntent.COLOR_SCHEME_LIGHT);
-        } else if (mThemeButton.getCheckedButtonId() == R.id.dark_button) {
-            colorScheme = CustomTabsIntent.COLOR_SCHEME_DARK;
-            editor.putInt(SHARED_PREF_THEME, CustomTabsIntent.COLOR_SCHEME_DARK);
-        } else {
-            editor.putInt(SHARED_PREF_THEME, CustomTabsIntent.COLOR_SCHEME_SYSTEM);
-        }
+        int colorScheme = getColorSchemeFromButton(editor);
+        int shareState = getShareStateFromButton(editor);
         if (!TextUtils.isEmpty(mToolbarColor)) {
             builder.setToolbarColor(Color.parseColor(mToolbarColor));
         }
@@ -1184,6 +1302,7 @@ public class MainActivity extends AppCompatActivity
         builder.setShowTitle(showTitle)
                 .setColorScheme(colorScheme)
                 .setUrlBarHidingEnabled(urlHiding);
+        builder.setShareState(shareState);
         if (isPcct) {
             builder.setStartAnimations(this, R.anim.slide_in_up, R.anim.slide_out_bottom);
             builder.setExitAnimations(this, R.anim.slide_in_bottom, R.anim.slide_out_up);
@@ -1205,6 +1324,32 @@ public class MainActivity extends AppCompatActivity
             editor.putInt(SHARED_PREF_CLOSE_ICON, CLOSE_ICON_X);
         }
         editor.apply();
+    }
+
+    private int getColorSchemeFromButton(SharedPreferences.Editor editor) {
+        int colorScheme = CustomTabsIntent.COLOR_SCHEME_SYSTEM;
+        if (mThemeButton.getCheckedButtonId() == R.id.light_button) {
+            colorScheme = CustomTabsIntent.COLOR_SCHEME_LIGHT;
+        } else if (mThemeButton.getCheckedButtonId() == R.id.dark_button) {
+            colorScheme = CustomTabsIntent.COLOR_SCHEME_DARK;
+        }
+        if (editor != null) {
+            editor.putInt(SHARED_PREF_THEME, colorScheme);
+        }
+        return colorScheme;
+    }
+
+    private int getShareStateFromButton(SharedPreferences.Editor editor) {
+        int shareState = SHARE_STATE_DEFAULT;
+        if (mShareStateButton.getCheckedButtonId() == R.id.share_state_on_button) {
+            shareState = SHARE_STATE_ON;
+        } else if (mShareStateButton.getCheckedButtonId() == R.id.share_state_off_button) {
+            shareState = SHARE_STATE_OFF;
+        }
+        if (editor != null) {
+            editor.putInt(SHARED_PREF_SHARE_STATE, shareState);
+        }
+        return shareState;
     }
 
     private void prepareMenuItems(CustomTabsIntent.Builder builder) {

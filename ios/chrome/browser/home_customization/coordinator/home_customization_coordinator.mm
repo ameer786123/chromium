@@ -59,18 +59,19 @@ CGFloat const kSheetCornerRadius = 30;
 
 - (void)start {
   _mediator = [[HomeCustomizationMediator alloc]
-      initWithPrefService:ProfileIOS::FromBrowserState(
-                              self.browser->GetProfile())
-                              ->GetPrefs()];
+      initWithPrefService:self.profile->GetPrefs()];
   _mediator.navigationDelegate = self;
 
+  // The Customization menu consists of a stack of presenting view controllers.
+  // Since the `baseViewController` is at the root of this stack, it is set as
+  // the first page.
   _currentPageViewController = self.baseViewController;
 
   [super start];
 }
 
 - (void)stop {
-  [self.baseViewController dismissViewControllerAnimated:NO completion:nil];
+  [self.baseViewController dismissViewControllerAnimated:YES completion:nil];
 
   _mainViewController = nil;
   _magicStackViewController = nil;
@@ -107,16 +108,14 @@ CGFloat const kSheetCornerRadius = 30;
     self.firstPageViewController = menuPage;
   }
 
-  [self.currentPageViewController
-      presentViewController:menuPage
-                   animated:YES
-                 completion:^{
-                   UIAccessibilityPostNotification(
-                       UIAccessibilityScreenChangedNotification, menuPage);
-                 }];
+  [self.currentPageViewController presentViewController:menuPage
+                                               animated:YES
+                                             completion:nil];
 
-  self.currentPageViewController.view.accessibilityElementsHidden = YES;
   self.currentPageViewController = menuPage;
+
+  // Set the currently presented modal as the interactable one for voiceover.
+  self.currentPageViewController.view.accessibilityViewIsModal = YES;
 }
 
 - (void)dismissMenuPage {
@@ -130,7 +129,10 @@ CGFloat const kSheetCornerRadius = 30;
                                                        completion:nil];
     self.currentPageViewController =
         self.currentPageViewController.presentingViewController;
-    self.currentPageViewController.view.accessibilityElementsHidden = NO;
+
+    // The presented page was closed, so the presenting page should become
+    // interactable.
+    self.currentPageViewController.view.accessibilityViewIsModal = YES;
   }
 }
 
@@ -183,7 +185,7 @@ CGFloat const kSheetCornerRadius = 30;
       break;
     }
     case CustomizationMenuPage::kUnknown:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   // Configure the navigation controller.

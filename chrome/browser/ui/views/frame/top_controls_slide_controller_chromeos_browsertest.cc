@@ -102,7 +102,7 @@ class LayoutTestView : public views::View {
  public:
   explicit LayoutTestView(BrowserView* parent) {
     DCHECK(parent);
-    parent->AddChildView(this);
+    parent->AddChildViewRaw(this);
     parent->GetWidget()->LayoutRootViewIfNecessary();
     layout_count_ = 0;
   }
@@ -232,8 +232,9 @@ class TopControlsShownRatioWaiter : public TestControllerObserver {
                                             "ratio.";
 
     waiting_for_shown_ratio_ = ratio;
-    if (CheckRatio())
+    if (CheckRatio()) {
       return;
+    }
 
     // Use kNestableTasksAllowed to make it possible to wait inside a posted
     // task.
@@ -250,8 +251,9 @@ class TopControlsShownRatioWaiter : public TestControllerObserver {
     if (!controller_->IsTopControlsGestureScrollInProgress() &&
         cc::MathUtil::IsWithinEpsilon(controller_->GetShownRatio(),
                                       waiting_for_shown_ratio_)) {
-      if (run_loop_)
+      if (run_loop_) {
         run_loop_->Quit();
+      }
 
       return true;
     }
@@ -287,14 +289,16 @@ class GestureScrollInProgressChangeWaiter : public TestControllerObserver {
   void OnShownRatioChanged(float shown_ratio) override {}
 
   void OnGestureScrollInProgressChanged(bool in_progress) override {
-    if (in_progress == waited_for_in_progress_state_ && run_loop_)
+    if (in_progress == waited_for_in_progress_state_ && run_loop_) {
       std::move(run_loop_)->Quit();
+    }
   }
 
   void WaitForInProgressState(bool in_progress_state) {
     if (controller_->IsTopControlsGestureScrollInProgress() ==
-        in_progress_state)
+        in_progress_state) {
       return;
+    }
 
     waited_for_in_progress_state_ = in_progress_state;
     // Use kNestableTasksAllowed to make it possible to wait inside a posted
@@ -694,15 +698,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestCtrlL) {
 }
 
 // Fails on Linux ChromiumOS MSan Tests (https://crbug.com/1194575).
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_TestScrollingPageAndSwitchingToNTP \
-  DISABLED_TestScrollingPageAndSwitchingToNTP
-#else
-#define MAYBE_TestScrollingPageAndSwitchingToNTP \
-  TestScrollingPageAndSwitchingToNTP
-#endif
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       MAYBE_TestScrollingPageAndSwitchingToNTP) {
+                       DISABLED_TestScrollingPageAndSwitchingToNTP) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -761,12 +758,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 }
 
 // Fails on Linux Chromium OS Tests (https://crbug.com/1191327).
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_TestClosingATab DISABLED_TestClosingATab
-#else
-#define MAYBE_TestClosingATab TestClosingATab
-#endif
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_TestClosingATab) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
+                       DISABLED_TestClosingATab) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -908,8 +901,9 @@ class BrowserViewLayoutWaiter : public views::ViewObserver {
   // views::ViewObserver:
   void OnViewBoundsChanged(views::View* observed_view) override {
     view_bounds_changed_ = true;
-    if (run_loop_)
+    if (run_loop_) {
       run_loop_->Quit();
+    }
   }
 
  private:
@@ -1182,21 +1176,25 @@ class IntermediateShownRatioWaiter : public TestControllerObserver {
   // TestControllerObserver:
   void OnShownRatioChanged(float shown_ratio) override {
     seen_intermediate_ratios_ |= shown_ratio > 0.0 && shown_ratio < 1.f;
-    if (!seen_intermediate_ratios_)
+    if (!seen_intermediate_ratios_) {
       return;
+    }
 
-    if (on_intermediate_ratio_callback_)
+    if (on_intermediate_ratio_callback_) {
       std::move(on_intermediate_ratio_callback_).Run();
+    }
 
-    if (run_loop_)
+    if (run_loop_) {
       run_loop_->Quit();
+    }
   }
 
   void OnGestureScrollInProgressChanged(bool in_progress) override {}
 
   void Wait() {
-    if (seen_intermediate_ratios_)
+    if (seen_intermediate_ratios_) {
       return;
+    }
 
     run_loop_ = std::make_unique<base::RunLoop>(
         base::RunLoop::Type::kNestableTasksAllowed);

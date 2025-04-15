@@ -116,7 +116,6 @@ gpu::ContextCreationAttribs GetCompositorContextAttributes() {
 }
 
 void CreateContextProviderAfterGpuChannelEstablished(
-    gpu::SurfaceHandle handle,
     gpu::SharedMemoryLimits shared_memory_limits,
     Compositor::ContextProviderCallback callback,
     scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
@@ -137,7 +136,7 @@ void CreateContextProviderAfterGpuChannelEstablished(
 
   auto context_provider =
       base::MakeRefCounted<viz::ContextProviderCommandBuffer>(
-          std::move(gpu_channel_host), stream_id, stream_priority, handle,
+          std::move(gpu_channel_host), stream_id, stream_priority,
           GURL(std::string("chrome://gpu/Compositor::CreateContextProvider")),
           automatic_flushes, support_locking, shared_memory_limits, attributes,
           viz::command_buffer_metrics::ContextType::UNKNOWN);
@@ -207,12 +206,11 @@ void Compositor::Initialize() {
 
 // static
 void Compositor::CreateContextProvider(
-    gpu::SurfaceHandle handle,
     gpu::SharedMemoryLimits shared_memory_limits,
     ContextProviderCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   BrowserGpuChannelHostFactory::instance()->EstablishGpuChannel(
-      base::BindOnce(&CreateContextProviderAfterGpuChannelEstablished, handle,
+      base::BindOnce(&CreateContextProviderAfterGpuChannelEstablished,
                      shared_memory_limits, std::move(callback)));
 }
 
@@ -282,12 +280,14 @@ void CompositorImpl::SetRootWindow(gfx::NativeWindow root_window) {
   root_window_ = root_window;
   root_window_->SetLayer(root_layer ? root_layer : cc::slim::Layer::Create());
   root_window_->GetLayer()->SetBounds(size_);
-  root_window->AttachCompositor(this);
   if (!host_) {
     CreateLayerTreeHost();
     resource_manager_.Init(host_->GetUIResourceManager());
   }
+  // Attach compositor after `LayerTreeHost` has been created.
+  root_window->AttachCompositor(this);
   OnUpdateOverlayTransform();
+  OnAdaptiveRefreshRateInfoChanged();
   host_->SetRoot(root_window_->GetLayer());
   host_->SetViewportRectAndScale(gfx::Rect(size_), root_window_->GetDipScale(),
                                  GenerateLocalSurfaceId());
@@ -535,7 +535,6 @@ void CompositorImpl::OnGpuChannelEstablished(
   auto context_provider =
       base::MakeRefCounted<viz::ContextProviderCommandBuffer>(
           std::move(gpu_channel_host), stream_id, stream_priority,
-          gpu::kNullSurfaceHandle,
           GURL(std::string("chrome://gpu/CompositorImpl::") +
                std::string("CompositorContextProvider")),
           automatic_flushes, support_locking,
@@ -649,6 +648,10 @@ viz::FrameSinkId CompositorImpl::GetFrameSinkId() {
   return frame_sink_id_;
 }
 
+gpu::SurfaceHandle CompositorImpl::GetSurfaceHandle() {
+  return surface_handle_;
+}
+
 void CompositorImpl::AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) {
   if (GetHostFrameSinkManager()->IsFrameSinkIdRegistered(frame_sink_id_)) {
     bool result = GetHostFrameSinkManager()->RegisterFrameSinkHierarchy(
@@ -729,6 +732,20 @@ void CompositorImpl::OnUpdateSupportedRefreshRates(
   }
 }
 
+void CompositorImpl::OnAdaptiveRefreshRateInfoChanged() {
+  if (root_window_ && display_private_) {
+    ui::WindowAndroid::AdaptiveRefreshRateInfo arr_info =
+        root_window_->adaptive_refresh_rate_info();
+    display_private_->SetAdaptiveRefreshRateInfo(
+        arr_info.supports_adaptive_refresh_rate,
+        arr_info.suggested_frame_rate_normal,
+        arr_info.suggested_frame_rate_high, arr_info.supported_frame_rates,
+        display::Screen::GetScreen()
+            ->GetDisplayNearestWindow(root_window_)
+            .device_scale_factor());
+  }
+}
+
 // WindowAndroid can call this callback
 // 1. when display rotation is changed
 // 2. when display type is changed in fold device(e.g., main->sub, sub->main),
@@ -801,11 +818,11 @@ void CompositorImpl::InitializeVizLayerTreeFrameSink(
   display_private_->SetSupportedRefreshRates(
       root_window_->GetSupportedRefreshRates());
   MaybeUpdateObserveBeginFrame();
+  OnAdaptiveRefreshRateInfoChanged();
 
   auto frame_sink = cc::slim::FrameSink::Create(
       std::move(sink_remote), std::move(client_receiver),
       std::move(context_provider), std::move(task_runner),
-      BrowserGpuChannelHostFactory::instance()->GetGpuMemoryBufferManager(),
       BrowserMainLoop::GetInstance()->GetIOThreadId());
   host_->SetFrameSink(std::move(frame_sink));
 }
@@ -843,7 +860,7 @@ void CompositorImpl::OnFatalOrSurfaceContextCreationFailure(
 }
 
 void CompositorImpl::OnFirstSurfaceActivation(const viz::SurfaceInfo& info) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void CompositorImpl::CacheBackBufferForCurrentSurface() {

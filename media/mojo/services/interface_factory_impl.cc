@@ -168,8 +168,7 @@ void InterfaceFactoryImpl::CreateAudioDecoder(
 
 void InterfaceFactoryImpl::CreateVideoDecoder(
     mojo::PendingReceiver<mojom::VideoDecoder> receiver,
-    mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-        dst_video_decoder) {
+    mojo::PendingRemote<media::mojom::VideoDecoder> dst_video_decoder) {
   DVLOG(2) << __func__;
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
@@ -194,9 +193,9 @@ void InterfaceFactoryImpl::CreateVideoDecoder(
 }
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-void InterfaceFactoryImpl::CreateStableVideoDecoder(
-    mojo::PendingReceiver<media::stable::mojom::StableVideoDecoder>
-        video_decoder) {
+void InterfaceFactoryImpl::CreateVideoDecoderWithTracker(
+    mojo::PendingReceiver<mojom::VideoDecoder> receiver,
+    mojo::PendingRemote<mojom::VideoDecoderTracker> tracker) {
   // The browser process ensures that this is not called in the GPU process.
   NOTREACHED();
 }
@@ -262,7 +261,7 @@ void InterfaceFactoryImpl::CreateMediaPlayerRenderer(
     mojo::PendingReceiver<mojom::Renderer> receiver,
     mojo::PendingReceiver<mojom::MediaPlayerRendererExtension>
         renderer_extension_receiver) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 
 void InterfaceFactoryImpl::CreateFlingingRenderer(
@@ -270,7 +269,7 @@ void InterfaceFactoryImpl::CreateFlingingRenderer(
     mojo::PendingRemote<mojom::FlingingRendererClientExtension>
         client_extension,
     mojo::PendingReceiver<mojom::Renderer> receiver) {
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
@@ -452,15 +451,14 @@ void InterfaceFactoryImpl::OnCdmServiceInitialized(
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 void InterfaceFactoryImpl::FinishCreatingVideoDecoder(
     mojo::PendingReceiver<mojom::VideoDecoder> receiver,
-    mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-        dst_video_decoder) {
+    mojo::PendingRemote<media::mojom::VideoDecoder> dst_video_decoder) {
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
   video_decoder_receivers_.Add(std::make_unique<MojoVideoDecoderService>(
                                    mojo_media_client_, &cdm_service_context_,
                                    std::move(dst_video_decoder)),
                                std::move(receiver));
 #else
-  NOTREACHED_IN_MIGRATION();
+  NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 }
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)

@@ -68,7 +68,7 @@ export class PrintPreviewScalingSettingsElement extends
       },
 
       /** Mirroring the enum so that it can be used from HTML bindings. */
-      ScalingValue: {
+      scalingTypeEnum_: {
         type: Object,
         value: ScalingType,
       },
@@ -84,13 +84,13 @@ export class PrintPreviewScalingSettingsElement extends
     ];
   }
 
-  disabled: boolean;
-  isPdf: boolean;
-  private currentValue_: string;
-  private customSelected_: boolean;
-  private dropdownDisabled_: boolean;
-  private inputValid_: boolean;
-  private settingKey_: keyof Settings;
+  declare disabled: boolean;
+  declare isPdf: boolean;
+  declare private currentValue_: string;
+  declare private customSelected_: boolean;
+  declare private dropdownDisabled_: boolean;
+  declare private inputValid_: boolean;
+  declare private settingKey_: keyof Settings;
 
   private lastValidScaling_: string = '';
 

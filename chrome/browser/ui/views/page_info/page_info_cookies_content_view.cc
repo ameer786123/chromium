@@ -17,6 +17,7 @@
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/strings/grit/privacy_sandbox_strings.h"
+#include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
@@ -24,13 +25,29 @@
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/box_layout_view.h"
+#include "ui/views/vector_icons.h"
 #include "ui/views/view_class_properties.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "ash/constants/ash_features.h"
+#include "chrome/browser/ash/floating_sso/floating_sso_service.h"
+#include "chrome/browser/ash/floating_sso/floating_sso_service_factory.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/views/accessibility/non_accessible_image_view.h"
+#endif
 
 namespace {
 
 using ::content_settings::CookieControlsUtil;
 using ::content_settings::TrackingProtectionFeature;
 using ::content_settings::TrackingProtectionFeatureType;
+
+const ui::ImageModel GetThirdPartyCookiesIcon(
+    bool third_party_cookies_enabled) {
+  return PageInfoViewFactory::GetImageModel(
+      third_party_cookies_enabled ? views::kEyeRefreshIcon
+                                  : views::kEyeCrossedRefreshIcon);
+}
 
 class ThirdPartyCookieLabelWrapper : public views::BoxLayoutView {
   METADATA_HEADER(ThirdPartyCookieLabelWrapper, views::BoxLayoutView)
@@ -90,6 +107,11 @@ PageInfoCookiesContentView::PageInfoCookiesContentView(PageInfo* presenter)
       views::BoxLayout::Orientation::kVertical));
 
   ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
+  const int bottom_margin =
+      layout_provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_MULTI);
+  // The last view is a RichHoverButton, which overrides the bottom
+  // dialog inset in favor of its own.
+  SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 0, bottom_margin, 0));
 
   // The top and bottom margins should be the same as for buttons shown below.
   const auto button_insets = layout_provider->GetInsetsMetric(
@@ -110,6 +132,10 @@ PageInfoCookiesContentView::PageInfoCookiesContentView(PageInfo* presenter)
                                         button_insets.width());
 
   AddThirdPartyCookiesContainer();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  MaybeAddSyncDisclaimer();
+#endif
 
   // We need the container to have a placeholder to put the buttons in,
   // to ensure the views order.
@@ -159,20 +185,17 @@ void PageInfoCookiesContentView::InitCookiesDialogButton() {
               this),
           PageInfoViewFactory::GetPermissionIcon(info),
           l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_DIALOG_BUTTON_TITLE),
-          /*secondary_text=*/std::u16string(),
-          l10n_util::GetStringUTF16(
-              IDS_PAGE_INFO_COOKIES_DIALOG_BUTTON_TOOLTIP),
           /*subtitle_text=*/u" ", PageInfoViewFactory::GetLaunchIcon()));
   cookies_dialog_button_->SetID(
       PageInfoViewFactory::VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIE_DIALOG);
   cookies_dialog_button_->SetProperty(views::kElementIdentifierKey,
                                       kCookieDialogButton);
-  cookies_dialog_button_->title()->SetTextStyle(
-      views::style::STYLE_BODY_3_MEDIUM);
-  cookies_dialog_button_->title()->SetEnabledColorId(kColorPageInfoForeground);
-  cookies_dialog_button_->subtitle()->SetTextStyle(views::style::STYLE_BODY_4);
-  cookies_dialog_button_->subtitle()->SetEnabledColorId(
-      kColorPageInfoSubtitleForeground);
+  cookies_dialog_button_->SetTooltipText(
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_DIALOG_BUTTON_TOOLTIP));
+  cookies_dialog_button_->SetTitleTextStyleAndColor(
+      views::style::STYLE_BODY_3_MEDIUM, kColorPageInfoForeground);
+  cookies_dialog_button_->SetSubtitleTextStyleAndColor(
+      views::style::STYLE_BODY_4, kColorPageInfoSubtitleForeground);
 }
 
 void PageInfoCookiesContentView::CookiesSettingsLinkClicked(
@@ -180,10 +203,15 @@ void PageInfoCookiesContentView::CookiesSettingsLinkClicked(
   presenter_->OpenCookiesSettingsView();
 }
 
+void PageInfoCookiesContentView::SyncSettingsLinkClicked(
+    const ui::Event& event) {
+  presenter_->OpenSyncSettingsView();
+}
+
 void PageInfoCookiesContentView::SetCookieInfo(
     const CookiesNewInfo& cookie_info) {
   SetDescriptionLabel(cookie_info.blocking_status, cookie_info.enforcement,
-                      cookie_info.is_otr);
+                      cookie_info.is_incognito);
 
   for (const auto& feature : cookie_info.features) {
     switch (feature.feature_type) {
@@ -203,10 +231,7 @@ void PageInfoCookiesContentView::SetCookieInfo(
       IDS_PAGE_INFO_COOKIES_ALLOWED_SITES_COUNT,
       cookie_info.allowed_sites_count));
 
-  bool is_rws_allowed = base::FeatureList::IsEnabled(
-                            privacy_sandbox::kPrivacySandboxFirstPartySetsUI) &&
-                        cookie_info.rws_info;
-  SetRwsCookiesInfo(cookie_info.rws_info, is_rws_allowed);
+  SetRwsCookiesInfo(cookie_info.rws_info);
 
   PreferredSizeChanged();
   if (!initialized_callback_.is_null()) {
@@ -263,26 +288,24 @@ void PageInfoCookiesContentView::SetThirdPartyCookiesToggle(
 void PageInfoCookiesContentView::SetDescriptionLabel(
     CookieBlocking3pcdStatus blocking_status,
     CookieControlsEnforcement enforcement,
-    bool is_otr) {
+    bool is_incognito) {
   // Text on cookies description label has an embedded link to cookies settings.
   std::u16string settings_text_for_link = l10n_util::GetStringUTF16(
-      blocking_status != CookieBlocking3pcdStatus::kNotIn3pcd
-          ? IDS_PAGE_INFO_TRACKING_PROTECTION_SETTINGS_LINK
-          : IDS_PAGE_INFO_COOKIES_SETTINGS_LINK);
+      IDS_PAGE_INFO_TRACKING_PROTECTION_SETTINGS_LINK);
 
   size_t offset;
   int description;
   if (blocking_status == CookieBlocking3pcdStatus::kNotIn3pcd) {
     description = IDS_PAGE_INFO_COOKIES_DESCRIPTION;
+    settings_text_for_link =
+        l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_SETTINGS_LINK);
   } else if (enforcement == CookieControlsEnforcement::kEnforcedByTpcdGrant) {
     description = IDS_PAGE_INFO_TRACKING_PROTECTION_SITE_GRANT_DESCRIPTION;
   } else if (blocking_status == CookieBlocking3pcdStatus::kLimited) {
     description = IDS_PAGE_INFO_TRACKING_PROTECTION_DESCRIPTION;
   } else {
-    // Since prefs are set to default in Guest, we won't ever end up in this
-    // branch, so `is_otr` means incognito here.
     description =
-        is_otr
+        is_incognito
             ? IDS_PAGE_INFO_TRACKING_PROTECTION_INCOGNITO_BLOCKED_COOKIES_DESCRIPTION
             : IDS_PAGE_INFO_TRACKING_PROTECTION_BLOCKED_COOKIES_DESCRIPTION;
   }
@@ -312,8 +335,7 @@ void PageInfoCookiesContentView::SetThirdPartyCookiesInfo(
                                           feature.status, blocking_status,
                                           expiration);
   SetThirdPartyCookiesToggle(protections_on, feature.status);
-  third_party_cookies_row_->SetIcon(
-      PageInfoViewFactory::GetThirdPartyCookiesIcon(!protections_on));
+  third_party_cookies_row_->SetIcon(GetThirdPartyCookiesIcon(!protections_on));
   third_party_cookies_row_->SetID(
       PageInfoViewFactory::VIEW_ID_PAGE_INFO_THIRD_PARTY_COOKIES_ROW);
 
@@ -348,21 +370,27 @@ void PageInfoCookiesContentView::UpdateBlockingThirdPartyCookiesToggle(
 void PageInfoCookiesContentView::OnToggleButtonPressed() {
   presenter_->OnThirdPartyToggleClicked(
       /*block_third_party_cookies=*/!third_party_cookies_toggle_->GetIsOn());
-  third_party_cookies_container_->NotifyAccessibilityEvent(
+  third_party_cookies_container_->NotifyAccessibilityEventDeprecated(
       ax::mojom::Event::kAlert, true);
 }
 
 void PageInfoCookiesContentView::SetRwsCookiesInfo(
-    std::optional<CookiesRwsInfo> rws_info,
-    bool is_rws_allowed) {
-  if (is_rws_allowed) {
+    std::optional<CookiesRwsInfo> rws_info) {
+  if (rws_info.has_value()) {
     InitRwsButton(rws_info->is_managed);
     rws_button_->SetVisible(true);
 
-    const std::u16string rws_button_title =
-        l10n_util::GetStringUTF16(IDS_PAGE_INFO_RWS_BUTTON_TITLE);
+    const std::u16string rws_button_title = l10n_util::GetStringUTF16(
+        base::FeatureList::IsEnabled(
+            privacy_sandbox::kPrivacySandboxRelatedWebsiteSetsUi)
+            ? IDS_PAGE_INFO_RWS_V2_BUTTON_TITLE
+            : IDS_PAGE_INFO_RWS_BUTTON_TITLE);
     const std::u16string rws_button_subtitle = l10n_util::GetStringFUTF16(
-        IDS_PAGE_INFO_RWS_BUTTON_SUBTITLE, rws_info->owner_name);
+        base::FeatureList::IsEnabled(
+            privacy_sandbox::kPrivacySandboxRelatedWebsiteSetsUi)
+            ? IDS_PAGE_INFO_RWS_V2_BUTTON_SUBTITLE
+            : IDS_PAGE_INFO_RWS_BUTTON_SUBTITLE,
+        rws_info->owner_name);
 
     // Update the text displaying the name of RWS owner.
     rws_button_->SetTitleText(rws_button_title);
@@ -373,7 +401,7 @@ void PageInfoCookiesContentView::SetRwsCookiesInfo(
   if (!rws_histogram_recorded_) {
     rws_histogram_recorded_ = true;
     base::UmaHistogramBoolean("Security.PageInfo.Cookies.HasFPSInfo",
-                              is_rws_allowed);
+                              rws_info.has_value());
   }
 }
 
@@ -389,19 +417,23 @@ void PageInfoCookiesContentView::InitRwsButton(bool is_managed) {
           base::BindRepeating(
               &PageInfoCookiesContentView::RwsSettingsButtonClicked,
               base::Unretained(this)),
-          PageInfoViewFactory::GetRwsIcon(),
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES), std::u16string(),
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_RWS_BUTTON_TOOLTIP),
+          PageInfoViewFactory::GetImageModel(vector_icons::kTenancyIcon),
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES),
           /*secondary_text=*/u" ", PageInfoViewFactory::GetLaunchIcon(),
-          is_managed ? std::optional<ui::ImageModel>(
-                           PageInfoViewFactory::GetEnforcedByPolicyIcon())
-                     : std::nullopt));
+          is_managed
+              ? PageInfoViewFactory::GetImageModel(vector_icons::kBusinessIcon)
+              : ui::ImageModel()));
   rws_button_->SetID(
       PageInfoViewFactory::VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_RWS_SETTINGS);
-  rws_button_->title()->SetTextStyle(views::style::STYLE_BODY_3_MEDIUM);
-  rws_button_->title()->SetEnabledColorId(kColorPageInfoForeground);
-  rws_button_->subtitle()->SetTextStyle(views::style::STYLE_BODY_4);
-  rws_button_->subtitle()->SetEnabledColorId(kColorPageInfoSubtitleForeground);
+  rws_button_->SetTooltipText(l10n_util::GetStringUTF16(
+      base::FeatureList::IsEnabled(
+          privacy_sandbox::kPrivacySandboxRelatedWebsiteSetsUi)
+          ? IDS_PAGE_INFO_RWS_V2_BUTTON_TOOLTIP
+          : IDS_PAGE_INFO_RWS_BUTTON_TOOLTIP));
+  rws_button_->SetTitleTextStyleAndColor(views::style::STYLE_BODY_3_MEDIUM,
+                                         kColorPageInfoForeground);
+  rws_button_->SetSubtitleTextStyleAndColor(views::style::STYLE_BODY_4,
+                                            kColorPageInfoSubtitleForeground);
 }
 
 void PageInfoCookiesContentView::RwsSettingsButtonClicked(ui::Event const&) {
@@ -424,7 +456,7 @@ void PageInfoCookiesContentView::AddThirdPartyCookiesContainer() {
                   .CopyAddressTo(&third_party_cookies_title_)
                   .SetTextContext(views::style::CONTEXT_DIALOG_BODY_TEXT)
                   .SetTextStyle(views::style::STYLE_BODY_3_MEDIUM)
-                  .SetEnabledColorId(kColorPageInfoForeground)
+                  .SetEnabledColor(kColorPageInfoForeground)
                   .SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT)
                   .Build()));
 
@@ -433,7 +465,7 @@ void PageInfoCookiesContentView::AddThirdPartyCookiesContainer() {
           std::make_unique<views::Label>());
   third_party_cookies_description_->SetTextContext(views::style::CONTEXT_LABEL);
   third_party_cookies_description_->SetTextStyle(views::style::STYLE_BODY_4);
-  third_party_cookies_description_->SetEnabledColorId(
+  third_party_cookies_description_->SetEnabledColor(
       kColorPageInfoSubtitleForeground);
   third_party_cookies_description_->SetHorizontalAlignment(
       gfx::HorizontalAlignment::ALIGN_LEFT);
@@ -444,17 +476,15 @@ void PageInfoCookiesContentView::AddThirdPartyCookiesContainer() {
   third_party_cookies_row_->SetTitle(l10n_util::GetStringUTF16(
       IDS_PAGE_INFO_COOKIES_THIRD_PARTY_COOKIES_LABEL));
   third_party_cookies_row_->SetIcon(
-      PageInfoViewFactory::GetBlockingThirdPartyCookiesIcon());
-  third_party_cookies_row_->title()->SetTextStyle(
-      views::style::STYLE_BODY_3_MEDIUM);
-  third_party_cookies_row_->title()->SetEnabledColorId(
-      kColorPageInfoForeground);
+      PageInfoViewFactory::GetImageModel(views::kEyeCrossedRefreshIcon));
+  third_party_cookies_row_->SetTitleTextStyleAndColor(
+      views::style::STYLE_BODY_3_MEDIUM, kColorPageInfoForeground);
 
   third_party_cookies_toggle_subtitle_ =
       third_party_cookies_row_->AddSecondaryLabel(std::u16string());
   third_party_cookies_toggle_subtitle_->SetTextStyle(
       views::style::STYLE_BODY_4);
-  third_party_cookies_toggle_subtitle_->SetEnabledColorId(
+  third_party_cookies_toggle_subtitle_->SetEnabledColor(
       kColorPageInfoSubtitleForeground);
 
   third_party_cookies_toggle_ = third_party_cookies_row_->AddControl(
@@ -464,6 +494,88 @@ void PageInfoCookiesContentView::AddThirdPartyCookiesContainer() {
   third_party_cookies_enforced_icon_ = third_party_cookies_row_->AddControl(
       std::make_unique<views::ImageView>());
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+void PageInfoCookiesContentView::MaybeAddSyncDisclaimer() {
+  if (!ash::features::IsFloatingSsoAllowed()) {
+    return;
+  }
+  Profile* profile = Profile::FromBrowserContext(
+      presenter_->web_contents()->GetBrowserContext());
+  // Floating SSO is an internal name for the feature which can sync cookies for
+  // ChromeOS enterprise users.
+  ash::floating_sso::FloatingSsoService* floating_sso_service =
+      ash::floating_sso::FloatingSsoServiceFactory::GetForProfile(profile);
+  if (!floating_sso_service) {
+    return;
+  }
+  if (!floating_sso_service->IsFloatingSsoEnabled()) {
+    return;
+  }
+  // Even when cookie sync is enabled, it isn't applied to every site.
+  if (!floating_sso_service->ShouldSyncCookiesForUrl(presenter_->site_url())) {
+    return;
+  }
+
+  const ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
+  AddChildView(
+      PageInfoViewFactory::CreateSeparator(layout_provider->GetDistanceMetric(
+          DISTANCE_HORIZONTAL_SEPARATOR_PADDING_PAGE_INFO_VIEW)));
+
+  // Cookie sync disclaimer consists of an enterprise icon and a text with a
+  // link to Chrome Sync settings.
+  cookies_sync_container_ =
+      AddChildView(std::make_unique<views::BoxLayoutView>());
+  cookies_sync_container_->SetOrientation(
+      views::BoxLayout::Orientation::kHorizontal);
+  const auto button_insets = layout_provider->GetInsetsMetric(
+      ChromeInsetsMetric::INSETS_PAGE_INFO_HOVER_BUTTON);
+  cookies_sync_container_->SetProperty(views::kMarginsKey, button_insets);
+  // Make the distance between the icon and the text be the same as in
+  // RichHoverButton. For consistency with children of
+  // `cookies_buttons_container_view_`.
+  const int child_spacing = layout_provider->GetDistanceMetric(
+      DISTANCE_RICH_HOVER_BUTTON_ICON_HORIZONTAL);
+  cookies_sync_container_->SetBetweenChildSpacing(child_spacing);
+
+  // Add the enterprise icon.
+  cookies_sync_icon_ = cookies_sync_container_->AddChildView(
+      std::make_unique<NonAccessibleImageView>());
+  const int icon_size = GetLayoutConstant(PAGE_INFO_ICON_SIZE);
+  cookies_sync_icon_->SetImageSize({icon_size, icon_size});
+  cookies_sync_icon_->SetImage(
+      PageInfoViewFactory::GetImageModel(vector_icons::kBusinessIcon));
+
+  // Add the description.
+  cookies_sync_description_ = cookies_sync_container_->AddChildView(
+      std::make_unique<views::StyledLabel>());
+  cookies_sync_description_->SetDefaultTextStyle(views::style::STYLE_BODY_3);
+  cookies_sync_description_->SetID(
+      PageInfoViewFactory::VIEW_ID_PAGE_INFO_COOKIES_SYNC);
+  cookies_sync_description_->SetDefaultEnabledColorId(kColorPageInfoForeground);
+  cookies_sync_description_->SizeToFit(PageInfoViewFactory::kMinBubbleWidth -
+                                       button_insets.width() - icon_size -
+                                       child_spacing);
+  cookies_sync_description_->SetHorizontalAlignment(
+      gfx::HorizontalAlignment::ALIGN_LEFT);
+
+  std::u16string sync_settings_text_for_link =
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_SYNC_SETTINGS_LINK);
+  size_t offset;
+  cookies_sync_description_->SetText(
+      l10n_util::GetStringFUTF16(IDS_PAGE_INFO_COOKIE_SYNC_DESCRIPTION,
+                                 sync_settings_text_for_link, &offset));
+
+  // Add the link to Chrome Sync settings.
+  gfx::Range link_range(offset, offset + sync_settings_text_for_link.length());
+  views::StyledLabel::RangeStyleInfo link_style =
+      views::StyledLabel::RangeStyleInfo::CreateForLink(base::BindRepeating(
+          &PageInfoCookiesContentView::SyncSettingsLinkClicked,
+          base::Unretained(this)));
+  link_style.text_style = views::style::STYLE_LINK_3;
+  cookies_sync_description_->AddStyleRange(link_range, link_style);
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 std::u16string PageInfoCookiesContentView::GetStatusLabel(
     content_settings::TrackingProtectionBlockingStatus blocking_status) {

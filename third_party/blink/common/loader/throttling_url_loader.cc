@@ -69,7 +69,7 @@ void CheckThrottleWillNotCauseCorsPreflight(
     if (!base::Contains(initial_headers, header.key) &&
         !network::cors::IsCorsSafelistedHeader(header.key, header.value)) {
       bool is_cors_exempt = cors_exempt_header_flat_set.count(header.key);
-      NOTREACHED_IN_MIGRATION()
+      NOTREACHED()
           << "Throttle added cors unsafe header " << header.key
           << (is_cors_exempt
                   ? " . Header is cors exempt so should have "
@@ -83,7 +83,7 @@ void CheckThrottleWillNotCauseCorsPreflight(
   for (auto& header : cors_exempt_headers.GetHeaderVector()) {
     if (cors_exempt_header_flat_set.count(header.key) == 0 &&
         !base::Contains(initial_cors_exempt_headers, header.key)) {
-      NOTREACHED_IN_MIGRATION()
+      NOTREACHED()
           << "Throttle added cors exempt header " << header.key
           << " but it wasn't configured as cors exempt by the browser. See "
              "content::StoragePartitionImpl::InitNetworkContext() and "
@@ -232,9 +232,8 @@ ThrottlingURLLoader::StartInfo::StartInfo(
       request_id(in_request_id),
       options(in_options),
       url_request(*in_url_request),
-      task_runner(std::move(in_task_runner)) {
-  cors_exempt_header_list = std::move(in_cors_exempt_header_list);
-}
+      task_runner(std::move(in_task_runner)),
+      cors_exempt_header_list(std::move(in_cors_exempt_header_list)) {}
 
 ThrottlingURLLoader::StartInfo::~StartInfo() = default;
 
@@ -328,20 +327,6 @@ void ThrottlingURLLoader::ResetForFollowRedirect(
       kFollowRedirectReason);
 }
 
-void ThrottlingURLLoader::RestartWithFactory(
-    scoped_refptr<network::SharedURLLoaderFactory> factory,
-    uint32_t url_loader_options) {
-  DCHECK_EQ(DEFERRED_NONE, deferred_stage_);
-  DCHECK(!loader_completed_);
-  url_loader_.reset();
-  client_receiver_.reset();
-  start_info_->url_loader_factory = std::move(factory);
-  start_info_->options = url_loader_options;
-  body_.reset();
-  cached_metadata_.reset();
-  StartNow();
-}
-
 void ThrottlingURLLoader::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
@@ -420,9 +405,10 @@ void ThrottlingURLLoader::Start(
     network::ResourceRequest* url_request,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     std::optional<std::vector<std::string>> cors_exempt_header_list) {
-  TRACE_EVENT_WITH_FLOW0("loading", "ThrottlingURLLoader::Start",
+  TRACE_EVENT_WITH_FLOW1("loading", "ThrottlingURLLoader::Start",
                          TRACE_ID_LOCAL(this),
-                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
+                         TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
+                         "request_id", request_id);
   DCHECK_EQ(DEFERRED_NONE, deferred_stage_);
   DCHECK(!loader_completed_);
 
@@ -464,9 +450,8 @@ void ThrottlingURLLoader::Start(
                "changing the URL.";
         if (original_url_.SchemeIsHTTPOrHTTPS() &&
             !url_request->url.SchemeIsHTTPOrHTTPS()) {
-          NOTREACHED_IN_MIGRATION()
-              << "A URLLoaderThrottle can't redirect from http(s) to "
-              << "a non http(s) scheme.";
+          NOTREACHED() << "A URLLoaderThrottle can't redirect from http(s) to "
+                       << "a non http(s) scheme.";
         } else {
           throttle_will_start_redirect_url_ = url_request->url;
         }
@@ -938,8 +923,7 @@ void ThrottlingURLLoader::Resume() {
       break;
     }
     case DEFERRED_NONE:
-      NOTREACHED_IN_MIGRATION();
-      break;
+      NOTREACHED();
   }
 }
 
@@ -968,18 +952,6 @@ void ThrottlingURLLoader::UpdateDeferredResponseHead(
   body_ = std::move(body);
 }
 
-void ThrottlingURLLoader::PauseReadingBodyFromNet() {
-  if (url_loader_) {
-    url_loader_->PauseReadingBodyFromNet();
-  }
-}
-
-void ThrottlingURLLoader::ResumeReadingBodyFromNet() {
-  if (url_loader_) {
-    url_loader_->ResumeReadingBodyFromNet();
-  }
-}
-
 void ThrottlingURLLoader::InterceptResponse(
     mojo::PendingRemote<network::mojom::URLLoader> new_loader,
     mojo::PendingReceiver<network::mojom::URLLoaderClient> new_client_receiver,
@@ -991,7 +963,6 @@ void ThrottlingURLLoader::InterceptResponse(
 
   body->swap(body_);
   if (original_loader) {
-    url_loader_->ResumeReadingBodyFromNet();
     *original_loader = url_loader_.Unbind();
   }
   url_loader_.Bind(std::move(new_loader));
@@ -1027,8 +998,7 @@ const char* ThrottlingURLLoader::GetStageNameForHistogram(DeferredStage stage) {
     case DEFERRED_RESPONSE:
       return "WillProcessResponse";
     case DEFERRED_NONE:
-      NOTREACHED_IN_MIGRATION();
-      return "";
+      NOTREACHED();
   }
 }
 

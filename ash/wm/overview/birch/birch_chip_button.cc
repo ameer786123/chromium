@@ -6,21 +6,16 @@
 
 #include "ash/birch/birch_item.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/shell.h"
-#include "ash/shell_delegate.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/style/icon_button.h"
 #include "ash/style/typography.h"
-#include "ash/system/mahi/resources/grit/mahi_resources.h"
-#include "ash/wm/overview/birch/birch_animation_utils.h"
 #include "ash/wm/overview/birch/birch_bar_constants.h"
 #include "ash/wm/overview/birch/birch_bar_controller.h"
 #include "ash/wm/overview/birch/birch_bar_util.h"
 #include "ash/wm/overview/birch/birch_chip_context_menu_model.h"
-#include "ash/wm/overview/birch/tab_app_selection_host.h"
+#include "ash/wm/overview/overview_controller.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/cxx23_to_underlying.h"
-#include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
@@ -46,7 +41,6 @@
 #include "ui/views/layout/layout_types.h"
 #include "ui/views/vector_icons.h"
 #include "ui/views/view_class_properties.h"
-#include "ui/views/view_utils.h"
 
 namespace ash {
 
@@ -84,10 +78,6 @@ constexpr TypographyToken kTitleFont = TypographyToken::kCrosButton1;
 constexpr ui::ColorId kTitleColorId = cros_tokens::kCrosSysOnSurface;
 constexpr TypographyToken kSubtitleFont = TypographyToken::kCrosAnnotation1;
 constexpr ui::ColorId kSubtitleColorId = cros_tokens::kCrosSysOnSurfaceVariant;
-
-//
-constexpr gfx::Size kLoadingAnimationSize = gfx::Size(100, 20);
-constexpr int kLoadingAnimationRadius = 10;
 
 BirchSuggestionType GetSuggestionTypeFromItemType(BirchItemType item_type) {
   switch (item_type) {
@@ -146,7 +136,7 @@ std::unique_ptr<views::ImageView> CreatePrimaryImageView(
       .SetBorder(views::CreateEmptyBorder(
           gfx::Insets((kPrimaryIconViewSize - icon_size) / 2)))
       .SetBackground(rounded_corners
-                         ? views::CreateThemedRoundedRectBackground(
+                         ? views::CreateRoundedRectBackground(
                                kIconBackgroundColorId, rounded_corners.value())
                          : nullptr)
       .Build();
@@ -198,9 +188,9 @@ std::unique_ptr<views::ImageView> CreateSecondaryImageView(
       .SetImageSize(gfx::Size(kSecondaryIconImageSize, kSecondaryIconImageSize))
       .SetPosition(kSecondaryIconOffset)
       .SetSize(gfx::Size(kSecondaryIconViewSize, kSecondaryIconViewSize))
-      .SetBackground(views::CreateThemedRoundedRectBackground(
+      .SetBackground(views::CreateRoundedRectBackground(
           kSecondaryIconBackgroundColorId, kSecondaryIconViewSize / 2))
-      .SetBorder(views::CreateThemedRoundedRectBorder(
+      .SetBorder(views::CreateRoundedRectBorder(
           1, kSecondaryIconViewSize / 2,
           cros_tokens::kCrosSysSystemOnBaseOpaque))
       .Build();
@@ -255,8 +245,8 @@ BirchChipButton::BirchChipButton()
               .SetPreferredSize(
                   gfx::Size(kParentIconViewSize, kParentIconViewSize))
               .SetProperty(views::kMarginsKey, kIconMargins),
+          // Titles container.
           views::Builder<views::BoxLayoutView>()
-              .CopyAddressTo(&titles_container_)
               .SetProperty(views::kFlexBehaviorKey,
                            views::FlexSpecification(
                                views::MinimumFlexSizeRule::kScaleToZero,
@@ -266,12 +256,12 @@ BirchChipButton::BirchChipButton()
               .AddChildren(views::Builder<views::Label>()
                                .CopyAddressTo(&title_)
                                .SetAutoColorReadabilityEnabled(false)
-                               .SetEnabledColorId(kTitleColorId)
+                               .SetEnabledColor(kTitleColorId)
                                .SetHorizontalAlignment(gfx::ALIGN_LEFT),
                            views::Builder<views::Label>()
                                .CopyAddressTo(&subtitle_)
                                .SetAutoColorReadabilityEnabled(false)
-                               .SetEnabledColorId(kSubtitleColorId)
+                               .SetEnabledColor(kSubtitleColorId)
                                .SetHorizontalAlignment(gfx::ALIGN_LEFT)))
       .BuildChildren();
 
@@ -286,28 +276,15 @@ BirchChipButton::BirchChipButton()
 
 BirchChipButton::~BirchChipButton() = default;
 
-void BirchChipButton::OnSelectionWidgetVisibilityChanged() {
-  CHECK(tab_app_selection_widget_);
-  UpdateRoundedCorners(tab_app_selection_widget_->IsVisible());
-
-  CHECK(addon_view_);
-  views::AsViewClass<IconButton>(addon_view_)
-      ->SetTooltipText(l10n_util::GetStringUTF16(
-          tab_app_selection_widget_->IsVisible()
-              ? IDS_ASH_BIRCH_CORAL_ADDON_SELECTOR_SHOWN
-              : IDS_ASH_BIRCH_CORAL_ADDON_SELECTOR_HIDDEN));
-}
-
 void BirchChipButton::Init(BirchItem* item) {
   item_ = item;
-
   title_->SetText(item_->title());
   subtitle_->SetText(item_->subtitle());
 
   SetCallback(
       base::BindRepeating(&BirchItem::PerformAction, base::Unretained(item_)));
 
-  const auto addon_type = item_->GetAddonType();
+  const BirchAddonType addon_type = item_->GetAddonType();
   // Add add-ons according to the add-on type.
   switch (addon_type) {
     case BirchAddonType::kButton: {
@@ -319,37 +296,9 @@ void BirchChipButton::Init(BirchItem* item) {
       SetAddon(std::move(button));
       break;
     }
-    case BirchAddonType::kCoralButton: {
-      // Coral item works different since it triggers a new overview view.
-      base::RepeatingClosure callback = base::BindRepeating(
-          &BirchChipButton::OnCoralAddonClicked, base::Unretained(this));
-      // Coral chip's addon button contains no text.
-      auto button = birch_bar_util::CreateCoralAddonButton(
-          std::move(callback), vector_icons::kCaretUpIcon,
-          item->GetAddonAccessibleName());
-      button->SetTooltipText(item->GetAddonAccessibleName());
-      SetAddon(std::move(button));
-      // Show loading animation for title if `item` has a dummy title.
-      if (item_->title() == u"CoralTitle") {
-        title_->SetVisible(false);
-
-        BuildTitleLoadingAnimation();
-        title_loading_animated_image_->Play(
-            birch_animation_utils::GetLottiePlaybackConfig(
-                *title_loading_animated_image_->animated_image()->skottie(),
-                // TODO(yulunwu) replace loading animation when available.
-                IDR_MAHI_LOADING_OUTLINES_ANIMATION));
-      } else {
-        // Show title and delete the loading animation.
-        title_->SetVisible(true);
-        if (!!title_loading_animated_image_) {
-          title_loading_animated_image_->Stop();
-          titles_container_->RemoveChildViewT(
-              std::exchange(title_loading_animated_image_, nullptr));
-        }
-      }
+    case BirchAddonType::kCoralButton:
+      // Coral chip addon is implemented in `CoralChipButton`.
       break;
-    }
     case BirchAddonType::kWeatherTempLabelC:
     case BirchAddonType::kWeatherTempLabelF:
       SetAddon(birch_bar_util::CreateWeatherTemperatureView(
@@ -421,16 +370,10 @@ void BirchChipButton::ExecuteCommand(int command_id, int event_flags) {
                                                   /*show=*/false);
       break;
     case base::to_underlying(CommandId::kCoralNewDesk):
-      item_->PerformAction();
-      break;
     case base::to_underlying(CommandId::kCoralSaveForLater):
-      // TODO(zxdan) implement behavior
       break;
     case base::to_underlying(CommandId::kProvideFeedback):
-      Shell::Get()->shell_delegate()->OpenFeedbackDialog(
-          ShellDelegate::FeedbackSource::kOverview,
-          /*description_template=*/std::string(),
-          /*category_tag=*/"Coral");
+      birch_bar_controller->ProvideFeedbackForCoral();
       break;
     default:
       birch_bar_controller->ExecuteMenuCommand(command_id, /*from_chip=*/true);
@@ -439,7 +382,7 @@ void BirchChipButton::ExecuteCommand(int command_id, int event_flags) {
 
 void BirchChipButton::SetAddon(std::unique_ptr<views::View> addon_view) {
   if (addon_view_) {
-    RemoveChildViewT(addon_view_);
+    RemoveChildViewT(std::exchange(addon_view_, nullptr));
   } else {
     flex_layout_->SetInteriorMargin(kInteriorMarginsWithAddon);
   }
@@ -456,42 +399,6 @@ void BirchChipButton::SetIconImage(PrimaryIconType primary_icon_type,
     icon_parent_view_->AddChildView(
         CreateSecondaryImageView(secondary_icon_type));
   }
-}
-
-void BirchChipButton::OnCoralAddonClicked() {
-  CHECK_EQ(BirchItemType::kCoral, item_->GetType());
-
-  if (!tab_app_selection_widget_) {
-    tab_app_selection_widget_ = std::make_unique<TabAppSelectionHost>(this);
-    tab_app_selection_widget_->Show();
-    return;
-  }
-
-  if (!tab_app_selection_widget_->IsVisible()) {
-    tab_app_selection_widget_->Show();
-  } else {
-    tab_app_selection_widget_->Hide();
-  }
-}
-
-void BirchChipButton::BuildTitleLoadingAnimation() {
-  // Build `title_loading_animated_image_` and insert into the
-  // front of `titles_container_`.
-  // TODO(yulunwu) update animation file when available.
-  std::unique_ptr<views::AnimatedImageView> title_loading_animated_image =
-      views::Builder<views::AnimatedImageView>()
-          .SetAnimatedImage(birch_animation_utils::GetLottieAnimationData(
-              IDR_MAHI_LOADING_OUTLINES_ANIMATION))
-          .SetImageSize(kLoadingAnimationSize)
-          .SetVisible(true)
-          .Build();
-  // Setup rounder corners for `title_loading_animated_image_`.
-  title_loading_animated_image->SetPaintToLayer();
-  title_loading_animated_image->layer()->SetRoundedCornerRadius(
-      gfx::RoundedCornersF(kLoadingAnimationRadius));
-  title_loading_animated_image_ =
-      titles_container_->AddChildViewAt(std::move(title_loading_animated_image),
-                                        /*index=*/0);
 }
 
 BEGIN_METADATA(BirchChipButton)

@@ -4,20 +4,20 @@
 
 #include "ui/accessibility/platform/ax_platform_node_base.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <limits>
 #include <set>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
 #include "base/numerics/checked_math.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_allocator_dump.h"
@@ -25,6 +25,7 @@
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "build/build_config.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom-shared-internal.h"
@@ -80,9 +81,11 @@ bool FindDescendantRoleWithMaxDepth(const AXPlatformNodeBase* node,
 
 // Map from each AXPlatformNode's unique id to its instance.
 using UniqueIdMap =
-    std::unordered_map<int32_t, raw_ptr<AXPlatformNode, CtnExperimental>>;
-base::LazyInstance<UniqueIdMap>::Leaky g_unique_id_map =
-    LAZY_INSTANCE_INITIALIZER;
+    absl::flat_hash_map<int32_t, raw_ptr<AXPlatformNode, CtnExperimental>>;
+UniqueIdMap& GetUniqueIdMap() {
+  static base::NoDestructor<UniqueIdMap> map;
+  return *map;
+}
 
 // Adds process-wide statistics about accessibility objects to traces.
 class AXPlatformNodeMemoryDumpProvider
@@ -130,31 +133,34 @@ AXPlatformNodeMemoryDumpProvider::AXPlatformNodeMemoryDumpProvider(
 }  // namespace
 
 const char16_t AXPlatformNodeBase::kEmbeddedCharacter = u'\xfffc';
+const std::string AXPlatformNodeBase::kAriaActionsPrefix = "custom";
 
 // TODO(fxbug.dev/91030): Remove the !BUILDFLAG(IS_FUCHSIA) condition once
 // fuchsia has native accessibility.
-#if !BUILDFLAG_INTERNAL_HAS_NATIVE_ACCESSIBILITY() && !BUILDFLAG(IS_FUCHSIA)
+#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY) && !BUILDFLAG(IS_FUCHSIA)
 // static
-AXPlatformNode* AXPlatformNode::Create(AXPlatformNodeDelegate* delegate) {
+AXPlatformNode::Pointer AXPlatformNode::Create(
+    AXPlatformNodeDelegate& delegate) {
   AXPlatformNodeBase* node = new AXPlatformNodeBase();
   node->Init(delegate);
-  return node;
+  return Pointer(node);
 }
 #endif
 
 // static
 AXPlatformNode* AXPlatformNodeBase::GetFromUniqueId(int32_t unique_id) {
-  UniqueIdMap* unique_ids = g_unique_id_map.Pointer();
-  auto iter = unique_ids->find(unique_id);
-  if (iter != unique_ids->end())
+  UniqueIdMap& unique_ids = GetUniqueIdMap();
+  auto iter = unique_ids.find(unique_id);
+  if (iter != unique_ids.end()) {
     return iter->second;
+  }
 
   return nullptr;
 }
 
 // static
 size_t AXPlatformNodeBase::GetInstanceCountForTesting() {
-  return g_unique_id_map.Get().size();
+  return GetUniqueIdMap().size();
 }
 
 // static
@@ -169,57 +175,64 @@ AXPlatformNodeBase::AXPlatformNodeBase() = default;
 
 AXPlatformNodeBase::~AXPlatformNodeBase() = default;
 
-void AXPlatformNodeBase::Init(AXPlatformNodeDelegate* delegate) {
-  delegate_ = delegate;
+void AXPlatformNodeBase::Init(AXPlatformNodeDelegate& delegate) {
+  delegate_ = &delegate;
 
   // This must be called after assigning our delegate.
-  g_unique_id_map.Get()[GetUniqueId()] = this;
+  GetUniqueIdMap()[GetUniqueId()] = this;
 
   static base::NoDestructor<AXPlatformNodeMemoryDumpProvider> dump_provider(
-      g_unique_id_map.Get());
+      GetUniqueIdMap());
 }
 
 const AXNodeData& AXPlatformNodeBase::GetData() const {
   static const base::NoDestructor<AXNodeData> empty_data;
-  if (delegate_)
+  if (delegate_) {
     return delegate_->GetData();
+  }
   return *empty_data;
 }
 
 gfx::NativeViewAccessible AXPlatformNodeBase::GetFocus() const {
-  if (delegate_)
+  if (delegate_) {
     return delegate_->GetFocus();
-  return nullptr;
+  }
+  return gfx::NativeViewAccessible();
 }
 
 gfx::NativeViewAccessible AXPlatformNodeBase::GetParent() const {
-  if (delegate_)
+  if (delegate_) {
     return delegate_->GetParent();
-  return nullptr;
+  }
+  return gfx::NativeViewAccessible();
 }
 
 AXPlatformNodeBase* AXPlatformNodeBase::GetPlatformParent() const {
-  if (delegate_)
+  if (delegate_) {
     return FromNativeViewAccessible(delegate_->GetParent());
+  }
   return nullptr;
 }
 
 AXPlatformNodeBase* AXPlatformNodeBase::GetPlatformTextFieldAncestor() const {
-  if (delegate_)
+  if (delegate_) {
     return FromNativeViewAccessible(delegate_->GetTextFieldAncestor());
+  }
   return nullptr;
 }
 
 size_t AXPlatformNodeBase::GetChildCount() const {
-  if (delegate_)
+  if (delegate_) {
     return delegate_->GetChildCount();
+  }
   return 0;
 }
 
 gfx::NativeViewAccessible AXPlatformNodeBase::ChildAtIndex(size_t index) const {
-  if (delegate_)
+  if (delegate_) {
     return delegate_->ChildAtIndex(index);
-  return nullptr;
+  }
+  return gfx::NativeViewAccessible();
 }
 
 std::string AXPlatformNodeBase::GetName() const {
@@ -315,8 +328,13 @@ base::stack<gfx::NativeViewAccessible> AXPlatformNodeBase::GetAncestors() {
   base::stack<gfx::NativeViewAccessible> ancestors;
   gfx::NativeViewAccessible current_node = GetNativeViewAccessible();
   while (current_node) {
+    AXPlatformNodeBase* current_platform_node =
+        FromNativeViewAccessible(current_node);
+    if (!current_platform_node) {
+      break;
+    }
     ancestors.push(current_node);
-    current_node = FromNativeViewAccessible(current_node)->GetParent();
+    current_node = current_platform_node->GetParent();
   }
 
   return ancestors;
@@ -330,7 +348,7 @@ std::optional<int> AXPlatformNodeBase::CompareTo(AXPlatformNodeBase& other) {
   //  - |this| is an ancestor of |other|.
   //  - |this|'s first uncommon ancestor comes before |other|'s first uncommon
   //    ancestor. The first uncommon ancestor is defined as the immediate child
-  //    of the lowest common anestor of the two nodes. The first uncommon
+  //    of the lowest common ancestor of the two nodes. The first uncommon
   //    ancestor of |this| and |other| share the same parent (i.e. lowest common
   //    ancestor), so we can just compare the first uncommon ancestors' child
   //    indices to determine their relative positions.
@@ -343,14 +361,15 @@ std::optional<int> AXPlatformNodeBase::CompareTo(AXPlatformNodeBase& other) {
   // traverse from the root, the node that we visited earlier is always going to
   // be before (logically less) the node we visit later.
 
-  if (this == &other)
+  if (this == &other) {
     return std::optional<int>(0);
+  }
 
   // Compute the ancestor stacks of both positions and traverse them from the
   // top most ancestor down, so we can discover the first uncommon ancestors.
   // The first uncommon ancestor is the immediate child of the lowest common
   // ancestor.
-  gfx::NativeViewAccessible common_ancestor = nullptr;
+  gfx::NativeViewAccessible common_ancestor = gfx::NativeViewAccessible();
   base::stack<gfx::NativeViewAccessible> our_ancestors = GetAncestors();
   base::stack<gfx::NativeViewAccessible> other_ancestors = other.GetAncestors();
 
@@ -365,16 +384,19 @@ std::optional<int> AXPlatformNodeBase::CompareTo(AXPlatformNodeBase& other) {
   }
 
   // Nodes do not have a common ancestor, they are not comparable.
-  if (!common_ancestor)
+  if (!common_ancestor) {
     return std::nullopt;
+  }
 
   // Compute the logical order when the common ancestor is |this| or |other|.
   auto* common_ancestor_platform_node =
       FromNativeViewAccessible(common_ancestor);
-  if (common_ancestor_platform_node == this)
+  if (common_ancestor_platform_node == this) {
     return std::optional<int>(-1);
-  if (common_ancestor_platform_node == &other)
+  }
+  if (common_ancestor_platform_node == &other) {
     return std::optional<int>(1);
+  }
 
   // Compute the logical order of |this| and |other| by using their first
   // uncommon ancestors.
@@ -384,8 +406,9 @@ std::optional<int> AXPlatformNodeBase::CompareTo(AXPlatformNodeBase& other) {
     std::optional<int> other_index_in_parent =
         FromNativeViewAccessible(other_ancestors.top())->GetIndexInParent();
 
-    if (!this_index_in_parent || !other_index_in_parent)
+    if (!this_index_in_parent || !other_index_in_parent) {
       return std::nullopt;
+    }
 
     int this_uncommon_ancestor_index = this_index_in_parent.value();
     int other_uncommon_ancestor_index = other_index_in_parent.value();
@@ -401,8 +424,9 @@ std::optional<int> AXPlatformNodeBase::CompareTo(AXPlatformNodeBase& other) {
 }
 
 AXNodeID AXPlatformNodeBase::GetNodeId() const {
-  if (!delegate_)
+  if (!delegate_) {
     return kInvalidAXNodeID;
+  }
 
   return delegate_->GetData().id;
 }
@@ -448,8 +472,7 @@ AXPlatformNodeBase* AXPlatformNodeBase::GetActiveDescendant() const {
 // AXPlatformNode overrides.
 
 void AXPlatformNodeBase::Destroy() {
-  g_unique_id_map.Get().erase(GetUniqueId());
-  AXPlatformNode::Destroy();
+  GetUniqueIdMap().erase(GetUniqueId());
   delegate_ = nullptr;
   Dispose();
 }
@@ -459,7 +482,7 @@ void AXPlatformNodeBase::Dispose() {
 }
 
 gfx::NativeViewAccessible AXPlatformNodeBase::GetNativeViewAccessible() {
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 void AXPlatformNodeBase::NotifyAccessibilityEvent(ax::mojom::Event event_type) {
@@ -481,6 +504,10 @@ void AXPlatformNodeBase::NotifyAccessibilityEvent(ax::mojom::Event event_type) {
 void AXPlatformNodeBase::AnnounceTextAs(const std::u16string& text,
                                         AnnouncementType announcement_type) {}
 #endif
+
+std::string AXPlatformNodeBase::GetRootURL() const {
+  return delegate_ ? delegate_->GetRootURL() : std::string();
+}
 
 AXPlatformNodeDelegate* AXPlatformNodeBase::GetDelegate() const {
   return delegate_;
@@ -533,20 +560,6 @@ AXPlatformNodeBase* AXPlatformNodeBase::GetLastChild() const {
   if (!delegate_)
     return nullptr;
   return FromNativeViewAccessible(delegate_->GetLastChild());
-}
-
-bool AXPlatformNodeBase::IsDescendant(AXPlatformNodeBase* node) {
-  if (!delegate_)
-    return false;
-  if (!node)
-    return false;
-  if (node == this)
-    return true;
-  gfx::NativeViewAccessible native_parent = node->GetParent();
-  if (!native_parent)
-    return false;
-  AXPlatformNodeBase* parent = FromNativeViewAccessible(native_parent);
-  return IsDescendant(parent);
 }
 
 ax::mojom::Role AXPlatformNodeBase::GetRole() const {
@@ -926,6 +939,13 @@ std::u16string AXPlatformNodeBase::GetTextContentUTF16() const {
   return delegate_->GetTextContentUTF16();
 }
 
+int AXPlatformNodeBase::GetTextContentLengthUTF16() const {
+  if (!delegate_) {
+    return 0;
+  }
+  return delegate_->GetTextContentLengthUTF16();
+}
+
 std::u16string
 AXPlatformNodeBase::GetRoleDescriptionFromImageAnnotationStatusOrFromAttribute()
     const {
@@ -1178,6 +1198,10 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
     AddAttributeToList("autocomplete", "list", attributes);
   }
 
+  if (HasState(ax::mojom::State::kHasActions)) {
+    AddAttributeToList("has-actions", "true", attributes);
+  }
+
   std::u16string role_description =
       GetRoleDescriptionFromImageAnnotationStatusOrFromAttribute();
   if (!role_description.empty() ||
@@ -1222,11 +1246,13 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
         from = "table-caption";
         break;
       case ax::mojom::DescriptionFrom::kTitle:
-      case ax::mojom::DescriptionFrom::kPopoverAttribute:
+      case ax::mojom::DescriptionFrom::kPopoverTarget:
+      case ax::mojom::DescriptionFrom::kInterestTarget:
         // The following types of markup are mapped to "tooltip":
         // * The title attribute.
         // * A popover=something related via the `popovertarget` attribute.
         // * A tooltip related via aria-describedby (see kRelatedElement above).
+        // * An interesttarget pointing to plain content.
         from = "tooltip";
         break;
       case ax::mojom::DescriptionFrom::kNone:
@@ -1313,7 +1339,8 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
       from = "related-element";
       DCHECK(!GetName().empty());
       break;
-    case ax::mojom::NameFrom::kPopoverAttribute:
+    case ax::mojom::NameFrom::kPopoverTarget:
+    case ax::mojom::NameFrom::kInterestTarget:
     case ax::mojom::NameFrom::kTitle:
       from = "tooltip";
       DCHECK(!GetName().empty());
@@ -1363,6 +1390,10 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
     }
   } else if (HasState(ax::mojom::State::kAutofillAvailable)) {
     AddAttributeToList("haspopup", "menu", attributes);
+  }
+
+  if (HasState(ax::mojom::State::kHasInterestTarget)) {
+    AddAttributeToList("has-interest-target", "true", attributes);
   }
 
   // Expose the aria-ispopup attribute.
@@ -1513,7 +1544,7 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
   // aria-dropeffect is deprecated in WAI-ARIA 1.1.
   if (delegate_->HasIntAttribute(
           ax::mojom::IntAttribute::kDropeffectDeprecated)) {
-    NOTREACHED_IN_MIGRATION();
+    NOTREACHED();
   }
 
   // Expose class attribute.
@@ -1530,6 +1561,12 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
   std::string id;
   if (delegate_->GetStringAttribute(ax::mojom::StringAttribute::kHtmlId, &id)) {
     AddAttributeToList("id", id, attributes);
+  }
+
+  std::string input_name;
+  if (delegate_->GetStringAttribute(ax::mojom::StringAttribute::kHtmlInputName,
+                                    &input_name)) {
+    AddAttributeToList("html-input-name", input_name, attributes);
   }
 
   std::string src;
@@ -1592,8 +1629,14 @@ void AXPlatformNodeBase::ComputeAttributes(PlatformAttributeList* attributes) {
       case ax::mojom::DetailsFrom::kCssAnchor:
         AddAttributeToList("details-from", "css-anchor", attributes);
         break;
-      case ax::mojom::DetailsFrom::kPopoverAttribute:
-        AddAttributeToList("details-from", "popover-attribute", attributes);
+      case ax::mojom::DetailsFrom::kPopoverTarget:
+        AddAttributeToList("details-from", "popover-target", attributes);
+        break;
+      case ax::mojom::DetailsFrom::kInterestTarget:
+        AddAttributeToList("details-from", "interest-target", attributes);
+        break;
+      case ax::mojom::DetailsFrom::kCommandfor:
+        AddAttributeToList("details-from", "command-for", attributes);
         break;
     }
   }
@@ -1637,7 +1680,7 @@ void AXPlatformNodeBase::AddAttributeToList(
   DCHECK(attributes);
   bool value;
   if (GetBoolAttribute(attribute, &value)) {
-    AddAttributeToList(name, value ? "true" : "false", attributes);
+    AddAttributeToList(name, base::ToString(value), attributes);
   }
 }
 
@@ -1787,6 +1830,8 @@ void AXPlatformNodeBase::SanitizeStringAttribute(const std::string& input,
   base::ReplaceChars(*output, ",", "\\,", output);
   base::ReplaceChars(*output, "=", "\\=", output);
   base::ReplaceChars(*output, ";", "\\;", output);
+  base::ReplaceChars(*output, "\r", " ", output);
+  base::ReplaceChars(*output, "\n", " ", output);
 }
 
 int32_t AXPlatformNodeBase::GetHyperlinkIndexFromChild(
@@ -1795,7 +1840,7 @@ int32_t AXPlatformNodeBase::GetHyperlinkIndexFromChild(
     return -1;
 
   auto iterator =
-      base::ranges::find(hypertext_.hyperlinks, child->GetUniqueId());
+      std::ranges::find(hypertext_.hyperlinks, child->GetUniqueId());
   if (iterator == hypertext_.hyperlinks.end())
     return -1;
 
@@ -2010,11 +2055,13 @@ int AXPlatformNodeBase::GetHypertextOffsetFromEndpoint(
 AXPlatformNodeBase::AXPosition AXPlatformNodeBase::HypertextOffsetToEndpoint(
     int hypertext_offset) const {
   DCHECK_GE(hypertext_offset, 0);
-  DCHECK_LT(hypertext_offset, static_cast<int>(GetHypertext().size()));
+  // The offset can be equal to the length when it is past the end.
+  DCHECK_LE(hypertext_offset, static_cast<int>(GetHypertext().size()));
 
   if (IsLeaf()) {
-    if (IsText())
+    if (IsText()) {
       return GetDelegate()->CreateTextPositionAt(hypertext_offset);
+    }
     return GetDelegate()->CreatePositionAt(hypertext_offset);
   }
 
@@ -2028,8 +2075,8 @@ AXPlatformNodeBase::AXPosition AXPlatformNodeBase::HypertextOffsetToEndpoint(
       child_text_len =
           base::checked_cast<int>(child_iter->GetHypertext().size());
 
-    if (current_hypertext_offset < child_text_len) {
-      int endpoint_offset = child_text_len - current_hypertext_offset;
+    if (current_hypertext_offset <= child_text_len) {
+      int endpoint_offset = current_hypertext_offset;
       if (child_iter->IsText())
         return child_iter->GetDelegate()->CreateTextPositionAt(endpoint_offset);
       return child_iter->GetDelegate()->CreatePositionAt(endpoint_offset);
@@ -2089,10 +2136,25 @@ void AXPlatformNodeBase::GetSelectionOffsets(const AXSelection* selection,
   GetSelectionOffsetsFromTree(selection, selection_start, selection_end);
 }
 
+int AXPlatformNodeBase::GetCaretOffset() {
+  if (IsAtomicTextField()) {
+    return GetIntAttribute(ax::mojom::IntAttribute::kTextSelEnd);
+  }
+
+  // If the unignored selection has not been computed yet, compute it now.
+  AXSelection unignored_selection = delegate_->GetUnignoredSelection();
+  int selection_start, selection_end;
+  GetSelectionOffsetsFromTree(&unignored_selection, &selection_start,
+                              &selection_end, /*caret_only*/ true);
+
+  return selection_end;
+}
+
 void AXPlatformNodeBase::GetSelectionOffsetsFromTree(
     const AXSelection* selection,
     int* selection_start,
-    int* selection_end) {
+    int* selection_end,
+    bool caret_only) {
   DCHECK(selection_start && selection_end);
 
   *selection_start = GetSelectionAnchor(selection);
@@ -2115,6 +2177,13 @@ void AXPlatformNodeBase::GetSelectionOffsetsFromTree(
   if (*selection_start == *selection_end && !HasVisibleCaretOrSelection()) {
     *selection_start = -1;
     *selection_end = -1;
+    return;
+  }
+
+  if (caret_only) {
+    // Just return the offsets, skipping the below computation that returns
+    // and end offset after an embedded object character when the selection
+    // ends wihin the descendant subtree.
     return;
   }
 
@@ -2366,7 +2435,7 @@ int AXPlatformNodeBase::NearestTextIndexToPoint(gfx::Point point) {
                                 ->GetInnerTextRangeBoundsRect(
                                     0, 1, coordinate_system, clipping_behavior)
                                 .ManhattanDistanceToPoint(point);
-  for (int i = 1, text_length = GetTextContentUTF16().length(); i < text_length;
+  for (int i = 1, text_length = GetTextContentLengthUTF16(); i < text_length;
        ++i) {
     float current_distance =
         GetDelegate()

@@ -109,8 +109,8 @@ testing::AssertionResult SharedModuleServiceUnitTest::InstallExtension(
 
   // Notify the service that the extension is installed. This adds it to the
   // registry, notifies interested parties, etc.
-  service()->OnExtensionInstalled(
-      extension, syncer::StringOrdinal(), kInstallFlagInstallImmediately);
+  registrar()->OnExtensionInstalled(extension, syncer::StringOrdinal(),
+                                    kInstallFlagInstallImmediately);
 
   // Verify that the extension is now installed.
   if (!registry()->enabled_extensions().Contains(extension->id())) {
@@ -128,14 +128,14 @@ TEST_F(SharedModuleServiceUnitTest, AddDependentSharedModules) {
       std::vector<std::string>(1, import_id), extension_id, "1.0");
 
   PendingExtensionManager* pending_extension_manager =
-      service()->pending_extension_manager();
+      PendingExtensionManager::Get(profile());
 
   // Verify that we don't currently want to install the imported module.
   EXPECT_FALSE(pending_extension_manager->IsIdPending(import_id));
 
   // Try to satisfy imports for the extension. This should queue the imported
   // module's installation.
-  service()->shared_module_service()->SatisfyImports(extension.get());
+  SharedModuleService::Get(profile())->SatisfyImports(extension.get());
   EXPECT_TRUE(pending_extension_manager->IsIdPending(import_id));
 }
 

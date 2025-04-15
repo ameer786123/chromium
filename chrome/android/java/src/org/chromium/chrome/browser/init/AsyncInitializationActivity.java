@@ -93,7 +93,6 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     private Bundle mSavedInstanceState;
     private int mCurrentOrientation;
     private boolean mDestroyed;
-    private long mLastUserInteractionTime;
     private boolean mIsTablet;
     private boolean mHadWarmStart;
     private boolean mIsWarmOnResume;
@@ -174,6 +173,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     protected void performPreInflationStartup() {
         mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(this);
         mHadWarmStart = LibraryLoader.getInstance().isInitialized();
+        SimpleStartupForegroundSessionDetector.onTransitionToForeground();
         // TODO(crbug.com/40621278): Dispatch in #preInflationStartup instead so that
         // subclass's #performPreInflationStartup has executed before observers are notified.
         mLifecycleDispatcher.dispatchPreInflationStartup();
@@ -247,6 +247,8 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
             TraceEvent.begin("maybePreconnect");
             Intent intent = getIntent();
             if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+            // TODO(https://crbug.com/372710946): Clean this up if CCTEarlyNav doesn't ship.
+            if (intent.getBooleanExtra(IntentHandler.EXTRA_SKIP_PRECONNECT, false)) return;
             String url = IntentHandler.getUrlFromIntent(intent);
             if (url == null) return;
             // Blocking pre-connect for all off-the-record profiles.
@@ -549,11 +551,15 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     public void onResume() {
         super.onResume();
 
+        if (!mFirstResumePending) {
+            // The foreground transition for the first onResume() is handled in
+            // #performPreInflationStartup().
+            SimpleStartupForegroundSessionDetector.onTransitionToForeground();
+        }
         // Start by setting the launch as cold or warm. It will be used in some resume handlers.
         mIsWarmOnResume = !mFirstResumePending || hadWarmStart();
         mFirstResumePending = false;
 
-        SimpleStartupForegroundSessionDetector.onTransitionToForeground();
         mNativeInitializationController.onResume();
     }
 
@@ -808,23 +814,12 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         return mIsWarmOnResume;
     }
 
-    @Override
-    public void onUserInteraction() {
-        mLastUserInteractionTime = SystemClock.elapsedRealtime();
-    }
-
     /**
-     * @return timestamp when the last user interaction was made.
-     */
-    public long getLastUserInteractionTime() {
-        return mLastUserInteractionTime;
-    }
-
-    /**
-     * Called when the orientation of the device changes.  The orientation is checked/detected on
+     * Called when the orientation of the device changes. The orientation is checked/detected on
      * root view layouts.
-     * @param orientation One of {@link Configuration#ORIENTATION_PORTRAIT} or
-     *                    {@link Configuration#ORIENTATION_LANDSCAPE}.
+     *
+     * @param orientation One of {@link Configuration#ORIENTATION_PORTRAIT} or {@link
+     *     Configuration#ORIENTATION_LANDSCAPE}.
      */
     protected void onOrientationChange(int orientation) {}
 

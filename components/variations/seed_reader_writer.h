@@ -23,6 +23,41 @@ class PrefService;
 
 namespace variations {
 
+class EntropyProviders;
+
+// Trial and group names for the seed file experiment.
+const char kSeedFileTrial[] = "SeedFileTrial";
+const char kDefaultGroup[] = "Default";
+const char kControlGroup[] = "Control_V7";
+const char kSeedFilesGroup[] = "SeedFiles_V7";
+
+// Represents a seed and its storage format where clients using
+// seed-file-based seeds store compressed data and those using
+// local-state-based seeds store compressed, base64 encoded data.
+struct StoredSeed {
+  enum class StorageFormat { kCompressed, kCompressedAndBase64Encoded };
+
+  StorageFormat storage_format;
+  std::string_view data;
+};
+
+// TODO(crbug.com/380465790): Represents the seed and other related info.
+// This info will be stored together in the SeedFile. Once all the seed-related
+// info is stored in the struct, change it to a proto and use it to serialize
+// and deserialize the data.
+struct SeedInfo {
+  std::string data;
+};
+
+struct SeedFieldsPrefs {
+  const char* seed;
+  const char* signature;
+};
+
+COMPONENT_EXPORT(VARIATIONS)
+extern const SeedFieldsPrefs kRegularSeedFieldsPrefs;
+COMPONENT_EXPORT(VARIATIONS) extern const SeedFieldsPrefs kSafeSeedFieldsPrefs;
+
 // Handles reading and writing seeds to disk.
 class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
     : public base::ImportantFileWriter::BackgroundDataSerializer {
@@ -32,17 +67,20 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   // Android Webview intentionally uses an empty path as it uses only local
   // state to store seeds.
   // `seed_filename` is the base name of a file in which seed data is stored.
-  // `channel` describes the browser's release channel.
-  // `seed_pref` is a variations pref (kVariationsCompressedSeed or
-  // kVariationsSafeCompressed) denoting the type of seed handled by this
-  // SeedReaderWriter.
-  // `file_task_runner` handles IO-related tasks. Must not be
-  // null.
+  // `fields_prefs` is a variations pref struct (kRegularSeedFieldsPrefs or
+  // kSafeSeedFieldsPrefs) denoting the prefs for the fields for the type of
+  // seed being stored.
+  // `channel` describes the release channel of the browser.
+  // `entropy_providers` is used to provide entropy when setting up the seed
+  // file field trial. If null, the client will not participate in the
+  // experiment.
+  // `file_task_runner` handles IO-related tasks. Must not be null.
   SeedReaderWriter(PrefService* local_state,
                    const base::FilePath& seed_file_dir,
-                   base::FilePath::StringPieceType seed_filename,
-                   const version_info::Channel channel,
-                   std::string_view seed_pref,
+                   base::FilePath::StringViewType seed_filename,
+                   const SeedFieldsPrefs& fields_prefs,
+                   version_info::Channel channel,
+                   const EntropyProviders* entropy_providers,
                    scoped_refptr<base::SequencedTaskRunner> file_task_runner =
                        base::ThreadPool::CreateSequencedTaskRunner(
                            {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
@@ -54,13 +92,16 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   ~SeedReaderWriter() override;
 
   // Schedules a write of `base64_seed_data` to local state. For some clients
-  // (see ShouldWriteToNewSeedStorage()), another write using
-  // `compressed_seed_data` is scheduled to a seed file.
-  void StoreValidatedSeed(const std::string& compressed_seed_data,
-                          const std::string& base64_seed_data);
+  // (see ShouldUseSeedFile()), also schedules a write of `compressed_seed_data`
+  // to a seed file.
+  void StoreValidatedSeed(std::string_view compressed_seed_data,
+                          std::string_view base64_seed_data);
 
   // Clears seed data by overwriting it with an empty string.
   void ClearSeed();
+
+  // Returns stored seed data.
+  StoredSeed GetSeedData() const;
 
   // Overrides the timer used for scheduling writes with `timer_override`.
   void SetTimerForTesting(base::OneShotTimer* timer_override);
@@ -72,17 +113,27 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   GetSerializedDataProducerForBackgroundSequence() override;
 
   // Schedules `seed_data` to be written using `seed_writer_`.
-  void ScheduleSeedFileWrite(const std::string& seed_data);
+  void ScheduleSeedFileWrite(std::string_view seed_data);
+
+  // Schedules the deletion of a seed file.
+  void DeleteSeedFile();
+
+  // Reads seed data from a seed file, and if the read is successful,
+  // populates `seed_info_`. May also schedule a seed file write for some
+  // clients on the first run and for clients that are in the seed file
+  // experiment's treatment group for the first time. If `seed_pref_` is present
+  // in `local state_`, additionally clears it.
+  void ReadSeedFile();
+
+  // Returns true if a seed file should be used.
+  bool ShouldUseSeedFile() const;
 
   // Pref service used to persist seeds.
   raw_ptr<PrefService> local_state_;
 
-  // Channel the client is apart of.
-  const version_info::Channel channel_;
-
-  // A variations pref (kVariationsCompressedSeed or kVariationsSafeCompressed)
-  // denoting the type of seed handled by this SeedReaderWriter.
-  std::string_view seed_pref_;
+  // Prefs used to store the seed and related info in local state.
+  // TODO(crbug.com/380465790): Remove once the info is stored in the SeedFile.
+  SeedFieldsPrefs fields_prefs_;
 
   // Task runner for IO-related operations.
   const scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
@@ -90,8 +141,10 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   // Helper for safely writing a seed. Null if a seed file path is not given.
   std::unique_ptr<base::ImportantFileWriter> seed_writer_;
 
-  // The compressed seed data.
-  std::string seed_data_;
+  // Stored seed info. Used to store a seed applied during field trial
+  // setup or a seed fetched from a variations server. Also stores other
+  // seed-related info.
+  SeedInfo seed_info_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

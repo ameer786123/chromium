@@ -214,21 +214,26 @@ AppListToastView::AppListToastView(const std::u16string& title,
 
   if (style_for_tablet_mode) {
     SetPaintToLayer();
-    layer()->SetFillsBoundsOpaquely(false);
-    layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
-    layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+    if (chromeos::features::IsSystemBlurEnabled()) {
+      layer()->SetFillsBoundsOpaquely(false);
+      layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
+      layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+    }
+
     layer()->SetRoundedCornerRadius(gfx::RoundedCornersF(kCornerRadius));
 
     const ui::ColorId background_color_id =
-        cros_tokens::kCrosSysSystemBaseElevated;
-    SetBackground(views::CreateThemedRoundedRectBackground(background_color_id,
-                                                           kCornerRadius));
+        chromeos::features::IsSystemBlurEnabled()
+            ? cros_tokens::kCrosSysSystemBaseElevated
+            : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
+    SetBackground(
+        views::CreateRoundedRectBackground(background_color_id, kCornerRadius));
     SetBorder(std::make_unique<views::HighlightBorder>(
         kCornerRadius, views::HighlightBorder::Type::kHighlightBorderNoShadow));
   } else {
     const ui::ColorId background_color_id = cros_tokens::kCrosSysSystemOnBase;
-    SetBackground(views::CreateThemedRoundedRectBackground(background_color_id,
-                                                           kCornerRadius));
+    SetBackground(
+        views::CreateRoundedRectBackground(background_color_id, kCornerRadius));
   }
 }
 

@@ -763,8 +763,7 @@ size_t Converter::PopStartSize() {
 template <typename T>
 void Converter::WriteNum(const T num) {
   if (sizeof(T) > 4) {
-    CHECK(num <= UINT32_MAX);
-    uint32_t four_byte_num = static_cast<uint32_t>(num);
+    auto four_byte_num = base::checked_cast<uint32_t>(num);
     char num_arr[sizeof(four_byte_num)];
     memcpy(num_arr, &four_byte_num, sizeof(four_byte_num));
     for (size_t idx = 0; idx < sizeof(four_byte_num); idx++)
@@ -1552,7 +1551,7 @@ void Converter::WriteTagSize(const char (&tag)[4], const size_t size) {
 
 // Writes num as a big endian number.
 void Converter::WriteBigEndian(base::StrictNumeric<uint32_t> num) {
-  auto arr = base::numerics::U32ToBigEndian(num);
+  auto arr = base::U32ToBigEndian(num);
   output_.insert(output_.end(), arr.begin(), arr.end());
 }
 
@@ -2118,8 +2117,12 @@ void Converter::WriteFields(const Message& msg,
           break;
         }
         case FieldDescriptor::CPPTYPE_MESSAGE: {
+// TODO(crbug.com/393557657): update this.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
           Visit(reflection->GetRepeatedPtrField<google::protobuf::Message>(
               msg, field_descriptor));
+#pragma clang diagnostic pop
           break;
         }
         default: {

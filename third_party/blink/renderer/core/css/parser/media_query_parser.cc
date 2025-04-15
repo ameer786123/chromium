@@ -23,112 +23,97 @@ using css_parsing_utils::ConsumeAnyValue;
 using css_parsing_utils::ConsumeIfDelimiter;
 using css_parsing_utils::ConsumeIfIdent;
 
-namespace {
-
-class MediaQueryFeatureSet : public MediaQueryParser::FeatureSet {
-  STACK_ALLOCATED();
-
- public:
-  MediaQueryFeatureSet() = default;
-
-  bool IsAllowed(const String& feature) const override {
-    if (feature == media_feature_names::kInlineSizeMediaFeature ||
-        feature == media_feature_names::kMinInlineSizeMediaFeature ||
-        feature == media_feature_names::kMaxInlineSizeMediaFeature ||
-        feature == media_feature_names::kBlockSizeMediaFeature ||
-        feature == media_feature_names::kMinBlockSizeMediaFeature ||
-        feature == media_feature_names::kMaxBlockSizeMediaFeature ||
-        feature == media_feature_names::kStuckMediaFeature ||
-        feature == media_feature_names::kSnappedMediaFeature ||
-        feature == media_feature_names::kOverflowingMediaFeature ||
-        CSSVariableParser::IsValidVariableName(feature)) {
-      return false;
-    }
-    return true;
+bool MediaQueryParser::MediaQueryFeatureSet::IsAllowed(
+    const AtomicString& feature) const {
+  if (feature == media_feature_names::kInlineSizeMediaFeature ||
+      feature == media_feature_names::kMinInlineSizeMediaFeature ||
+      feature == media_feature_names::kMaxInlineSizeMediaFeature ||
+      feature == media_feature_names::kBlockSizeMediaFeature ||
+      feature == media_feature_names::kMinBlockSizeMediaFeature ||
+      feature == media_feature_names::kMaxBlockSizeMediaFeature ||
+      feature == media_feature_names::kStuckMediaFeature ||
+      feature == media_feature_names::kSnappedMediaFeature ||
+      feature == media_feature_names::kScrollableMediaFeature ||
+      CSSVariableParser::IsValidVariableName(feature)) {
+    return false;
   }
-  bool IsAllowedWithoutValue(
-      const String& feature,
-      const ExecutionContext* execution_context) const override {
-    // Media features that are prefixed by min/max cannot be used without a
-    // value.
-    return feature == media_feature_names::kMonochromeMediaFeature ||
-           feature == media_feature_names::kColorMediaFeature ||
-           feature == media_feature_names::kColorIndexMediaFeature ||
-           feature == media_feature_names::kGridMediaFeature ||
-           feature == media_feature_names::kHeightMediaFeature ||
-           feature == media_feature_names::kWidthMediaFeature ||
-           feature == media_feature_names::kBlockSizeMediaFeature ||
-           feature == media_feature_names::kInlineSizeMediaFeature ||
-           feature == media_feature_names::kDeviceHeightMediaFeature ||
-           feature == media_feature_names::kDeviceWidthMediaFeature ||
-           feature == media_feature_names::kOrientationMediaFeature ||
-           feature == media_feature_names::kAspectRatioMediaFeature ||
-           feature == media_feature_names::kDeviceAspectRatioMediaFeature ||
-           feature == media_feature_names::kHoverMediaFeature ||
-           feature == media_feature_names::kAnyHoverMediaFeature ||
-           feature == media_feature_names::kTransform3dMediaFeature ||
-           feature == media_feature_names::kPointerMediaFeature ||
-           feature == media_feature_names::kAnyPointerMediaFeature ||
-           feature == media_feature_names::kDevicePixelRatioMediaFeature ||
-           feature == media_feature_names::kResolutionMediaFeature ||
-           feature == media_feature_names::kDisplayModeMediaFeature ||
-           feature == media_feature_names::kScanMediaFeature ||
-           feature == media_feature_names::kColorGamutMediaFeature ||
-           feature == media_feature_names::kPrefersColorSchemeMediaFeature ||
-           feature == media_feature_names::kPrefersContrastMediaFeature ||
-           feature == media_feature_names::kPrefersReducedMotionMediaFeature ||
-           feature == media_feature_names::kOverflowInlineMediaFeature ||
-           feature == media_feature_names::kOverflowBlockMediaFeature ||
-           feature == media_feature_names::kUpdateMediaFeature ||
-           (feature == media_feature_names::kPrefersReducedDataMediaFeature &&
-            RuntimeEnabledFeatures::PrefersReducedDataEnabled()) ||
-           feature ==
-               media_feature_names::kPrefersReducedTransparencyMediaFeature ||
-           (feature == media_feature_names::kForcedColorsMediaFeature &&
-            RuntimeEnabledFeatures::ForcedColorsEnabled()) ||
-           (feature == media_feature_names::kNavigationControlsMediaFeature &&
-            RuntimeEnabledFeatures::MediaQueryNavigationControlsEnabled()) ||
-           (feature == media_feature_names::kOriginTrialTestMediaFeature &&
-            RuntimeEnabledFeatures::OriginTrialsSampleAPIEnabled(
-                execution_context)) ||
-           (feature ==
-                media_feature_names::kHorizontalViewportSegmentsMediaFeature &&
-            RuntimeEnabledFeatures::ViewportSegmentsEnabled(
-                execution_context)) ||
-           (feature ==
-                media_feature_names::kVerticalViewportSegmentsMediaFeature &&
-            RuntimeEnabledFeatures::ViewportSegmentsEnabled(
-                execution_context)) ||
-           (feature == media_feature_names::kDevicePostureMediaFeature &&
-            RuntimeEnabledFeatures::DevicePostureEnabled(execution_context)) ||
-           (feature == media_feature_names::kInvertedColorsMediaFeature &&
-            RuntimeEnabledFeatures::InvertedColorsEnabled()) ||
-           CSSVariableParser::IsValidVariableName(feature) ||
-           feature == media_feature_names::kScriptingMediaFeature ||
-           (RuntimeEnabledFeatures::
-                DesktopPWAsAdditionalWindowingControlsEnabled() &&
-            feature == media_feature_names::kDisplayStateMediaFeature) ||
-           (RuntimeEnabledFeatures::
-                DesktopPWAsAdditionalWindowingControlsEnabled() &&
-            feature == media_feature_names::kResizableMediaFeature);
-  }
-
-  bool IsCaseSensitive(const String& feature) const override { return false; }
-  bool SupportsRange() const override { return true; }
-};
-
-}  // namespace
+  return true;
+}
+bool MediaQueryParser::MediaQueryFeatureSet::IsAllowedWithoutValue(
+    const AtomicString& feature,
+    const ExecutionContext* execution_context) const {
+  // Media features that are prefixed by min/max cannot be used without a
+  // value.
+  return feature == media_feature_names::kMonochromeMediaFeature ||
+         feature == media_feature_names::kColorMediaFeature ||
+         feature == media_feature_names::kColorIndexMediaFeature ||
+         feature == media_feature_names::kGridMediaFeature ||
+         feature == media_feature_names::kHeightMediaFeature ||
+         feature == media_feature_names::kWidthMediaFeature ||
+         feature == media_feature_names::kBlockSizeMediaFeature ||
+         feature == media_feature_names::kInlineSizeMediaFeature ||
+         feature == media_feature_names::kDeviceHeightMediaFeature ||
+         feature == media_feature_names::kDeviceWidthMediaFeature ||
+         feature == media_feature_names::kOrientationMediaFeature ||
+         feature == media_feature_names::kAspectRatioMediaFeature ||
+         feature == media_feature_names::kDeviceAspectRatioMediaFeature ||
+         feature == media_feature_names::kHoverMediaFeature ||
+         feature == media_feature_names::kAnyHoverMediaFeature ||
+         feature == media_feature_names::kTransform3dMediaFeature ||
+         feature == media_feature_names::kPointerMediaFeature ||
+         feature == media_feature_names::kAnyPointerMediaFeature ||
+         feature == media_feature_names::kDevicePixelRatioMediaFeature ||
+         feature == media_feature_names::kResolutionMediaFeature ||
+         feature == media_feature_names::kDisplayModeMediaFeature ||
+         feature == media_feature_names::kScanMediaFeature ||
+         feature == media_feature_names::kColorGamutMediaFeature ||
+         feature == media_feature_names::kPrefersColorSchemeMediaFeature ||
+         feature == media_feature_names::kPrefersContrastMediaFeature ||
+         feature == media_feature_names::kPrefersReducedMotionMediaFeature ||
+         feature == media_feature_names::kOverflowInlineMediaFeature ||
+         feature == media_feature_names::kOverflowBlockMediaFeature ||
+         feature == media_feature_names::kUpdateMediaFeature ||
+         (feature == media_feature_names::kPrefersReducedDataMediaFeature &&
+          RuntimeEnabledFeatures::PrefersReducedDataEnabled()) ||
+         feature ==
+             media_feature_names::kPrefersReducedTransparencyMediaFeature ||
+         (feature == media_feature_names::kForcedColorsMediaFeature &&
+          RuntimeEnabledFeatures::ForcedColorsEnabled()) ||
+         (feature == media_feature_names::kNavigationControlsMediaFeature &&
+          RuntimeEnabledFeatures::MediaQueryNavigationControlsEnabled()) ||
+         (feature == media_feature_names::kOriginTrialTestMediaFeature &&
+          RuntimeEnabledFeatures::OriginTrialsSampleAPIEnabled(
+              execution_context)) ||
+         (feature ==
+              media_feature_names::kHorizontalViewportSegmentsMediaFeature &&
+          RuntimeEnabledFeatures::ViewportSegmentsEnabled(execution_context)) ||
+         (feature ==
+              media_feature_names::kVerticalViewportSegmentsMediaFeature &&
+          RuntimeEnabledFeatures::ViewportSegmentsEnabled(execution_context)) ||
+         (feature == media_feature_names::kDevicePostureMediaFeature &&
+          RuntimeEnabledFeatures::DevicePostureEnabled(execution_context)) ||
+         (feature == media_feature_names::kInvertedColorsMediaFeature &&
+          RuntimeEnabledFeatures::InvertedColorsEnabled()) ||
+         CSSVariableParser::IsValidVariableName(feature) ||
+         feature == media_feature_names::kScriptingMediaFeature ||
+         (RuntimeEnabledFeatures::
+              DesktopPWAsAdditionalWindowingControlsEnabled() &&
+          feature == media_feature_names::kDisplayStateMediaFeature) ||
+         (RuntimeEnabledFeatures::
+              DesktopPWAsAdditionalWindowingControlsEnabled() &&
+          feature == media_feature_names::kResizableMediaFeature);
+}
 
 MediaQuerySet* MediaQueryParser::ParseMediaQuerySet(
-    const String& query_string,
-    const ExecutionContext* execution_context) {
+    StringView query_string,
+    ExecutionContext* execution_context) {
   CSSParserTokenStream stream(query_string);
   return ParseMediaQuerySet(stream, execution_context);
 }
 
 MediaQuerySet* MediaQueryParser::ParseMediaQuerySet(
     CSSParserTokenStream& stream,
-    const ExecutionContext* execution_context) {
+    ExecutionContext* execution_context) {
   return MediaQueryParser(kMediaQuerySetParser, kHTMLStandardMode,
                           execution_context)
       .ParseImpl(stream);
@@ -137,14 +122,14 @@ MediaQuerySet* MediaQueryParser::ParseMediaQuerySet(
 MediaQuerySet* MediaQueryParser::ParseMediaQuerySetInMode(
     CSSParserTokenStream& stream,
     CSSParserMode mode,
-    const ExecutionContext* execution_context) {
+    ExecutionContext* execution_context) {
   return MediaQueryParser(kMediaQuerySetParser, mode, execution_context)
       .ParseImpl(stream);
 }
 
 MediaQuerySet* MediaQueryParser::ParseMediaCondition(
     CSSParserTokenStream& stream,
-    const ExecutionContext* execution_context) {
+    ExecutionContext* execution_context) {
   return MediaQueryParser(kMediaConditionParser, kHTMLStandardMode,
                           execution_context)
       .ParseImpl(stream);
@@ -152,7 +137,7 @@ MediaQuerySet* MediaQueryParser::ParseMediaCondition(
 
 MediaQueryParser::MediaQueryParser(ParserType parser_type,
                                    CSSParserMode mode,
-                                   const ExecutionContext* execution_context,
+                                   ExecutionContext* execution_context,
                                    SyntaxLevel syntax_level)
     : parser_type_(parser_type),
       mode_(mode),
@@ -231,14 +216,14 @@ MediaQuery::RestrictorType MediaQueryParser::ConsumeRestrictor(
   return MediaQuery::RestrictorType::kNone;
 }
 
-String MediaQueryParser::ConsumeType(CSSParserTokenStream& stream) {
+AtomicString MediaQueryParser::ConsumeType(CSSParserTokenStream& stream) {
   if (stream.Peek().GetType() != kIdentToken) {
     return g_null_atom;
   }
   if (IsRestrictorOrLogicalOperator(stream.Peek())) {
     return g_null_atom;
   }
-  return stream.ConsumeIncludingWhitespace().Value().ToString();
+  return stream.ConsumeIncludingWhitespace().Value().ToAtomicString();
 }
 
 MediaQueryOperator MediaQueryParser::ConsumeComparison(
@@ -268,20 +253,19 @@ MediaQueryOperator MediaQueryParser::ConsumeComparison(
       return MediaQueryOperator::kGt;
   }
 
-  NOTREACHED_IN_MIGRATION();
-  return MediaQueryOperator::kNone;
+  NOTREACHED();
 }
 
-String MediaQueryParser::ConsumeAllowedName(CSSParserTokenStream& stream,
-                                            const FeatureSet& feature_set) {
+AtomicString MediaQueryParser::ConsumeAllowedName(
+    CSSParserTokenStream& stream,
+    const FeatureSet& feature_set) {
   if (stream.Peek().GetType() != kIdentToken) {
     return g_null_atom;
   }
-  String name = stream.Peek().Value().ToString();
+  AtomicString name = stream.Peek().Value().ToAtomicString();
   if (!feature_set.IsCaseSensitive(name)) {
     name = name.LowerASCII();
   }
-  name = AttemptStaticStringCreation(name);
   if (!feature_set.IsAllowed(name)) {
     return g_null_atom;
   }
@@ -289,9 +273,10 @@ String MediaQueryParser::ConsumeAllowedName(CSSParserTokenStream& stream,
   return name;
 }
 
-String MediaQueryParser::ConsumeUnprefixedName(CSSParserTokenStream& stream,
-                                               const FeatureSet& feature_set) {
-  String name = ConsumeAllowedName(stream, feature_set);
+AtomicString MediaQueryParser::ConsumeUnprefixedName(
+    CSSParserTokenStream& stream,
+    const FeatureSet& feature_set) {
+  AtomicString name = ConsumeAllowedName(stream, feature_set);
   if (name.IsNull()) {
     return name;
   }
@@ -312,7 +297,7 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
   CSSParserTokenStream::State start = stream.Save();
 
   {
-    String feature_name = ConsumeAllowedName(stream, feature_set);
+    AtomicString feature_name = ConsumeAllowedName(stream, feature_set);
 
     // <mf-boolean> = <mf-name>
     if (!feature_name.IsNull() && stream.AtEnd() &&
@@ -327,7 +312,8 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
 
       // NOTE: We do not check for stream.AtEnd() here, as an empty mf-value is
       // legal.
-      auto exp = MediaQueryExp::Create(feature_name, stream, fake_context_);
+      auto exp = MediaQueryExp::Create(feature_name, stream, fake_context_,
+                                       feature_set.SupportsElementDependent());
       if (exp.IsValid() && stream.AtEnd()) {
         return MakeGarbageCollected<MediaQueryFeatureExpNode>(exp);
       }
@@ -349,16 +335,18 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
 
   {
     // Try: <mf-name> <mf-comparison> <mf-value> (e.g., “width <= 10px”)
-    String feature_name = ConsumeUnprefixedName(stream, feature_set);
+    AtomicString feature_name = ConsumeUnprefixedName(stream, feature_set);
     if (!feature_name.IsNull() && !stream.AtEnd()) {
       MediaQueryOperator op = ConsumeComparison(stream);
       if (op != MediaQueryOperator::kNone) {
         auto value =
-            MediaQueryExpValue::Consume(feature_name, stream, fake_context_);
+            MediaQueryExpValue::Consume(feature_name, stream, fake_context_,
+                                        feature_set.SupportsElementDependent());
         if (value && stream.AtEnd()) {
           auto left = MediaQueryExpComparison();
           auto right = MediaQueryExpComparison(*value, op);
 
+          UseCountRangeSyntax();
           return MakeGarbageCollected<MediaQueryFeatureExpNode>(
               MediaQueryExp::Create(feature_name,
                                     MediaQueryExpBounds(left, right)));
@@ -394,7 +382,7 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
     return nullptr;
   }
 
-  String feature_name = ConsumeUnprefixedName(stream, feature_set);
+  AtomicString feature_name = ConsumeUnprefixedName(stream, feature_set);
   if (feature_name.IsNull()) {
     return nullptr;
   }
@@ -404,7 +392,8 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
 
   stream.Restore(start);
   auto value1 =
-      MediaQueryExpValue::Consume(feature_name, stream, fake_context_);
+      MediaQueryExpValue::Consume(feature_name, stream, fake_context_,
+                                  feature_set.SupportsElementDependent());
   if (!value1) {
     return nullptr;
   }
@@ -422,6 +411,7 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
     auto left = MediaQueryExpComparison(*value1, op1);
     auto right = MediaQueryExpComparison();
 
+    UseCountRangeSyntax();
     return MakeGarbageCollected<MediaQueryFeatureExpNode>(
         MediaQueryExp::Create(feature_name, MediaQueryExpBounds(left, right)));
   }
@@ -440,11 +430,13 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeFeature(
   }
 
   auto value2 =
-      MediaQueryExpValue::Consume(feature_name, stream, fake_context_);
+      MediaQueryExpValue::Consume(feature_name, stream, fake_context_,
+                                  feature_set.SupportsElementDependent());
   if (!value2) {
     return nullptr;
   }
 
+  UseCountRangeSyntax();
   return MakeGarbageCollected<MediaQueryFeatureExpNode>(MediaQueryExp::Create(
       feature_name,
       MediaQueryExpBounds(MediaQueryExpComparison(*value1, op1),
@@ -498,7 +490,7 @@ const MediaQueryExpNode* MediaQueryParser::ConsumeInParens(
       stream.ConsumeWhitespace();
       // ( <media-feature> )
       const MediaQueryExpNode* feature =
-          ConsumeFeature(stream, MediaQueryFeatureSet());
+          ConsumeFeature(stream, MediaQueryParser::MediaQueryFeatureSet());
       if (feature && guard.Release()) {
         stream.ConsumeWhitespace();
         return MediaQueryExpNode::Nested(feature);
@@ -567,7 +559,7 @@ MediaQuery* MediaQueryParser::ConsumeQuery(CSSParserTokenStream& stream) {
   //
   // [ not | only ]? <media-type> [ and <media-condition-without-or> ]?
   MediaQuery::RestrictorType restrictor = ConsumeRestrictor(stream);
-  String type = ConsumeType(stream);
+  AtomicString type = ConsumeType(stream);
 
   if (!type.IsNull()) {
     if (!ConsumeIfIdent(stream, "and")) {
@@ -614,6 +606,10 @@ MediaQuerySet* MediaQueryParser::ParseImpl(CSSParserTokenStream& stream) {
   } while (!stream.AtEnd() && ConsumeUntilCommaInclusive(stream));
 
   return MakeGarbageCollected<MediaQuerySet>(std::move(queries));
+}
+
+void MediaQueryParser::UseCountRangeSyntax() {
+  UseCounter::Count(execution_context_, WebFeature::kMediaQueryRangeSyntax);
 }
 
 }  // namespace blink

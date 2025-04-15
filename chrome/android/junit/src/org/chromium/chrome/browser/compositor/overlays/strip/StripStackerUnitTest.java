@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.when;
 
@@ -58,16 +57,6 @@ public class StripStackerUnitTest {
     }
 
     @Test
-    public void testCreateVisualOrdering() {
-        final StripLayoutTab[] output = new StripLayoutTab[mInput.length];
-        final StripLayoutTab[] expected_output =
-                new StripLayoutTab[] {mTab1, mTab2, mTab5, mTab4, mTab3};
-
-        mTarget.createVisualOrdering(2, mInput, output);
-        assertThat("Visual ordering does not match", output, equalTo(expected_output));
-    }
-
-    @Test
     @DisabledTest(message = "https://crbug.com/1385702")
     public void testComputeNewTabButtonOffset() {
         float result =
@@ -104,12 +93,13 @@ public class StripStackerUnitTest {
     }
 
     static class TestStacker extends StripStacker {
-        @Override
-        public void setViewOffsets(
-                StripLayoutView[] indexOrderedViews, boolean tabCreating, float cachedTabWidth) {}
 
         @Override
-        public void performOcclusionPass(
-                StripLayoutView[] indexOrderedViews, float xOffset, float visibleWidth) {}
+        public void pushDrawPropertiesToViews(
+                StripLayoutView[] indexOrderedViews,
+                float xOffset,
+                float visibleWidth,
+                boolean mMultiStepTabCloseAnimRunning,
+                float mCachedTabWidth) {}
     }
 }

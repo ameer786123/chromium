@@ -33,14 +33,9 @@ class MockContentClient : public TestContentClient {
     switch (message_id) {
       case IDS_AX_UNLABELED_IMAGE_ROLE_DESCRIPTION:
         return u"Unlabeled image";
-      case IDS_AX_IMAGE_ELIGIBLE_FOR_ANNOTATION_ANDROID_LTR:
-        return u"This image isn't labeled. Open the More Options menu at the "
-               u"top "
-               u"right to get image descriptions.";
-      case IDS_AX_IMAGE_ELIGIBLE_FOR_ANNOTATION_ANDROID_RTL:
-        return u"This image isn't labeled. Open the More Options menu at the "
-               u"top "
-               u"left to get image descriptions.";
+      case IDS_AX_IMAGE_ELIGIBLE_FOR_ANNOTATION_ANDROID:
+        return u"This image isn't labeled. Double tap on the more options "
+               u"button at the top of the browser to get image descriptions.";
       case IDS_AX_IMAGE_ANNOTATION_PENDING:
         return u"Getting description...";
       case IDS_AX_IMAGE_ANNOTATION_ADULT:
@@ -517,8 +512,8 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Eligible) {
           manager->GetBrowserAccessibilityRoot()->PlatformGetChild(0));
 
   EXPECT_EQ(
-      u"This image isn't labeled. Open the More Options menu "
-      u"at the top right to get image descriptions.",
+      u"This image isn't labeled. Double tap on the more options "
+      u"button at the top of the browser to get image descriptions.",
       image_ltr->GetTextContentUTF16());
 
   BrowserAccessibilityAndroid* image_rtl =
@@ -526,9 +521,10 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Eligible) {
           manager->GetBrowserAccessibilityRoot()->PlatformGetChild(1));
 
   EXPECT_EQ(
-      u"image_name, This image isn't labeled. Open the More Options "
-      u"menu at the top left to get image descriptions.",
+      u"This image isn't labeled. Double tap on the more options "
+      u"button at the top of the browser to get image descriptions.",
       image_rtl->GetTextContentUTF16());
+  EXPECT_EQ(u"image_name", image_rtl->GetSupplementalDescription());
 }
 
 TEST_F(BrowserAccessibilityAndroidTest,
@@ -643,7 +639,8 @@ TEST_F(BrowserAccessibilityAndroidTest, TestImageInnerText_Ineligible) {
           manager->GetBrowserAccessibilityRoot()->PlatformGetChild(3));
 
   EXPECT_EQ(std::u16string(), image_none->GetTextContentUTF16());
-  EXPECT_EQ(u"image_name", image_scheme->GetTextContentUTF16());
+  EXPECT_EQ(std::u16string(), image_scheme->GetTextContentUTF16());
+  EXPECT_EQ(u"image_name", image_scheme->GetSupplementalDescription());
   EXPECT_EQ(std::u16string(), image_ineligible->GetTextContentUTF16());
   EXPECT_EQ(std::u16string(), image_silent->GetTextContentUTF16());
 }
@@ -688,8 +685,10 @@ TEST_F(BrowserAccessibilityAndroidTest,
           manager->GetBrowserAccessibilityRoot()->PlatformGetChild(1));
 
   EXPECT_EQ(u"test_annotation", image_succeeded->GetTextContentUTF16());
-  EXPECT_EQ(u"image_name, test_annotation",
+  EXPECT_EQ(u"test_annotation",
             image_succeeded_with_name->GetTextContentUTF16());
+  EXPECT_EQ(u"image_name",
+            image_succeeded_with_name->GetSupplementalDescription());
 }
 
 }  // namespace content

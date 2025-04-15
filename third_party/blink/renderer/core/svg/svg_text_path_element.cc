@@ -33,20 +33,20 @@ namespace blink {
 
 template <>
 const SVGEnumerationMap& GetEnumerationMap<SVGTextPathMethodType>() {
-  static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSVGTextPathMethodAlign, "align"},
-      {kSVGTextPathMethodStretch, "stretch"},
-  };
+  static constexpr auto enum_items = std::to_array<const char* const>({
+      "align",
+      "stretch",
+  });
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
 
 template <>
 const SVGEnumerationMap& GetEnumerationMap<SVGTextPathSpacingType>() {
-  static const SVGEnumerationMap::Entry enum_items[] = {
-      {kSVGTextPathSpacingAuto, "auto"},
-      {kSVGTextPathSpacingExact, "exact"},
-  };
+  static constexpr auto enum_items = std::to_array<const char* const>({
+      "auto",
+      "exact",
+  });
   static const SVGEnumerationMap entries(enum_items);
   return entries;
 }
@@ -93,9 +93,6 @@ void SVGTextPathElement::SvgAttributeChanged(
     BuildPendingResource();
     return;
   }
-
-  if (attr_name == svg_names::kStartOffsetAttr)
-    UpdateRelativeLengthsInformation();
 
   if (attr_name == svg_names::kStartOffsetAttr ||
       attr_name == svg_names::kMethodAttr ||

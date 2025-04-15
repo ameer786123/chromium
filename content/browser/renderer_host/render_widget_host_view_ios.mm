@@ -24,6 +24,7 @@
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "ui/accelerated_widget_mac/display_ca_layer_tree.h"
 #include "ui/base/ime/text_input_mode.h"
@@ -31,6 +32,7 @@
 #include "ui/display/screen.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 #include "ui/gfx/geometry/size_conversions.h"
+#include "ui/gfx/native_widget_types.h"
 
 @interface UIApplication (Testing)
 - (BOOL)isRunningTests;
@@ -85,21 +87,18 @@ RenderWidgetHostViewIOS::RenderWidgetHostViewIOS(RenderWidgetHost* widget)
       gesture_provider_(
           ui::GetGestureProviderConfig(
               ui::GestureProviderConfigType::CURRENT_PLATFORM,
-              content::GetUIThreadTaskRunner({BrowserTaskType::kUserInput})),
+              GetUIThreadTaskRunner({BrowserTaskType::kUserInput})),
           this) {
   ui_view_ = std::make_unique<UIViewHolder>();
   ui_view_->view_ =
       [[RenderWidgetUIView alloc] initWithWidget:weak_factory_.GetWeakPtr()];
-
-  display_tree_ =
-      std::make_unique<ui::DisplayCALayerTree>([ui_view_->view_ layer]);
 
   auto* screen = display::Screen::GetScreen();
   screen_infos_ =
       screen->GetScreenInfosNearestDisplay(screen->GetPrimaryDisplay().id());
 
   browser_compositor_ = std::make_unique<BrowserCompositorIOS>(
-      (uint64_t)(__bridge void*)ui_view_->view_, this, host()->is_hidden(),
+      [ui_view_->view_ viewHandle], this, host()->is_hidden(),
       host()->GetFrameSinkId());
 
   if (IsTesting()) {
@@ -161,17 +160,18 @@ void RenderWidgetHostViewIOS::CopyFromSurface(
 void RenderWidgetHostViewIOS::InitAsChild(gfx::NativeView parent_view) {}
 void RenderWidgetHostViewIOS::SetSize(const gfx::Size& size) {}
 void RenderWidgetHostViewIOS::SetBounds(const gfx::Rect& rect) {}
+
 gfx::NativeView RenderWidgetHostViewIOS::GetNativeView() {
   return gfx::NativeView(ui_view_->view_);
 }
 
 gfx::NativeViewAccessible RenderWidgetHostViewIOS::GetNativeViewAccessible() {
-  return ui_view_->view_;
+  return gfx::NativeViewAccessible(ui_view_->view_);
 }
 
 gfx::NativeViewAccessible
 RenderWidgetHostViewIOS::AccessibilityGetNativeViewAccessible() {
-  return ui_view_->view_;
+  return gfx::NativeViewAccessible(ui_view_->view_);
 }
 
 void RenderWidgetHostViewIOS::Focus() {
@@ -261,15 +261,6 @@ void RenderWidgetHostViewIOS::RenderProcessGone() {
 void RenderWidgetHostViewIOS::ShowWithVisibility(
     PageVisibilityState page_visibility) {
   if (IsTesting() && !is_visible_) {
-    // There is some circularity in how UpdateScreenInfo works. The base class
-    // sets up some state needed by the browser compositor. The base class also
-    // depends on an update from the browser compositor. In practice this is a
-    // non issue because the function is called many times and values converge,
-    // but this is not necessarily the case in tests. This could be resolved
-    // by rewriting UpdateScreenInfo to interleave the work (see the mac
-    // implementation, eg), but for now we will simply may another call to the
-    // base class.
-    RenderWidgetHostViewBase::UpdateScreenInfo();
     UpdateScreenInfo();
   }
   is_visible_ = true;
@@ -334,10 +325,31 @@ gfx::Size RenderWidgetHostViewIOS::GetRequestedRendererSize() {
 }
 
 std::optional<DisplayFeature> RenderWidgetHostViewIOS::GetDisplayFeature() {
-  return std::nullopt;
+  return display_feature_;
 }
-void RenderWidgetHostViewIOS::SetDisplayFeatureForTesting(
-    const DisplayFeature* display_feature) {}
+
+void RenderWidgetHostViewIOS::DisableDisplayFeatureOverrideForEmulation() {
+  if (!display_feature_overridden_for_emulation_) {
+    return;
+  }
+
+  display_feature_overridden_for_emulation_ = false;
+  display_feature_ = std::nullopt;
+  ComputeDisplayFeature();
+  host()->SynchronizeVisualProperties();
+}
+
+void RenderWidgetHostViewIOS::OverrideDisplayFeatureForEmulation(
+    const DisplayFeature* display_feature) {
+  if (display_feature) {
+    display_feature_ = *display_feature;
+  } else {
+    display_feature_ = std::nullopt;
+  }
+  display_feature_overridden_for_emulation_ = true;
+  host()->SynchronizeVisualProperties();
+}
+
 void RenderWidgetHostViewIOS::UpdateBackgroundColor() {}
 
 void RenderWidgetHostViewIOS::
@@ -393,11 +405,32 @@ RenderWidgetHostViewIOS::CollectSurfaceIdsForEviction() {
 }
 
 void RenderWidgetHostViewIOS::UpdateScreenInfo() {
-  if (!IsTesting()) {
-    browser_compositor_->UpdateSurfaceFromUIView(
-        gfx::Rect([ui_view_->view_ bounds]).size());
+  if (host()->delegate()) {
+    host()->delegate()->SendScreenRects();
   }
-  RenderWidgetHostViewBase::UpdateScreenInfo();
+
+  auto* display_screen = display::Screen::GetScreen();
+  display::ScreenInfos new_screen_infos =
+      display_screen->GetScreenInfosNearestDisplay(
+          display_screen->GetPrimaryDisplay().id());
+
+  gfx::Rect view_bounds_dips([ui_view_->view_ bounds]);
+  const bool screen_info_changed = screen_infos_ != new_screen_infos;
+  const bool size_changed =
+      view_bounds_dips.size() != browser_compositor_->GetRendererSize();
+  screen_infos_ = std::move(new_screen_infos);
+
+  if (!IsTesting() && (size_changed || screen_info_changed)) {
+    browser_compositor_->UpdateSurfaceFromUIView(view_bounds_dips.size());
+  }
+  ComputeDisplayFeature();
+
+  // Notify the associated RenderWidgetHostImpl when screen info has changed.
+  // That will synchronize visual properties needed for frame tree rendering
+  // and for web platform APIs that expose screen and window info and events.
+  if (size_changed || screen_info_changed) {
+    host()->NotifyScreenInfoChanged();
+  }
 }
 
 void RenderWidgetHostViewIOS::OnSynchronizedDisplayPropertiesChanged(
@@ -406,10 +439,7 @@ void RenderWidgetHostViewIOS::OnSynchronizedDisplayPropertiesChanged(
 }
 
 void RenderWidgetHostViewIOS::UpdateCALayerTree(
-    const gfx::CALayerParams& ca_layer_params) {
-  DCHECK(display_tree_);
-  display_tree_->UpdateCALayerTree(ca_layer_params);
-}
+    const gfx::CALayerParams& ca_layer_params) {}
 
 void RenderWidgetHostViewIOS::OnOldViewDidNavigatePreCommit() {
   CHECK(browser_compositor_) << "Shouldn't be called during destruction!";
@@ -436,6 +466,10 @@ void RenderWidgetHostViewIOS::DidEnterBackForwardCache() {
   //
   // Called after to prevent prematurely evict the BFCached surface.
   host()->ForceFirstFrameAfterNavigationTimeout();
+}
+
+void RenderWidgetHostViewIOS::ActivatedOrEvictedFromBackForwardCache() {
+  browser_compositor_->ActivatedOrEvictedFromBackForwardCache();
 }
 
 void RenderWidgetHostViewIOS::DidNavigate() {
@@ -701,7 +735,6 @@ RenderWidgetHostImpl* RenderWidgetHostViewIOS::GetActiveWidget() {
 
 void RenderWidgetHostViewIOS::OnFirstResponderChanged() {
   bool is_first_responder = [ui_view_->view_ isFirstResponder] ||
-                            [[ui_view_->view_ textInput] isFirstResponder] ||
                             (IsTesting() && is_getting_focus_);
 
   if (is_first_responder_ == is_first_responder) {
@@ -721,15 +754,14 @@ void RenderWidgetHostViewIOS::OnUpdateTextInputStateCalled(
     RenderWidgetHostViewBase* updated_view,
     bool did_update_state) {
   if (text_input_manager->GetActiveWidget()) {
-    [[ui_view_->view_ textInput]
+    [ui_view_->view_
         onUpdateTextInputState:*text_input_manager->GetTextInputState()
                     withBounds:[ui_view_->view_ bounds]];
   } else {
     // If there are no active widgets, the TextInputState.type should be
     // reported as none.
-    [[ui_view_->view_ textInput]
-        onUpdateTextInputState:ui::mojom::TextInputState()
-                    withBounds:[ui_view_->view_ bounds]];
+    [ui_view_->view_ onUpdateTextInputState:ui::mojom::TextInputState()
+                                 withBounds:[ui_view_->view_ bounds]];
   }
 }
 
@@ -740,8 +772,8 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
   const TextInputManager::TextSelection* selection =
       text_input_manager->GetTextSelection(updated_view);
   if (selection && selection->selected_text().length()) {
-    [ui_view_->view_.textInteraction refreshKeyboardUI];
-    [ui_view_->view_.textInteraction textSelectionDisplayInteraction]
+    [[ui_view_->view_ textInteraction] refreshKeyboardUI];
+    [[ui_view_->view_ textInteraction] textSelectionDisplayInteraction]
         .activated = YES;
 
     // This seems like a bug. BETextInput always sets the
@@ -749,7 +781,7 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
     // the entire web content to be transformed down for some reason. Instead,
     // scale it down here with a very naive implementation.
     UITextSelectionDisplayInteraction* textSelectionDisplayInteraction =
-        ui_view_->view_.textInteraction.textSelectionDisplayInteraction;
+        [ui_view_->view_ textInteraction].textSelectionDisplayInteraction;
     NSArray<UIView<UITextSelectionHandleView>*>* handleViews =
         textSelectionDisplayInteraction.handleViews;
 
@@ -763,14 +795,14 @@ void RenderWidgetHostViewIOS::OnTextSelectionChanged(
     handleViews[1].subviews[1].layer.transform =
         CATransform3DMakeScale(shrink, shrink, 1);
   } else {
-    [ui_view_->view_.textInteraction textSelectionDisplayInteraction]
+    [[ui_view_->view_ textInteraction] textSelectionDisplayInteraction]
         .activated = NO;
   }
 }
 void RenderWidgetHostViewIOS::OnSelectionBoundsChanged(
     TextInputManager* text_input_manager,
     RenderWidgetHostViewBase* updated_view) {
-  [ui_view_->view_.textInteraction
+  [[ui_view_->view_ textInteraction]
           .textSelectionDisplayInteraction setNeedsSelectionUpdate];
 }
 
@@ -889,10 +921,97 @@ void RenderWidgetHostViewIOS::ContentInsetChanged() {
   }
 }
 
+void RenderWidgetHostViewIOS::DeleteSurroundingText(int before, int after) {
+  if (auto* widget_host = GetActiveWidget()) {
+    auto* input_handler = widget_host->GetFrameWidgetInputHandler();
+    if (!input_handler) {
+      return;
+    }
+    input_handler->DeleteSurroundingTextInCodePoints(before, after);
+  }
+}
+
+void RenderWidgetHostViewIOS::SendKeyEvent(
+    const input::NativeWebKeyboardEvent& event) {
+  auto* host = GetFocusedWidget();
+  if (!host) {
+    return;
+  }
+  ui::LatencyInfo latency_info;
+  latency_info.AddLatencyNumber(ui::INPUT_EVENT_LATENCY_UI_COMPONENT);
+  host->ForwardKeyboardEventWithLatencyInfo(event, latency_info);
+}
+
+blink::mojom::FrameWidgetInputHandler*
+RenderWidgetHostViewIOS::GetFrameWidgetInputHandlerForFocusedWidget() {
+  auto* focused_widget = GetFocusedWidget();
+  if (!focused_widget) {
+    return nullptr;
+  }
+  return focused_widget->GetFrameWidgetInputHandler();
+}
+
+void RenderWidgetHostViewIOS::StartAutoscrollForSelectionToPoint(
+    const gfx::PointF& point) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->StartAutoscrollForSelectionToPoint(point);
+}
+
+void RenderWidgetHostViewIOS::StopAutoscroll() {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->StopAutoscroll();
+}
+
+void RenderWidgetHostViewIOS::RectForEditFieldChars(
+    const gfx::Range& range,
+    blink::mojom::FrameWidgetInputHandler::RectForEditFieldCharsCallback
+        callback) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    std::move(callback).Run(gfx::Rect());
+    return;
+  }
+  input_handler->RectForEditFieldChars(range, std::move(callback));
+}
+
 gfx::Size RenderWidgetHostViewIOS::GetCompositorViewportPixelSize() {
   return gfx::ScaleToCeiledSize(
       IsTesting() ? GetRequestedRendererSize() : GetScreenInfo().rect.size(),
       GetDeviceScaleFactor());
+}
+
+void RenderWidgetHostViewIOS::ComputeDisplayFeature() {
+  if (display_feature_overridden_for_emulation_) {
+    return;
+  }
+
+  display_feature_ = std::nullopt;
+  gfx::Rect view_bounds([ui_view_->view_ bounds]);
+  if (view_bounds.IsEmpty()) {
+    return;
+  }
+
+  float dip_scale = 1 / GetDeviceScaleFactor();
+  // Segments coming from the platform are in native resolution.
+  gfx::Rect transformed_display_feature =
+      gfx::ScaleToRoundedRect(view_bounds, dip_scale);
+  transformed_display_feature.Offset(-view_bounds.x(), -view_bounds.y());
+  transformed_display_feature.Intersect(gfx::Rect(GetVisibleViewportSize()));
+  if (transformed_display_feature.x() == 0) {
+    display_feature_ = {DisplayFeature::Orientation::kHorizontal,
+                        transformed_display_feature.y(),
+                        transformed_display_feature.height()};
+  } else if (transformed_display_feature.y() == 0) {
+    display_feature_ = {DisplayFeature::Orientation::kVertical,
+                        transformed_display_feature.x(),
+                        transformed_display_feature.width()};
+  }
 }
 
 }  // namespace content

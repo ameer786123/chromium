@@ -7,6 +7,7 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
+#include "build/build_config.h"
 
 namespace features {
 
@@ -15,9 +16,6 @@ extern const base::FeatureParam<std::string> kDevToolsConsoleInsightsModelId;
 extern const base::FeatureParam<double> kDevToolsConsoleInsightsTemperature;
 extern const base::FeatureParam<bool> kDevToolsConsoleInsightsOptIn;
 
-BASE_DECLARE_FEATURE(kDevToolsFreestylerDogfood);
-extern const base::FeatureParam<std::string> kDevToolsFreestylerDogfoodModelId;
-extern const base::FeatureParam<double> kDevToolsFreestylerDogfoodTemperature;
 
 enum class DevToolsFreestylerUserTier {
   // Users who are internal testers or validators.
@@ -40,9 +38,6 @@ enum class DevToolsFreestylerExecutionMode {
   kNoScripts
 };
 
-extern const base::FeatureParam<DevToolsFreestylerUserTier>
-    kDevToolsFreestylerDogfoodUserTier;
-
 BASE_DECLARE_FEATURE(kDevToolsFreestyler);
 extern const base::FeatureParam<std::string> kDevToolsFreestylerModelId;
 extern const base::FeatureParam<double> kDevToolsFreestylerTemperature;
@@ -50,34 +45,55 @@ extern const base::FeatureParam<DevToolsFreestylerUserTier>
     kDevToolsFreestylerUserTier;
 extern const base::FeatureParam<DevToolsFreestylerExecutionMode>
     kDevToolsFreestylerExecutionMode;
+extern const base::FeatureParam<bool> kDevToolsFreestylerPatching;
+extern const base::FeatureParam<bool> kDevToolsFreestylerMultimodal;
+extern const base::FeatureParam<bool> kDevToolsFreestylerFunctionCalling;
 
-BASE_DECLARE_FEATURE(kDevToolsExplainThisResourceDogfood);
+BASE_DECLARE_FEATURE(kDevToolsAiAssistanceNetworkAgent);
 extern const base::FeatureParam<std::string>
-    kDevToolsExplainThisResourceDogfoodModelId;
+    kDevToolsAiAssistanceNetworkAgentModelId;
 extern const base::FeatureParam<double>
-    kDevToolsExplainThisResourceDogfoodTemperature;
+    kDevToolsAiAssistanceNetworkAgentTemperature;
 extern const base::FeatureParam<DevToolsFreestylerUserTier>
-    kDevToolsExplainThisResourceDogfoodUserTier;
+    kDevToolsAiAssistanceNetworkAgentUserTier;
 
-BASE_DECLARE_FEATURE(kDevToolsAiAssistancePerformanceAgentDogfood);
+BASE_DECLARE_FEATURE(kDevToolsAiAssistancePerformanceAgent);
 extern const base::FeatureParam<std::string>
-    kDevToolsAiAssistancePerformanceAgentDogfoodModelId;
+    kDevToolsAiAssistancePerformanceAgentModelId;
 extern const base::FeatureParam<double>
-    kDevToolsAiAssistancePerformanceAgentDogfoodTemperature;
+    kDevToolsAiAssistancePerformanceAgentTemperature;
 extern const base::FeatureParam<DevToolsFreestylerUserTier>
-    kDevToolsAiAssistancePerformanceAgentDogfoodUserTier;
+    kDevToolsAiAssistancePerformanceAgentUserTier;
+extern const base::FeatureParam<bool>
+    kDevToolsAiAssistancePerformanceAgentInsightsEnabled;
 
-BASE_DECLARE_FEATURE(kDevToolsAiAssistanceFileAgentDogfood);
+BASE_DECLARE_FEATURE(kDevToolsAiAssistanceFileAgent);
 extern const base::FeatureParam<std::string>
-    kDevToolsAiAssistanceFileAgentDogfoodModelId;
+    kDevToolsAiAssistanceFileAgentModelId;
 extern const base::FeatureParam<double>
-    kDevToolsAiAssistanceFileAgentDogfoodTemperature;
+    kDevToolsAiAssistanceFileAgentTemperature;
 extern const base::FeatureParam<DevToolsFreestylerUserTier>
-    kDevToolsAiAssistanceFileAgentDogfoodUserTier;
+    kDevToolsAiAssistanceFileAgentUserTier;
 
 BASE_DECLARE_FEATURE(kDevToolsSharedProcessInfobar);
 BASE_DECLARE_FEATURE(kDevToolsVeLogging);
 extern const base::FeatureParam<bool> kDevToolsVeLoggingTesting;
+
+BASE_DECLARE_FEATURE(kDevToolsAnimationStylesInStylesTab);
+
+BASE_DECLARE_FEATURE(kDevToolsAutomaticFileSystems);
+
+BASE_DECLARE_FEATURE(kDevToolsWellKnown);
+
+BASE_DECLARE_FEATURE(kDevToolsCssValueTracing);
+
+BASE_DECLARE_FEATURE(kDevToolsAiGeneratedTimelineLabels);
+
+BASE_DECLARE_FEATURE(kDevToolsNewPermissionDialog);
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+BASE_DECLARE_FEATURE(kDevToolsDebuggingRestrictions);
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 }  // namespace features
 

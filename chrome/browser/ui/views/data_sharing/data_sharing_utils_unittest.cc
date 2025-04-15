@@ -8,31 +8,22 @@
 #include "components/data_sharing/public/group_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(DataSharingUtils, ProcessPreviewOutcome) {
-  std::string kTitle = "foo_title";
-  std::string kUrl = "https://www.foo.com?foo=1";
-  std::string kFaviconUrl = "https://www.foo.com/favicon.ico";
+namespace {
+const char kTitle[] = "foo_title";
+const char kUrl[] = "https://www.foo.com?foo=1";
 
-  sync_pb::SharedTabGroupDataSpecifics specifics_group;
-  specifics_group.mutable_tab_group()->set_title(kTitle);
-  sync_pb::SharedTabGroupDataSpecifics specifics_tab;
-  specifics_tab.mutable_tab()->set_url(kUrl);
-  specifics_tab.mutable_tab()->set_favicon_url(kFaviconUrl);
-
-  sync_pb::EntitySpecifics spec_group;
-  *spec_group.mutable_shared_tab_group_data() = specifics_group;
-  sync_pb::EntitySpecifics spec_tab;
-  *spec_tab.mutable_shared_tab_group_data() = specifics_tab;
-
-  data_sharing::SharedEntity entity_group;
-  entity_group.specifics = spec_group;
-  data_sharing::SharedEntity entity_tab;
-  entity_tab.specifics = spec_tab;
-
+data_sharing::SharedDataPreview MockPreviewWithTitle(std::string title) {
+  data_sharing::SharedTabGroupPreview tab_group_preview;
+  tab_group_preview.title = title;
+  tab_group_preview.tabs.emplace_back(GURL(kUrl));
   data_sharing::SharedDataPreview preview;
-  preview.shared_entities.push_back(entity_group);
-  preview.shared_entities.push_back(entity_tab);
+  preview.shared_tab_group_preview = tab_group_preview;
 
+  return preview;
+}
+}  // namespace
+
+TEST(DataSharingUtils, ProcessPreviewWithValidTitle) {
   data_sharing::mojom::PageHandler::GetTabGroupPreviewCallback callback =
       base::BindLambdaForTesting(
           [&](data_sharing::mojom::GroupPreviewPtr preview) {
@@ -40,9 +31,25 @@ TEST(DataSharingUtils, ProcessPreviewOutcome) {
             EXPECT_EQ(preview->shared_tabs.size(), size_t(1));
             // Trimmed from `kUrl`.
             EXPECT_EQ(preview->shared_tabs[0]->display_url, "foo.com");
-            EXPECT_EQ(preview->shared_tabs[0]->favicon_url, kFaviconUrl);
+            EXPECT_EQ(preview->shared_tabs[0]->favicon_url, GURL(kUrl));
             EXPECT_EQ(preview->status_code,
                       mojo_base::mojom::AbslStatusCode::kOk);
           });
-  data_sharing::ProcessPreviewOutcome(std::move(callback), preview);
+  data_sharing::ProcessPreviewOutcome(std::move(callback),
+                                      MockPreviewWithTitle(kTitle));
+}
+
+TEST(DataSharingUtils, ProcessPreviewWithEmptyTitle) {
+  data_sharing::mojom::PageHandler::GetTabGroupPreviewCallback callback =
+      base::BindLambdaForTesting(
+          [&](data_sharing::mojom::GroupPreviewPtr preview) {
+  // The unnamed group has 1 tab.
+#if BUILDFLAG(IS_MAC)
+            EXPECT_EQ(preview->title, "1 Tab");
+#else
+            EXPECT_EQ(preview->title, "1 tab");
+#endif  // BUILDFLAG(IS_MAC)
+          });
+  data_sharing::ProcessPreviewOutcome(std::move(callback),
+                                      MockPreviewWithTitle(std::string()));
 }

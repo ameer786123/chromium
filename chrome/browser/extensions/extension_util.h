@@ -19,6 +19,10 @@ namespace extensions {
 class PermissionSet;
 }
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
+
 class Profile;
 
 namespace extensions {
@@ -50,17 +54,13 @@ void SetAllowFileAccess(const std::string& extension_id,
                         content::BrowserContext* context,
                         bool allow);
 
-// Returns true if |extension| should be synced.
-bool ShouldSync(const Extension* extension, content::BrowserContext* context);
-
-// Returns true if |extension_id| is idle and it is safe to perform actions such
-// as updating.
-bool IsExtensionIdle(const std::string& extension_id,
-                     content::BrowserContext* context);
-
+// TODO(crbug.com/356905053): Enable more extension util functions on
+// desktop android.
+#if !BUILDFLAG(IS_ANDROID)
 // Sets the name, id, and icon resource path of the given extension into the
 // returned dictionary.
 base::Value::Dict GetExtensionInfo(const Extension* extension);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Returns a PermissionSet configured with the permissions that should be
 // displayed in an extension installation prompt for the specified |extension|.
@@ -68,11 +68,13 @@ std::unique_ptr<const PermissionSet> GetInstallPromptPermissionSetForExtension(
     const Extension* extension,
     Profile* profile);
 
+#if !BUILDFLAG(IS_ANDROID)
 // Returns all profiles affected by permissions of an extension running in
 // "spanning" (rather than "split) mode.
 std::vector<content::BrowserContext*> GetAllRelatedProfiles(
     Profile* profile,
     const Extension& extension);
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Sets whether the given `profile` is in developer mode and notifies
 // relevant subsystems.
@@ -85,6 +87,9 @@ std::u16string GetFixupExtensionNameForUIDisplay(
     const std::u16string& extension_name);
 std::u16string GetFixupExtensionNameForUIDisplay(
     const std::string& extension_name);
+
+// Registers miscellaneous chrome-level extension-related prefs.
+void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
 }  // namespace util
 }  // namespace extensions

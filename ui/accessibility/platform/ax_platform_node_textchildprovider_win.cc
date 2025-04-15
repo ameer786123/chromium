@@ -29,21 +29,18 @@ AXPlatformNodeWin* GetParentAXPlatformNodeWin(AXPlatformNodeWin* node) {
 
 }  // namespace
 
-AXPlatformNodeTextChildProviderWin::AXPlatformNodeTextChildProviderWin() {
-  DVLOG(1) << __func__;
-}
+AXPlatformNodeTextChildProviderWin::AXPlatformNodeTextChildProviderWin() {}
 
 AXPlatformNodeTextChildProviderWin::~AXPlatformNodeTextChildProviderWin() {}
 
 // static
-AXPlatformNodeTextChildProviderWin* AXPlatformNodeTextChildProviderWin::Create(
-    AXPlatformNodeWin* owner) {
+Microsoft::WRL::ComPtr<AXPlatformNodeTextChildProviderWin>
+AXPlatformNodeTextChildProviderWin::Create(AXPlatformNodeWin* owner) {
   CComObject<AXPlatformNodeTextChildProviderWin>* text_child_provider = nullptr;
   if (SUCCEEDED(CComObject<AXPlatformNodeTextChildProviderWin>::CreateInstance(
           &text_child_provider))) {
     DCHECK(text_child_provider);
     text_child_provider->owner_ = owner;
-    text_child_provider->AddRef();
     return text_child_provider;
   }
 

@@ -13,8 +13,8 @@
 #include "base/component_export.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
-#include "base/values.h"
 #include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
 #include "components/attribution_reporting/aggregation_keys.h"
 #include "components/attribution_reporting/attribution_scopes_data.h"
 #include "components/attribution_reporting/constants.h"
@@ -26,6 +26,11 @@
 #include "components/attribution_reporting/trigger_config.h"
 #include "components/attribution_reporting/trigger_data_matching.mojom.h"
 #include "mojo/public/cpp/bindings/default_construct_tag.h"
+
+namespace base {
+class DictValue;
+class Value;
+}  // namespace base
 
 namespace attribution_reporting {
 
@@ -55,7 +60,7 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) SourceRegistration {
   SourceRegistration(SourceRegistration&&);
   SourceRegistration& operator=(SourceRegistration&&);
 
-  base::Value::Dict ToJson() const;
+  base::DictValue ToJson() const;
 
   bool IsValid() const;
   bool IsValidForSourceType(mojom::SourceType) const;
@@ -81,6 +86,7 @@ struct COMPONENT_EXPORT(ATTRIBUTION_REPORTING) SourceRegistration {
   SourceAggregatableDebugReportingConfig aggregatable_debug_reporting_config;
   int64_t destination_limit_priority = 0;
   std::optional<AttributionScopesData> attribution_scopes_data;
+  AggregatableNamedBudgetDefs aggregatable_named_budget_defs;
 };
 
 }  // namespace attribution_reporting

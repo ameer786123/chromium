@@ -15,11 +15,13 @@
 
 namespace content {
 class WebUI;
+class WebUIDataSource;
 }
 
 struct AccountInfo;
 class BatchUploadHandler;
 class BatchUploadUI;
+class Browser;
 
 class BatchUploadUIConfig : public content::DefaultWebUIConfig<BatchUploadUI> {
  public:
@@ -40,8 +42,10 @@ class BatchUploadUI : public ui::MojoWebUIController,
   // Prepares the information to be given to the handler once ready.
   void Initialize(
       const AccountInfo& account_info,
+      Browser* browser,
       std::vector<syncer::LocalDataDescription> local_data_description_list,
       base::RepeatingCallback<void(int)> update_view_height_callback,
+      base::RepeatingCallback<void(bool)> allow_web_view_input_callback,
       BatchUploadSelectedDataTypeItemsCallback completion_callback);
 
   // Clears the state of the UI to avoid keeping data coupled to the
@@ -65,8 +69,10 @@ class BatchUploadUI : public ui::MojoWebUIController,
   // all the needed information to display.
   void OnMojoHandlersReady(
       const AccountInfo& account_info,
+      Browser* browser,
       std::vector<syncer::LocalDataDescription> local_data_description_list,
       base::RepeatingCallback<void(int)> update_view_height_callback,
+      base::RepeatingCallback<void(bool)> allow_web_view_input_callback,
       BatchUploadSelectedDataTypeItemsCallback completion_callback,
       mojo::PendingRemote<batch_upload::mojom::Page> page,
       mojo::PendingReceiver<batch_upload::mojom::PageHandler> receiver);
@@ -80,6 +86,8 @@ class BatchUploadUI : public ui::MojoWebUIController,
 
   // Handler implementing Mojo interface to communicate with the WebUI.
   std::unique_ptr<BatchUploadHandler> handler_;
+
+  raw_ptr<content::WebUIDataSource> web_ui_source_ = nullptr;
 
   mojo::Receiver<batch_upload::mojom::PageHandlerFactory>
       page_factory_receiver_{this};

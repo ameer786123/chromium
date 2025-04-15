@@ -19,6 +19,27 @@
 namespace mojo {
 
 template <>
+struct BLINK_COMMON_EXPORT StructTraits<
+    blink::mojom::ViewTransitionElementLayeredBoxPropertiesDataView,
+    blink::ViewTransitionElement::LayeredBoxProperties> {
+  static const gfx::RectF& content_box(
+      const blink::ViewTransitionElement::LayeredBoxProperties& properties) {
+    return properties.content_box;
+  }
+  static const gfx::RectF& padding_box(
+      const blink::ViewTransitionElement::LayeredBoxProperties& properties) {
+    return properties.padding_box;
+  }
+  static blink::mojom::ViewTransitionElementBoxSizing box_sizing(
+      const blink::ViewTransitionElement::LayeredBoxProperties& properties) {
+    return properties.box_sizing;
+  }
+  static bool Read(
+      blink::mojom::ViewTransitionElementLayeredBoxPropertiesDataView r,
+      blink::ViewTransitionElement::LayeredBoxProperties* out);
+};
+
+template <>
 struct BLINK_COMMON_EXPORT
     StructTraits<blink::mojom::ViewTransitionElementDataView,
                  blink::ViewTransitionElement> {
@@ -71,9 +92,10 @@ struct BLINK_COMMON_EXPORT
     return r.containing_group_name;
   }
 
-  static const gfx::Vector2dF& border_offset(
-      const blink::ViewTransitionElement& r) {
-    return r.border_offset;
+  static const std::optional<
+      blink::ViewTransitionElement::LayeredBoxProperties>&
+  layered_box_properties(const blink::ViewTransitionElement& r) {
+    return r.layered_box_properties;
   }
 
   static bool Read(blink::mojom::ViewTransitionElementDataView r,
@@ -111,6 +133,11 @@ struct BLINK_COMMON_EXPORT
   static const viz::ViewTransitionElementResourceId& subframe_snapshot_id(
       const blink::ViewTransitionState& r) {
     return r.subframe_snapshot_id;
+  }
+
+  static const base::flat_map<std::string, std::string>& id_to_auto_name_map(
+      const blink::ViewTransitionState& r) {
+    return r.id_to_auto_name_map;
   }
 
   static bool Read(blink::mojom::ViewTransitionStateDataView r,

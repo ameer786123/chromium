@@ -46,8 +46,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Predicate;
-import java.util.stream.StreamSupport;
 
 /**
  * This is the second part of the controller of the keyboard accessory component. It is responsible
@@ -159,7 +157,6 @@ class KeyboardAccessoryMediator
             case SuggestionType.UNDO_OR_CLEAR:
             case SuggestionType.ALL_SAVED_PASSWORDS_ENTRY:
             case SuggestionType.GENERATE_PASSWORD_ENTRY:
-            case SuggestionType.SHOW_ACCOUNT_CARDS:
             case SuggestionType.MANAGE_ADDRESS:
             case SuggestionType.MANAGE_CREDIT_CARD:
             case SuggestionType.MANAGE_IBAN:
@@ -271,7 +268,7 @@ class KeyboardAccessoryMediator
             // When the accessory just (dis)appeared, there should be no active tab.
             mTabSwitcher.closeActiveTab();
             if (!mModel.get(VISIBLE)) {
-                // TODO(fhorschig|ioanap): Maybe the generation bridge should take care of that.
+                // TODO: crbug.com/398065928 - The generation controller should control the timing..
                 onItemAvailable(AccessoryAction.GENERATE_PASSWORD_AUTOMATIC, new Action[0]);
             }
             return;
@@ -396,14 +393,13 @@ class KeyboardAccessoryMediator
     }
 
     private @StringRes int getCaptionIdForCredManEntry() {
-        Predicate<BarItem> hasWebAuthnCredential =
-                barItem ->
-                        barItem.getViewType() == BarItem.Type.SUGGESTION
-                                && ((AutofillBarItem) barItem).getSuggestion().getSuggestionType()
-                                        == SuggestionType.WEBAUTHN_CREDENTIAL;
-        return StreamSupport.stream(mModel.get(BAR_ITEMS).spliterator(), true)
-                        .anyMatch(hasWebAuthnCredential)
-                ? R.string.more_passkeys
-                : R.string.select_passkey;
+        for (var barItem : mModel.get(BAR_ITEMS)) {
+            if (barItem.getViewType() == BarItem.Type.SUGGESTION
+                    && ((AutofillBarItem) barItem).getSuggestion().getSuggestionType()
+                            == SuggestionType.WEBAUTHN_CREDENTIAL) {
+                return R.string.more_passkeys;
+            }
+        }
+        return R.string.select_passkey;
     }
 }

@@ -12,9 +12,9 @@ import static org.chromium.ui.test.util.RenderTestRule.Component.UI_BROWSER_SHOP
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.ListView;
 import android.widget.TextView;
 
+import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
@@ -26,11 +26,14 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
+import org.chromium.components.browser_ui.widget.RecyclerViewTestUtils;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -38,6 +41,8 @@ import org.chromium.ui.test.util.BlankUiTestActivity;
 import org.chromium.ui.test.util.RenderTestRule;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Render Tests for the View build by the CommerceBottomSheetContent component. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -54,10 +59,13 @@ public class CommerceBottomSheetContentRenderTest {
             new BaseActivityTestRule<>(BlankUiTestActivity.class);
 
     @Mock BottomSheetController mBottomSheetController;
+    @Mock ScrimManager mMockScrimManager;
+    @Mock CommerceBottomSheetContentProvider mPriceTrackingBottomSheetContentProvider;
+    @Mock CommerceBottomSheetContentProvider mDiscountsBottomSheetContentProvider;
 
     private ModelList mModelList;
     private View mContentView;
-    private ListView mListView;
+    private RecyclerView mRecyclerView;
     private CommerceBottomSheetContentCoordinator mCoordinator;
 
     private PropertyModel createPropertyModel(int type, boolean hasTitle) {
@@ -67,6 +75,7 @@ public class CommerceBottomSheetContentRenderTest {
                 .with(CommerceBottomSheetContentProperties.TYPE, type)
                 .with(CommerceBottomSheetContentProperties.HAS_TITLE, hasTitle)
                 .with(CommerceBottomSheetContentProperties.TITLE, "Title " + type)
+                .with(CommerceBottomSheetContentProperties.HAS_CUSTOM_PADDING, false)
                 .with(CommerceBottomSheetContentProperties.CUSTOM_VIEW, view)
                 .build();
     }
@@ -90,12 +99,20 @@ public class CommerceBottomSheetContentRenderTest {
                                     ViewGroup.LayoutParams.WRAP_CONTENT);
                     getActivity().setContentView(rootView, params);
 
+                    List<Supplier<CommerceBottomSheetContentProvider>> contentProviderSuppliers =
+                            new ArrayList<>();
+                    contentProviderSuppliers.add(() -> mPriceTrackingBottomSheetContentProvider);
+                    contentProviderSuppliers.add(() -> mDiscountsBottomSheetContentProvider);
+
                     mCoordinator =
                             new CommerceBottomSheetContentCoordinator(
-                                    getActivity(), mBottomSheetController);
+                                    getActivity(),
+                                    mBottomSheetController,
+                                    () -> mMockScrimManager,
+                                    contentProviderSuppliers);
 
                     mContentView = mCoordinator.getContentViewForTesting();
-                    mListView = mCoordinator.getListViewForTesting();
+                    mRecyclerView = mCoordinator.getRecyclerViewForTesting();
                     mModelList = mCoordinator.getModelListForTesting();
                     rootView.addView(mContentView);
                 });
@@ -109,6 +126,7 @@ public class CommerceBottomSheetContentRenderTest {
                 () -> {
                     mModelList.add(new ListItem(0, createPropertyModel(0, true)));
                 });
+        RecyclerViewTestUtils.waitForStableMvcRecyclerView(mRecyclerView);
         mRenderTestRule.render(mContentView, "single_content");
     }
 
@@ -122,6 +140,7 @@ public class CommerceBottomSheetContentRenderTest {
                     mModelList.add(new ListItem(0, createPropertyModel(1, false)));
                     mModelList.add(new ListItem(0, createPropertyModel(2, false)));
                 });
+        RecyclerViewTestUtils.waitForStableMvcRecyclerView(mRecyclerView);
         mRenderTestRule.render(mContentView, "multiple_content");
     }
 }

@@ -33,6 +33,7 @@
 #include "components/omnibox/browser/remote_suggestions_service.h"
 #include "components/omnibox/browser/search_suggestion_parser.h"
 #include "components/omnibox/browser/zero_suggest_cache_service.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -53,6 +54,7 @@ using OIT = metrics::OmniboxInputType;
 namespace {
 
 using ResultType = ZeroSuggestProvider::ResultType;
+constexpr bool is_ios = !!BUILDFLAG(IS_IOS);
 
 // Represents whether ZeroSuggestProvider is allowed to display zero-prefix
 // suggestions, and if not, why not.
@@ -134,9 +136,7 @@ bool ShouldCacheResultTypeInContext(const ResultType result_type,
                  : base::FeatureList::IsEnabled(
                        omnibox::kZeroSuggestPrefetchingOnWeb);
     case ResultType::kNone:
-      NOTREACHED_IN_MIGRATION()
-          << "kNone is not a valid zero suggest result type.";
-      return false;
+      NOTREACHED() << "kNone is not a valid zero suggest result type.";
   }
 }
 
@@ -237,28 +237,27 @@ bool ReadStoredResponse(const AutocompleteProviderClient* client,
 // are done in GetResultTypeAndEligibility().
 ResultType ResultTypeForInput(const AutocompleteInput& input) {
   const auto page_class = input.current_page_classification();
-  const auto focus_type_input_type =
-      std::make_pair(input.focus_type(), input.type());
+
+  // Disallow non-zero-prefix inputs.
+  if (!input.IsZeroSuggest()) {
+    return ResultType::kNone;
+  }
 
   // Android Search Widget.
   if (page_class == OEP::ANDROID_SHORTCUTS_WIDGET) {
-    if (focus_type_input_type.first != OFT::INTERACTION_DEFAULT) {
-      return ResultType::kRemoteNoURL;
-    }
+    return ResultType::kRemoteNoURL;
   }
 
   // New Tab Page.
   if (omnibox::IsNTPPage(page_class)) {
-    if (focus_type_input_type ==
-        std::make_pair(OFT::INTERACTION_FOCUS, OIT::EMPTY)) {
+    if (input.type() == OIT::EMPTY) {
       return ResultType::kRemoteNoURL;
     }
   }
 
   // Lens unimodal, multimodal, and contextual searchboxes.
   if (omnibox::IsLensSearchbox(page_class)) {
-    if (focus_type_input_type ==
-        std::make_pair(OFT::INTERACTION_FOCUS, OIT::EMPTY)) {
+    if (input.type() == OIT::EMPTY) {
       return ResultType::kRemoteNoURL;
     }
   }
@@ -273,21 +272,31 @@ ResultType ResultTypeForInput(const AutocompleteInput& input) {
   // Open Web and Search Results Page.
   if (omnibox::IsOtherWebPage(page_class) ||
       omnibox::IsSearchResultsPage(page_class)) {
-    if (focus_type_input_type ==
-            std::make_pair(OFT::INTERACTION_FOCUS, OIT::URL) &&
-        !base::FeatureList::IsEnabled(
-            omnibox::kOmniboxOnClobberFocusTypeOnContent)) {
+    if (input.type() == OIT::URL &&
+        (is_ios || base::FeatureList::IsEnabled(
+                       omnibox::kFocusTriggersWebAndSRPZeroSuggest))) {
       return ResultType::kRemoteSendURL;
     }
-    if (focus_type_input_type ==
-            std::make_pair(OFT::INTERACTION_CLOBBER, OIT::EMPTY) &&
-        (base::FeatureList::IsEnabled(
-            omnibox::kOmniboxOnClobberFocusTypeOnContent))) {
+    if (input.type() == OIT::EMPTY && !is_ios) {
       return ResultType::kRemoteSendURL;
     }
   }
 
   return ResultType::kNone;
+}
+
+void MaybeAddContextualUrlSuggestParam(
+    TemplateURLRef::SearchTermsArgs& search_terms_args) {
+  if (!search_terms_args.current_page_url.empty() &&
+      omnibox::IsOtherWebPage(search_terms_args.page_classification)) {
+    std::string_view contextual_url_suggest_param =
+        omnibox_feature_configs::ContextualSearch::Get()
+            .contextual_url_suggest_param;
+    if (!contextual_url_suggest_param.empty()) {
+      search_terms_args.additional_query_params =
+          base::StrCat({"ctxus=", contextual_url_suggest_param});
+    }
+  }
 }
 
 }  // namespace
@@ -297,6 +306,39 @@ ZeroSuggestProvider* ZeroSuggestProvider::Create(
     AutocompleteProviderClient* client,
     AutocompleteProviderListener* listener) {
   return new ZeroSuggestProvider(client, listener);
+}
+
+// static
+AutocompleteMatch ZeroSuggestProvider::NavigationToMatch(
+    AutocompleteProvider* provider,
+    AutocompleteProviderClient* client,
+    const SearchSuggestionParser::NavigationResult& navigation) {
+  AutocompleteMatch match(provider, navigation.relevance(), false,
+                          navigation.type());
+  match.destination_url = navigation.url();
+
+  match.fill_into_edit +=
+      AutocompleteInput::FormattedStringWithEquivalentMeaning(
+          navigation.url(), url_formatter::FormatUrl(navigation.url()),
+          client->GetSchemeClassifier(), nullptr);
+
+  // Zero suggest results should always omit protocols and never appear bold.
+  auto format_types = AutocompleteMatch::GetFormatTypes(false, false);
+  match.contents = url_formatter::FormatUrl(navigation.url(), format_types,
+                                            base::UnescapeRule::SPACES, nullptr,
+                                            nullptr, nullptr);
+  match.contents_class = ClassifyTermMatches({}, match.contents.length(), 0,
+                                             ACMatchClassification::URL);
+
+  match.description =
+      AutocompleteMatch::SanitizeString(navigation.description());
+  match.description_class = ClassifyTermMatches({}, match.description.length(),
+                                                0, ACMatchClassification::NONE);
+  match.suggest_type = navigation.suggest_type();
+  for (const int subtype : navigation.subtypes()) {
+    match.subtypes.insert(SuggestSubtypeForNumber(subtype));
+  }
+  return match;
 }
 
 // static
@@ -351,6 +393,11 @@ void ZeroSuggestProvider::StartPrefetch(const AutocompleteInput& input) {
 
   TRACE_EVENT0("omnibox", "ZeroSuggestProvider::StartPrefetch");
 
+  if (!OmniboxFieldTrial::IsZeroSuggestPrefetchingEnabledInContext(
+          input.current_page_classification())) {
+    return;
+  }
+
   auto [result_type, eligible] = GetResultTypeAndEligibility(client(), input);
   LogOmniboxZeroSuggestEligibility(result_type, eligible);
   if (!eligible) {
@@ -377,6 +424,7 @@ void ZeroSuggestProvider::RunZeroSuggestPrefetch(const AutocompleteInput& input,
                                            : std::string();
   search_terms_args.lens_overlay_suggest_inputs =
       input.lens_overlay_suggest_inputs();
+  MaybeAddContextualUrlSuggestParam(search_terms_args);
 
   std::unique_ptr<network::SimpleURLLoader>* prefetch_loader = nullptr;
   if (result_type == ResultType::kRemoteNoURL) {
@@ -460,6 +508,7 @@ void ZeroSuggestProvider::Start(const AutocompleteInput& input,
           : std::string();
   search_terms_args.lens_overlay_suggest_inputs =
       input.lens_overlay_suggest_inputs();
+  MaybeAddContextualUrlSuggestParam(search_terms_args);
 
   const auto* template_url_service = client()->GetTemplateURLService();
   // Create a loader for the request and take ownership of it.
@@ -501,6 +550,7 @@ void ZeroSuggestProvider::Stop(bool clear_cached_results,
 
   if (clear_cached_results) {
     experiment_stats_v2s_.clear();
+    gws_event_id_hashes_.clear();
   }
 }
 
@@ -629,7 +679,14 @@ void ZeroSuggestProvider::OnPrefetchURLLoadComplete(
     // If the app is currently in the background state, do not parse and store
     // ZPS prefetch responses. This helps to conserve CPU cycles on iOS while in
     // the background state.
-    if (!client()->in_background_state()) {
+    // If `kZeroSuggestPrefetchingOnSRPCounterfactual` has been enabled, we also
+    // ignore any ZPS prefetch response on SRP, ensuring that ZPS prefetching
+    // is essentially a no-op in this case.
+    if (!client()->in_background_state() &&
+        !(OmniboxFieldTrial::kZeroSuggestPrefetchingOnSRPCounterfactual.Get() &&
+          input.current_page_classification() ==
+              metrics::OmniboxEventProto::SRP_ZPS_PREFETCH &&
+          result_type == ResultType::kRemoteSendURL)) {
       SearchSuggestionParser::Results unused_results;
       StoreRemoteResponse(SearchSuggestionParser::ExtractJsonData(
                               source, std::move(response_body)),
@@ -641,42 +698,13 @@ void ZeroSuggestProvider::OnPrefetchURLLoadComplete(
   prefetch_loader->reset();
 }
 
-AutocompleteMatch ZeroSuggestProvider::NavigationToMatch(
-    const SearchSuggestionParser::NavigationResult& navigation) {
-  AutocompleteMatch match(this, navigation.relevance(), false,
-                          navigation.type());
-  match.destination_url = navigation.url();
-
-  match.fill_into_edit +=
-      AutocompleteInput::FormattedStringWithEquivalentMeaning(
-          navigation.url(), url_formatter::FormatUrl(navigation.url()),
-          client()->GetSchemeClassifier(), nullptr);
-
-  // Zero suggest results should always omit protocols and never appear bold.
-  auto format_types = AutocompleteMatch::GetFormatTypes(false, false);
-  match.contents = url_formatter::FormatUrl(navigation.url(), format_types,
-                                            base::UnescapeRule::SPACES, nullptr,
-                                            nullptr, nullptr);
-  match.contents_class = ClassifyTermMatches({}, match.contents.length(), 0,
-                                             ACMatchClassification::URL);
-
-  match.description =
-      AutocompleteMatch::SanitizeString(navigation.description());
-  match.description_class = ClassifyTermMatches({}, match.description.length(),
-                                                0, ACMatchClassification::NONE);
-  match.suggest_type = navigation.suggest_type();
-  for (const int subtype : navigation.subtypes()) {
-    match.subtypes.insert(SuggestSubtypeForNumber(subtype));
-  }
-  return match;
-}
-
 void ZeroSuggestProvider::ConvertSuggestResultsToAutocompleteMatches(
     const SearchSuggestionParser::Results& results,
     const AutocompleteInput& input) {
   matches_.clear();
   suggestion_groups_map_.clear();
   experiment_stats_v2s_.clear();
+  gws_event_id_hashes_.clear();
 
   if (results.field_trial_triggered) {
     client()->GetOmniboxTriggeredFeatureService()->FeatureTriggered(
@@ -712,7 +740,7 @@ void ZeroSuggestProvider::ConvertSuggestResultsToAutocompleteMatches(
   const SearchSuggestionParser::NavigationResults& nav_results(
       results.navigation_results);
   for (const auto& nav_result : nav_results) {
-    matches_.push_back(NavigationToMatch(nav_result));
+    matches_.push_back(NavigationToMatch(this, client(), nav_result));
   }
 
   // Update the suggestion groups information from the server response.
@@ -723,5 +751,10 @@ void ZeroSuggestProvider::ConvertSuggestResultsToAutocompleteMatches(
   // Update the list of experiment stats from the server response.
   for (const auto& experiment_stats_v2 : results.experiment_stats_v2s) {
     experiment_stats_v2s_.push_back(experiment_stats_v2);
+  }
+
+  // Update the list of GWS event ID hashes from the server response.
+  for (const auto& gws_event_id_hash : results.gws_event_id_hashes) {
+    gws_event_id_hashes_.push_back(gws_event_id_hash);
   }
 }

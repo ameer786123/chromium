@@ -41,18 +41,18 @@ FlyingIndicator::FlyingIndicator(const gfx::VectorIcon& icon,
                                  base::OnceClosure done_callback)
     : start_(start),
       target_(target),
-      animation_(std::vector<gfx::MultiAnimation::Part>{
-          gfx::MultiAnimation::Part(kFadeInDuration, gfx::Tween::Type::LINEAR),
-          gfx::MultiAnimation::Part(kFlyDuration, gfx::Tween::Type::LINEAR),
-          gfx::MultiAnimation::Part(kFadeOutDuration,
-                                    gfx::Tween::Type::LINEAR)}),
+      animation_(gfx::MultiAnimation::Parts{
+          {kFadeInDuration, gfx::Tween::Type::LINEAR},
+          {kFlyDuration, gfx::Tween::Type::LINEAR},
+          {kFadeOutDuration, gfx::Tween::Type::LINEAR}}),
       done_callback_(std::move(done_callback)) {
   animation_.set_delegate(this);
   animation_.set_continuous(false);
 
   std::unique_ptr<views::BubbleDialogDelegateView> bubble_view =
       std::make_unique<views::BubbleDialogDelegateView>(
-          target, views::BubbleBorder::Arrow::FLOAT,
+          views::BubbleDialogDelegateView::CreatePassKey(), target,
+          views::BubbleBorder::Arrow::FLOAT,
           views::BubbleBorder::Shadow::STANDARD_SHADOW);
 
   const auto* color_provider = target_->GetColorProvider();
@@ -107,26 +107,31 @@ FlyingIndicator::~FlyingIndicator() {
   // Kill the callback before deleting the widget so we don't call it.
   done_callback_.Reset();
   scoped_observation_.Reset();
-  if (widget_)
+  if (widget_) {
     widget_->Close();
+  }
 }
 
 void FlyingIndicator::OnWidgetDestroyed(views::Widget* widget) {
-  if (widget != widget_)
+  if (widget != widget_) {
     return;
+  }
   DCHECK(scoped_observation_.IsObserving());
   scoped_observation_.Reset();
   widget_ = nullptr;
   animation_.Stop();
-  if (done_callback_)
+  if (done_callback_) {
     std::move(done_callback_).Run();
+  }
 }
 
 void FlyingIndicator::AnimationProgressed(const gfx::Animation* animation) {
-  if (!widget_)
+  if (!widget_) {
     return;
-  if (animation_.current_part_index() > 1U && done_callback_)
+  }
+  if (animation_.current_part_index() > 1U && done_callback_) {
     std::move(done_callback_).Run();
+  }
 
   // The steps of the animation are:
   // 0. Grow and fade the bubble in, centered on the originating point.
@@ -175,8 +180,9 @@ void FlyingIndicator::AnimationProgressed(const gfx::Animation* animation) {
 void FlyingIndicator::AnimationEnded(const gfx::Animation* animation) {
   // We need to close the widget, but that can be an asynchronous event, so call
   // |done_callback_| and remove our listeners and reference to the widget.
-  if (done_callback_)
+  if (done_callback_) {
     std::move(done_callback_).Run();
+  }
   if (widget_) {
     DCHECK(scoped_observation_.IsObserving());
     scoped_observation_.Reset();

@@ -12,8 +12,8 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/single_thread_task_runner.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -44,6 +44,8 @@
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/credential_manager_proxy.h"
+#include "third_party/blink/renderer/modules/credentialmanagement/scoped_promise_resolver.h"
 #include "third_party/blink/renderer/modules/event_target_modules_names.h"
 #include "third_party/blink/renderer/modules/payments/payment_address.h"
 #include "third_party/blink/renderer/modules/payments/payment_method_change_event.h"
@@ -96,7 +98,6 @@ const char kGooglePlayBillingMethod[] = "https://play.google.com/billing";
 const char kUnknownCurrency[] = "ZZZ";
 const char kAppStoreBillingLabelPlaceHolder[] = "AppStoreBillingPlaceHolder";
 const char kSecurePaymentConfirmationMethod[] = "secure-payment-confirmation";
-
 }  // namespace
 
 namespace mojo {
@@ -460,7 +461,7 @@ void StringifyAndParseMethodSpecificData(ExecutionContext& execution_context,
       supported_method == kAndroidPayMethod ||
       supported_method == kGooglePayAuthenticationMethod) {
     SetAndroidPayMethodData(execution_context.GetIsolate(), input, output,
-                            IGNORE_EXCEPTION);
+                            IgnoreException(execution_context.GetIsolate()));
   }
 
   // Parse method data to avoid parsing JSON in the browser.
@@ -517,7 +518,7 @@ void ValidateAndConvertPaymentDetailsModifiers(
         payments::mojom::blink::PaymentMethodData::New();
     output.back()->method_data->supported_method = modifier->supportedMethod();
 
-    if (modifier->hasData() && !modifier->data().IsEmpty()) {
+    if (modifier->hasData()) {
       StringifyAndParseMethodSpecificData(
           execution_context, modifier->supportedMethod(), modifier->data(),
           output.back()->method_data, exception_state);
@@ -760,8 +761,7 @@ void ValidateAndConvertPaymentMethodData(
     output.push_back(payments::mojom::blink::PaymentMethodData::New());
     output.back()->supported_method = payment_method_data->supportedMethod();
 
-    if (payment_method_data->hasData() &&
-        !payment_method_data->data().IsEmpty()) {
+    if (payment_method_data->hasData()) {
       StringifyAndParseMethodSpecificData(
           execution_context, payment_method_data->supportedMethod(),
           payment_method_data->data(), output.back(), exception_state);
@@ -787,7 +787,7 @@ bool AllowedToUsePaymentRequest(ExecutionContext* execution_context) {
   // 2. If Permissions Policy is enabled, return the policy for "payment"
   // feature.
   return execution_context->IsFeatureEnabled(
-      mojom::blink::PermissionsPolicyFeature::kPayment,
+      network::mojom::PermissionsPolicyFeature::kPayment,
       ReportOptions::kReportOnFailure);
 }
 
@@ -818,7 +818,42 @@ void RecordActivationlessShow(ExecutionContext* execution_context,
   }
 }
 
+void OnIsSecurePaymentConfirmationAvailableResponse(
+    std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
+    bool is_available) {
+  auto* resolver = scoped_resolver->Release()->DowncastTo<IDLBoolean>();
+  resolver->Resolve(is_available);
+}
 }  // namespace
+
+// static
+ScriptPromise<IDLBoolean> PaymentRequest::isSecurePaymentConfirmationAvailable(
+    ScriptState* script_state) {
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<IDLBoolean>>(script_state);
+  auto promise = resolver->Promise();
+
+  if (!RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(
+          ExecutionContext::From(script_state))) {
+    resolver->Resolve(false);
+    return promise;
+  }
+
+  if (!ExecutionContext::From(script_state)
+           ->IsFeatureEnabled(
+               network::mojom::PermissionsPolicyFeature::kPayment)) {
+    resolver->Resolve(false);
+    return promise;
+  }
+
+  CredentialManagerProxy::From(script_state)
+      ->SecurePaymentConfirmationService()
+      ->IsSecurePaymentConfirmationAvailable(
+          WTF::BindOnce(&OnIsSecurePaymentConfirmationAvailableResponse,
+                        std::make_unique<ScopedPromiseResolver>(resolver)));
+
+  return promise;
+}
 
 PaymentRequest* PaymentRequest::Create(
     ExecutionContext* execution_context,
@@ -913,7 +948,7 @@ ScriptPromise<PaymentResponse> PaymentRequest::show(
     // If the website does not calculate the final shopping cart contents within
     // 10 seconds, abort payment.
     update_payment_details_timer_.StartOneShot(base::Seconds(10), FROM_HERE);
-    details_promise.React(
+    details_promise.Then(
         script_state, MakeGarbageCollected<UpdatePaymentDetailsResolve>(this),
         MakeGarbageCollected<UpdatePaymentDetailsReject>(this));
   }
@@ -1396,16 +1431,16 @@ void PaymentRequest::OnPaymentMethodChange(const String& method_name,
 
   if (!stringified_details.empty()) {
     v8::TryCatch try_catch(script_state->GetIsolate());
-    v8::Local<v8::Value> parsed_value = FromJSONString(
-        script_state->GetIsolate(), script_state->GetContext(),
-        stringified_details, PassThroughException(script_state->GetIsolate()));
+    v8::Local<v8::Value> parsed_value =
+        FromJSONString(script_state, stringified_details);
     if (try_catch.HasCaught()) {
       GetPendingAcceptPromiseResolver()->Reject(try_catch.Exception());
       ClearResolversAndCloseMojoConnection();
       return;
     }
+    CHECK(parsed_value->IsObject());
     init->setMethodDetails(
-        ScriptValue(script_state->GetIsolate(), parsed_value));
+        ScriptObject(script_state->GetIsolate(), parsed_value));
   }
 
   PaymentRequestUpdateEvent* event = PaymentMethodChangeEvent::Create(

@@ -27,6 +27,7 @@
 #include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/ui/base/chromeos_ui_constants.h"
@@ -148,7 +149,7 @@ class CustomFrameView : public ash::NonClientFrameViewAsh {
   void UpdateWindowRoundedCorners() override {
     if (!chromeos::features::IsRoundedWindowsEnabled() && GetFrameEnabled()) {
       header_view_->SetHeaderCornerRadius(
-          chromeos::GetFrameCornerRadius(frame()->GetNativeWindow()));
+          chromeos::GetWindowCornerRadius(frame()->GetNativeWindow()));
     }
 
     if (!GetWidget()) {
@@ -430,7 +431,7 @@ ShellSurfaceBase::ShellSurfaceBase(Surface* surface,
   surface->AddSurfaceObserver(this);
   SetRootSurface(surface);
   host_window()->Show();
-  set_owned_by_client();
+  set_owned_by_client(OwnedByClientPassKey());
 
   SetCanMinimize(can_minimize_);
   SetCanMaximize(ash::desks_util::IsDeskContainerId(container_));
@@ -651,8 +652,8 @@ void ShellSurfaceBase::SetApplicationId(const char* application_id) {
   } else {
     GetViewAccessibility().RemoveChildTreeNodeAppId();
   }
-  this->NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged,
-                                 /* send_native_event */ false);
+  this->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kChildrenChanged,
+                                           /* send_native_event */ false);
 }
 
 void ShellSurfaceBase::SetStartupId(const char* startup_id) {
@@ -828,7 +829,8 @@ void ShellSurfaceBase::UpdateTopInset() {
 
 void ShellSurfaceBase::SetChildAxTreeId(ui::AXTreeID child_ax_tree_id) {
   GetViewAccessibility().SetChildTreeID(child_ax_tree_id);
-  this->NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged, false);
+  this->NotifyAccessibilityEventDeprecated(ax::mojom::Event::kChildrenChanged,
+                                           false);
 }
 
 void ShellSurfaceBase::SetGeometry(const gfx::Rect& geometry) {
@@ -1084,7 +1086,8 @@ void ShellSurfaceBase::AddOverlay(OverlayParams&& overlay_params) {
     params.activatable = views::Widget::InitParams::Activatable::kYes;
 
   params.delegate = new views::WidgetDelegate();
-  params.delegate->SetOwnedByWidget(true);
+  params.delegate->SetOwnedByWidget(
+      views::WidgetDelegate::OwnedByWidgetPassKey());
   params.delegate->SetContentsView(std::move(overlay_params.contents_view));
   params.name = "Overlay";
 
@@ -1651,7 +1654,7 @@ void ShellSurfaceBase::OnWindowActivated(ActivationReason reason,
 // wm::TooltipObserver overrides:
 
 void ShellSurfaceBase::OnTooltipShown(aura::Window* target,
-                                      const std::u16string& text,
+                                      std::u16string_view text,
                                       const gfx::Rect& bounds) {
   if (root_surface()) {
     root_surface()->OnTooltipShown(text, bounds);

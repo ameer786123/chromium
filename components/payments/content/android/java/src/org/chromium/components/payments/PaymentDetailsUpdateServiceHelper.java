@@ -4,17 +4,19 @@
 
 package org.chromium.components.payments;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.pm.PackageInfo;
 import android.content.pm.Signature;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.payments.intent.WebPaymentIntentHelperType.PaymentHandlerMethodData;
 import org.chromium.components.payments.intent.WebPaymentIntentHelperType.PaymentRequestDetailsUpdate;
 
@@ -24,16 +26,17 @@ import java.util.Arrays;
  * Helper class used by android payment app to notify the browser that the user has selected a
  * different payment instrument, shipping option, or shipping address inside native app.
  */
+@NullMarked
 public class PaymentDetailsUpdateServiceHelper {
     private static final String TAG = "PaymentDetailsUpdate";
 
-    @Nullable private IPaymentDetailsUpdateServiceCallback mCallback;
-    @Nullable private PaymentRequestUpdateEventListener mListener;
-    @Nullable private PackageInfo mInvokedAppPackageInfo;
-    @Nullable private PackageManagerDelegate mPackageManagerDelegate;
+    private @Nullable IPaymentDetailsUpdateServiceCallback mCallback;
+    private @Nullable PaymentRequestUpdateEventListener mListener;
+    private @Nullable PackageInfo mInvokedAppPackageInfo;
+    private @Nullable PackageManagerDelegate mPackageManagerDelegate;
 
     // Singleton instance.
-    private static PaymentDetailsUpdateServiceHelper sInstance;
+    private static @Nullable PaymentDetailsUpdateServiceHelper sInstance;
 
     private PaymentDetailsUpdateServiceHelper() {}
 
@@ -147,7 +150,7 @@ public class PaymentDetailsUpdateServiceHelper {
         }
 
         Address address = Address.createFromBundle(shippingAddress);
-        if (!address.isValid()) {
+        if (!assumeNonNull(address).isValid()) {
             runCallbackWithError(ErrorStrings.SHIPPING_ADDRESS_INVALID, callback);
             return;
         }
@@ -220,15 +223,26 @@ public class PaymentDetailsUpdateServiceHelper {
     public boolean isCallerAuthorized(int callerUid) {
         ThreadUtils.assertOnUiThread();
         if (mPackageManagerDelegate == null) {
-            Log.e(TAG, ErrorStrings.UNATHORIZED_SERVICE_REQUEST);
+            Log.e(TAG, "mPackageManagerDelegate is null in isCallerAuthorized");
+            return false;
+        }
+        if (mInvokedAppPackageInfo == null) {
+            Log.e(TAG, "mInvokedAppPackageInfo is null in isCallerAuthorized");
             return false;
         }
         PackageInfo callerPackageInfo =
                 mPackageManagerDelegate.getPackageInfoWithSignatures(callerUid);
-        if (mInvokedAppPackageInfo == null
-                || callerPackageInfo == null
-                || !mInvokedAppPackageInfo.packageName.equals(callerPackageInfo.packageName)) {
-            Log.e(TAG, ErrorStrings.UNATHORIZED_SERVICE_REQUEST);
+        if (callerPackageInfo == null) {
+            Log.e(TAG, "Received null callerPackageInfo for UID %d", callerUid);
+            return false;
+        }
+        if (!mInvokedAppPackageInfo.packageName.equals(callerPackageInfo.packageName)) {
+            Log.e(
+                    TAG,
+                    "Invoked app's package name (\"%s\") is different from calling app's package"
+                            + " name (\"%s\")",
+                    mInvokedAppPackageInfo.packageName,
+                    callerPackageInfo.packageName);
             return false;
         }
 
@@ -237,7 +251,9 @@ public class PaymentDetailsUpdateServiceHelper {
         Signature[] invokedAppSignatures = mInvokedAppPackageInfo.signatures;
 
         boolean result = Arrays.equals(callerSignatures, invokedAppSignatures);
-        if (!result) Log.e(TAG, ErrorStrings.UNATHORIZED_SERVICE_REQUEST);
+        if (!result) {
+            Log.e(TAG, "Invoked app's signature is different from calling app's signature");
+        }
         return result;
     }
 

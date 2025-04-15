@@ -40,6 +40,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
+#include "third_party/blink/renderer/platform/webrtc/peer_connection_remote_audio_source.h"
 
 namespace blink {
 
@@ -299,7 +300,8 @@ MediaStreamTrackVector MediaStream::getTracks() {
   return tracks;
 }
 
-void MediaStream::addTrack(MediaStreamTrack* track,
+void MediaStream::addTrack(v8::Isolate* isolate,
+                           MediaStreamTrack* track,
                            ExceptionState& exception_state) {
   if (!track) {
     exception_state.ThrowDOMException(
@@ -331,11 +333,12 @@ void MediaStream::addTrack(MediaStreamTrack* track,
     // If processing by the observer failed, it is most likely because it was
     // not necessary and it became a no-op. The exception can be suppressed,
     // there is nothing to do.
-    observer->OnStreamAddTrack(this, track, IGNORE_EXCEPTION);
+    observer->OnStreamAddTrack(this, track, IgnoreException(isolate));
   }
 }
 
-void MediaStream::removeTrack(MediaStreamTrack* track,
+void MediaStream::removeTrack(v8::Isolate* isolate,
+                              MediaStreamTrack* track,
                               ExceptionState& exception_state) {
   if (!track) {
     exception_state.ThrowDOMException(
@@ -372,7 +375,7 @@ void MediaStream::removeTrack(MediaStreamTrack* track,
     // If processing by the observer failed, it is most likely because it was
     // not necessary and it became a no-op. The exception can be suppressed,
     // there is nothing to do.
-    observer->OnStreamRemoveTrack(this, track, IGNORE_EXCEPTION);
+    observer->OnStreamRemoveTrack(this, track, IgnoreException(isolate));
   }
 }
 
@@ -418,6 +421,18 @@ void MediaStream::TrackEnded() {
   }
 
   StreamEnded();
+}
+
+void MediaStream::NotifyEnabledStateChangeForWebRtcAudio(bool enabled) {
+  CHECK(
+      base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack));
+  if (!GetExecutionContext()) {
+    return;
+  }
+
+  if (active()) {
+    descriptor_->NotifyEnabledStateChangeForWebRtcAudio(enabled);
+  }
 }
 
 void MediaStream::RegisterObserver(MediaStreamObserver* observer) {

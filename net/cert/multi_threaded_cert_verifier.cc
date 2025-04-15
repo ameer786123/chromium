@@ -51,8 +51,6 @@ int GetFlagsForConfig(const CertVerifier::Config& config) {
     flags |= CertVerifyProc::VERIFY_REV_CHECKING_REQUIRED_LOCAL_ANCHORS;
   if (config.enable_sha1_local_anchors)
     flags |= CertVerifyProc::VERIFY_ENABLE_SHA1_LOCAL_ANCHORS;
-  if (config.disable_symantec_enforcement)
-    flags |= CertVerifyProc::VERIFY_DISABLE_SYMANTEC_ENFORCEMENT;
 
   return flags;
 }
@@ -139,6 +137,9 @@ void MultiThreadedCertVerifier::InternalRequest::Start(
   int flags = GetFlagsForConfig(config);
   if (params.flags() & CertVerifier::VERIFY_DISABLE_NETWORK_FETCHES) {
     flags |= CertVerifyProc::VERIFY_DISABLE_NETWORK_FETCHES;
+  }
+  if (params.flags() & CertVerifier::VERIFY_SXG_CT_REQUIREMENTS) {
+    flags |= CertVerifyProc::VERIFY_SXG_CT_REQUIREMENTS;
   }
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,

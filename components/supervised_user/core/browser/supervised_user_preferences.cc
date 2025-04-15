@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "components/google/core/common/google_util.h"
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
@@ -106,9 +107,11 @@ void ClearCustodianPrefs(PrefService& pref_service,
   pref_service.ClearPref(custodian.profile_image_url);
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 void SetIsChildAccountStatusKnown(PrefService& pref_service) {
   pref_service.SetBoolean(prefs::kChildAccountStatusKnown, true);
 }
+#endif
 
 }  // namespace
 
@@ -141,9 +144,6 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   for (const char* pref : kCustodianInfoPrefs) {
     registry->RegisterStringPref(pref, std::string());
   }
-  registry->RegisterIntegerPref(
-      prefs::kFirstTimeInterstitialBannerState,
-      static_cast<int>(FirstTimeInterstitialBannerState::kUnknown));
   registry->RegisterBooleanPref(prefs::kChildAccountStatusKnown, false);
   registry->RegisterStringPref(prefs::kFamilyLinkUserMemberRole, std::string());
 #if BUILDFLAG(ENABLE_EXTENSIONS) && \
@@ -160,19 +160,25 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
 void EnableParentalControls(PrefService& pref_service) {
   pref_service.SetString(prefs::kSupervisedUserId,
                          supervised_user::kChildAccountSUID);
+#if BUILDFLAG(IS_CHROMEOS)
   SetIsChildAccountStatusKnown(pref_service);
+#endif
 }
 
 void DisableParentalControls(PrefService& pref_service) {
   pref_service.ClearPref(prefs::kSupervisedUserId);
   ClearCustodianPrefs(pref_service, first_custodian);
   ClearCustodianPrefs(pref_service, second_custodian);
+#if BUILDFLAG(IS_CHROMEOS)
   SetIsChildAccountStatusKnown(pref_service);
+#endif
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 bool IsChildAccountStatusKnown(const PrefService& pref_service) {
   return pref_service.GetBoolean(prefs::kChildAccountStatusKnown);
 }
+#endif
 
 bool IsSafeSitesEnabled(const PrefService& pref_service) {
   return supervised_user::IsSubjectToParentalControls(pref_service) &&
@@ -181,6 +187,45 @@ bool IsSafeSitesEnabled(const PrefService& pref_service) {
 
 bool IsSubjectToParentalControls(const PrefService& pref_service) {
   return pref_service.GetString(prefs::kSupervisedUserId) == kChildAccountSUID;
+}
+
+bool IsGoogleSafeSearchEnforced(const PrefService& pref_service) {
+  return pref_service.GetBoolean(policy::policy_prefs::kForceGoogleSafeSearch);
+}
+void SetGoogleSafeSearch(PrefService& pref_service,
+                         GoogleSafeSearchStateStatus status) {
+  pref_service.SetBoolean(policy::policy_prefs::kForceGoogleSafeSearch,
+                          static_cast<bool>(status));
+}
+
+namespace {
+void CheckEligibilityForContentFilters(PrefService& pref_service) {
+  CHECK(!IsSubjectToParentalControls(pref_service))
+      << "Users who are subject to Family Link parental controls cannot "
+         "disable browser content filters";
+}
+}  // namespace
+
+void EnableBrowserContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  pref_service.SetInteger(
+      policy::policy_prefs::kIncognitoModeAvailability,
+      static_cast<int>(policy::IncognitoModeAvailability::kDisabled));
+  // TODO(http://crbug.com/405419755): Enable safe sites to classify navigation.
+}
+void DisableBrowserContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  // Reset the setting to default.
+  pref_service.ClearPref(policy::policy_prefs::kIncognitoModeAvailability);
+}
+void EnableSearchContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  pref_service.SetBoolean(policy::policy_prefs::kForceGoogleSafeSearch, true);
+}
+void DisableSearchContentFilters(PrefService& pref_service) {
+  CheckEligibilityForContentFilters(pref_service);
+  // Reset the setting to default.
+  pref_service.ClearPref(policy::policy_prefs::kForceGoogleSafeSearch);
 }
 
 }  // namespace supervised_user
